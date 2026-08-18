@@ -28,7 +28,7 @@ Language-server features currently require a Ferret document with a file URI.
 Untitled Ferret documents still receive TextMate highlighting, but `ferretd`
 does not yet accept their non-file document URIs.
 
-Debugging and query execution are not included.
+Debugging and rich query-execution result presentation are not included.
 
 ## Bundled language server
 

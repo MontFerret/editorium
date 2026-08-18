@@ -1,6 +1,11 @@
 import * as assert from 'node:assert/strict';
 import * as vscode from 'vscode';
 
+import {
+  cancelExecutionCommand,
+  runFileCommand,
+} from '../execution/commands';
+
 const extensionId = 'ferretlang.fql';
 
 interface FerretManifest {
@@ -22,7 +27,16 @@ interface FerretManifest {
       command: string;
       title: string;
       category: string;
+      enablement?: string;
+      icon?: string;
     }>;
+    menus: {
+      'editor/title': Array<{
+        command: string;
+        group: string;
+        when: string;
+      }>;
+    };
     configuration: {
       title: string;
       properties: Record<
@@ -76,6 +90,7 @@ suite('Ferret declarative language support', () => {
       'languages',
       'grammars',
       'commands',
+      'menus',
       'configuration',
     ]);
     assert.deepStrictEqual(manifest.contributes.languages, [
@@ -99,7 +114,39 @@ suite('Ferret declarative language support', () => {
         title: 'Restart Language Server',
         category: 'Ferret',
       },
+      {
+        command: runFileCommand,
+        title: 'Run File',
+        category: 'Ferret',
+        icon: '$(play)',
+        enablement:
+          'editorLangId == ferret && resourceScheme == file && !ferret.executionRunning',
+      },
+      {
+        command: cancelExecutionCommand,
+        title: 'Cancel Execution',
+        category: 'Ferret',
+        icon: '$(debug-stop)',
+        enablement:
+          'editorLangId == ferret && resourceScheme == file && ferret.executionRunning',
+      },
     ]);
+    assert.deepStrictEqual(manifest.contributes.menus, {
+      'editor/title': [
+        {
+          command: runFileCommand,
+          when:
+            'resourceLangId == ferret && resourceScheme == file && !ferret.executionRunning',
+          group: 'navigation@1',
+        },
+        {
+          command: cancelExecutionCommand,
+          when:
+            'resourceLangId == ferret && resourceScheme == file && ferret.executionRunning',
+          group: 'navigation@1',
+        },
+      ],
+    });
 
     const properties = manifest.contributes.configuration.properties;
     assert.deepStrictEqual(
@@ -266,6 +313,9 @@ suite('Ferret declarative language support', () => {
     await waitForActivation(extension);
 
     assert.strictEqual(extension.isActive, true);
+    const commands = await vscode.commands.getCommands(true);
+    assert.ok(commands.includes(runFileCommand));
+    assert.ok(commands.includes(cancelExecutionCommand));
   });
 });
 

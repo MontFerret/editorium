@@ -6,12 +6,17 @@ import {
 } from './config';
 import { FerretServerController } from './controller';
 import { DaemonController } from './daemon/manager';
+import {
+  registerExecutionCommands,
+  type ExecutionCommandController,
+} from './execution/commands';
 import { FerretExecutionManager } from './execution/manager';
 import { createLanguageClient } from './language-client';
 import { LanguageServerController, showOutputAction } from './server';
 import { ConfiguredTraceOutputChannel } from './trace-output';
 
 let controller: FerretServerController | undefined;
+let executionCommands: ExecutionCommandController | undefined;
 let executionManager: FerretExecutionManager | undefined;
 
 export async function activate(
@@ -54,13 +59,19 @@ export async function activate(
     activeController.executions,
     daemon.workspaceRegistry,
   );
+  const activeExecutionCommands = registerExecutionCommands(
+    activeExecutionManager,
+    output,
+  );
 
   controller = activeController;
+  executionCommands = activeExecutionCommands;
   executionManager = activeExecutionManager;
   await activeController.updateWorkspaceFolders(workspaceRoots());
   context.subscriptions.push(
     output,
     traceOutput,
+    activeExecutionCommands,
     vscode.commands.registerCommand(
       restartLanguageServerCommand,
       () => activeController.restart(),
@@ -81,10 +92,13 @@ export async function activate(
 
 export async function deactivate(): Promise<void> {
   const activeController = controller;
+  const activeExecutionCommands = executionCommands;
   const activeExecutionManager = executionManager;
   controller = undefined;
+  executionCommands = undefined;
   executionManager = undefined;
 
+  activeExecutionCommands?.dispose();
   await activeExecutionManager?.dispose();
   await activeController?.stop();
 }

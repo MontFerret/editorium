@@ -65,8 +65,36 @@
         "command": "ferret.restartLanguageServer",
         "title": "Restart Language Server",
         "category": "Ferret"
+      },
+      {
+        "command": "ferret.runFile",
+        "title": "Run File",
+        "category": "Ferret",
+        "icon": "$(play)",
+        "enablement": "editorLangId == ferret && resourceScheme == file && !ferret.executionRunning"
+      },
+      {
+        "command": "ferret.cancelExecution",
+        "title": "Cancel Execution",
+        "category": "Ferret",
+        "icon": "$(debug-stop)",
+        "enablement": "editorLangId == ferret && resourceScheme == file && ferret.executionRunning"
       }
     ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "ferret.runFile",
+          "when": "resourceLangId == ferret && resourceScheme == file && !ferret.executionRunning",
+          "group": "navigation@1"
+        },
+        {
+          "command": "ferret.cancelExecution",
+          "when": "resourceLangId == ferret && resourceScheme == file && ferret.executionRunning",
+          "group": "navigation@1"
+        }
+      ]
+    },
     "configuration": {
       "title": "Ferret",
       "properties": {

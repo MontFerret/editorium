@@ -27,3 +27,12 @@ Execution finishes, so saving does not cancel the current invocation. Workspace
 replacement or daemon-generation loss discards every affected daemon identity;
 future runs resolve the new workspace and rebuild Sessions lazily. Dirty,
 untitled, non-file, and non-Ferret documents are never sent to the daemon.
+
+The VS Code Run File and Cancel Execution commands are adapters over that
+manager rather than additional lifecycle owners. Run File always executes the
+saved workspace version of the active document. A dirty document must complete
+the explicit Save and Run flow first; the manager's save listener then retires
+the cached Session before the command asks it to run. The command layer neither
+invalidates Sessions nor observes daemon streams itself. One document can have
+only one extension-managed active Execution, while different documents may run
+concurrently.
