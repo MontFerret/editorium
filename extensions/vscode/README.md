@@ -106,12 +106,16 @@ npm install
 The VS Code source package can then be built and tested independently:
 
 ```sh
-npm run build --workspace vscode
-npm test --workspace vscode
+npm run build --workspace fql
+npm test --workspace fql
 ```
 
 The build bundles the language client and extension sources into
-`vscode/out/extension.js`. It does not download a daemon.
+`extensions/vscode/out/extension.js`. It does not download a daemon.
+Installation synchronizes the ferretd schemas selected by the root
+`ferretd.json` into `shared/proto/`; client generation never reads an
+editor-local copy. Use `npm run proto:sync` at the repository root to check the
+schema cache, or add `-- --force` to refresh it.
 
 To stage the pinned daemon for the current host, create its platform-specific
 VSIX, or install that VSIX into the local VS Code instance, run:
@@ -129,11 +133,12 @@ npm run vscode:package -- --target darwin-arm64
 ```
 
 The package command prints and creates
-`vscode/fql-<target>-<extension-version>.vsix`. It verifies the official
-release checksum, the staged executable, the VSIX target and exact contents,
-the Unix executable mode, and the daemon bytes/version when the target is
-native. Downloads are cached under `.dist/`; the one selected binary is staged
-under `vscode/bin/`. Both locations and all VSIX files are ignored by Git.
+`extensions/vscode/fql-<target>-<extension-version>.vsix`. It verifies the
+official release checksum, the staged executable, the VSIX target and exact
+contents, the Unix executable mode, and the daemon bytes/version when the
+target is native. Downloads are cached under `.dist/`; the one selected binary
+is staged under `extensions/vscode/bin/`. Both locations and all VSIX files are
+ignored by Git.
 
 `ferretd.json` at the repository root is the sole bundled-daemon version pin.
 See [`RELEASING.md`](RELEASING.md) for target artifacts and future publication
@@ -143,7 +148,7 @@ The real-server integration test is enabled when `FERRETD_TEST_PATH` points to
 an executable:
 
 ```sh
-FERRETD_TEST_PATH=/absolute/path/to/ferretd npm test --workspace vscode
+FERRETD_TEST_PATH=/absolute/path/to/ferretd npm test --workspace fql
 ```
 
 CI uses this override path to preserve explicit-server coverage in addition to

@@ -88,9 +88,7 @@ export async function sha256File(path) {
 }
 
 export function releaseAssetUrl(version, assetName) {
-  if (!versionPattern.test(version)) {
-    throw new Error(`Invalid ferretd version: ${version}`);
-  }
+  validateFerretdVersion(version);
   if (!/^[0-9A-Za-z._-]+$/u.test(assetName)) {
     throw new Error(`Invalid ferretd release asset: ${assetName}`);
   }
@@ -98,6 +96,15 @@ export function releaseAssetUrl(version, assetName) {
   return (
     `https://github.com/${releaseRepository}/releases/download/` +
     `v${version}/${assetName}`
+  );
+}
+
+export function sourceArchiveUrl(version) {
+  validateFerretdVersion(version);
+
+  return (
+    `https://github.com/${releaseRepository}/archive/refs/tags/` +
+    `v${version}.tar.gz`
   );
 }
 
@@ -447,6 +454,12 @@ function validateAcquisitionInput({
 
   if (binaryName !== 'ferretd' && binaryName !== 'ferretd.exe') {
     throw new Error(`Invalid daemon executable name: ${binaryName}`);
+  }
+}
+
+function validateFerretdVersion(version) {
+  if (!versionPattern.test(version)) {
+    throw new Error(`Invalid ferretd version: ${version}`);
   }
 }
 

@@ -1,8 +1,8 @@
 # VS Code distribution
 
 Editorium produces one Ferret VSIX for each supported VS Code target. The
-packages all use the extension version in `vscode/package.json` and the daemon
-version pinned in the repository-root `ferretd.json`.
+packages all use the extension version in `extensions/vscode/package.json` and
+the daemon/protocol version pinned in the repository-root `ferretd.json`.
 
 | VS Code target | Official ferretd artifact | Native CI runner |
 | --- | --- | --- |
@@ -54,11 +54,15 @@ fql-win32-arm64-<extension-version>.vsix
    `ferretd_checksums.txt`, and that `ferretd --version` reports the intended
    version.
 2. Change only the `ferretd` value in the root `ferretd.json`.
-3. Run the offline tests, then package the native target locally.
-4. Let the CI matrix acquire, execute, package, and validate every target.
+3. Run `npm run proto:sync` and
+   `npm run proto:generate --workspace fql`, then review the generated client
+   changes.
+4. Run the tests, then package the native target locally.
+5. Let the CI matrix acquire, execute, package, and validate every target.
 
-Do not commit `.dist/`, `vscode/bin/`, or generated VSIX files. Do not replace
-the official artifacts with locally compiled binaries.
+Do not commit `.dist/`, `shared/proto/ferretd/`,
+`extensions/vscode/bin/`, or generated VSIX files. Do not replace the official
+artifacts with locally compiled binaries.
 
 ## Publication handoff
 

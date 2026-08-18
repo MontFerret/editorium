@@ -1,12 +1,12 @@
 version: v2
 modules:
-  - path: proto
+  - path: shared/proto
 lint:
   use:
     - STANDARD
   ignore_only:
     PACKAGE_VERSION_SUFFIX:
-      - proto/google/rpc/status.proto
+      - shared/proto/google/rpc/status.proto
 breaking:
   use:
     - FILE

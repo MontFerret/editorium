@@ -2,7 +2,8 @@ node_modules/
 out/
 .vscode-test/
 .dist/
-vscode/bin/
+extensions/vscode/bin/
+shared/proto/ferretd/
 *.vsix
 .idea/
 .vscode/

@@ -10,12 +10,12 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/MontFerret/editorium.git",
-    "directory": "vscode"
+    "directory": "extensions/vscode"
   },
   "bugs": {
     "url": "https://github.com/MontFerret/editorium/issues"
   },
-  "homepage": "https://github.com/MontFerret/editorium/tree/main/vscode#readme",
+  "homepage": "https://github.com/MontFerret/editorium/tree/main/extensions/vscode#readme",
   "categories": [
     "Programming Languages"
   ],
@@ -108,8 +108,9 @@
     "build": "npm run compile",
     "bundle": "node ./scripts/build.mjs",
     "compile": "tsc -p ./ && npm run bundle",
-    "proto:check": "buf lint && node ./scripts/generate-proto.mjs --check",
-    "proto:generate": "node ./scripts/generate-proto.mjs",
+    "proto:sync": "node ../../scripts/proto.mjs",
+    "proto:check": "npm run proto:sync && node ./scripts/generate-proto.mjs --check",
+    "proto:generate": "npm run proto:sync && node ./scripts/generate-proto.mjs",
     "watch": "node ./scripts/build.mjs --watch",
     "test": "npm run proto:check && npm run compile && vscode-test && node ./scripts/daemon-smoke.mjs",
     "test:daemon": "npm run compile && node ./scripts/daemon-smoke.mjs",

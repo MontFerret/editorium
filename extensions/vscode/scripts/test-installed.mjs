@@ -15,7 +15,7 @@ import { detectHostTarget } from './distribution.mjs';
 
 const execFileAsync = promisify(execFile);
 const packageRoot = fileURLToPath(new URL('../', import.meta.url));
-const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
+const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
 
 async function main() {
   const packageManifest = JSON.parse(

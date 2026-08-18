@@ -21,10 +21,10 @@ import {
   acquireFerretd,
   copyFileAtomic,
   readFerretdVersion,
-} from '../../scripts/ferretd.mjs';
+} from '../../../scripts/ferretd.mjs';
 
 const execFileAsync = promisify(execFile);
-const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
+const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const packageRoot = fileURLToPath(new URL('../', import.meta.url));
 const vsceEntrypoint = join(
   repositoryRoot,

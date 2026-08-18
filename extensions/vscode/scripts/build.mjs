@@ -2,9 +2,9 @@ import { fileURLToPath } from 'node:url';
 
 import * as esbuild from 'esbuild';
 
-import { readFerretdVersion } from '../../scripts/ferretd.mjs';
+import { readFerretdVersion } from '../../../scripts/ferretd.mjs';
 
-const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
+const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const ferretdVersion = await readFerretdVersion(repositoryRoot);
 
 const production = process.argv.includes('--production');

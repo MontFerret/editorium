@@ -11,8 +11,9 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const vscodeRoot = fileURLToPath(new URL('../', import.meta.url));
-const generatedRoot = join(vscodeRoot, 'src', 'daemon', 'gen');
+const packageRoot = fileURLToPath(new URL('../', import.meta.url));
+const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
+const generatedRoot = join(packageRoot, 'src', 'daemon', 'gen');
 const check = process.argv.includes('--check');
 const temporaryRoot = check
   ? await mkdtemp(join(tmpdir(), 'ferret-vscode-proto-'))
@@ -22,6 +23,17 @@ const outputRoot = temporaryRoot ?? generatedRoot;
 const template = {
   version: 'v2',
   clean: true,
+  inputs: [
+    {
+      directory: repositoryRoot,
+      paths: [
+        'shared/proto/ferretd/daemon/v1/daemon.proto',
+        'shared/proto/ferretd/execution/v1/execution.proto',
+        'shared/proto/ferretd/workspace/v1/workspace.proto',
+        'shared/proto/google/rpc/status.proto',
+      ],
+    },
+  ],
   plugins: [
     {
       local: 'protoc-gen-ts_proto',
@@ -44,9 +56,17 @@ const template = {
 };
 
 try {
+  if (check) {
+    await run('buf', [
+      'lint',
+      'shared/proto',
+      '--config',
+      'buf.yaml',
+    ]);
+  }
+
   await run('buf', [
     'generate',
-    'proto',
     '--template',
     JSON.stringify(template),
   ]);
@@ -63,7 +83,7 @@ try {
 async function run(command, args) {
   await new Promise((resolve, reject) => {
     const child = spawn(command, args, {
-      cwd: vscodeRoot,
+      cwd: repositoryRoot,
       stdio: 'inherit',
       shell: process.platform === 'win32',
     });
