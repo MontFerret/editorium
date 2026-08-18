@@ -166,20 +166,26 @@
     "dialect-templates": {
       "patterns": [
         {
-          "name": "meta.embedded.inline.ferret string.quoted.other.template.ferret",
-          "begin": "\\b([A-Za-z][A-Za-z0-9_]*)(`)",
+          "contentName": "meta.embedded.inline.ferret string.quoted.other.template.ferret",
+          "begin": "(\\[)(~\\??)(\\s*)([A-Za-z][A-Za-z0-9_]*)(\\s*)(`)",
           "beginCaptures": {
             "1": {
-              "name": "entity.name.tag.dialect.ferret"
+              "name": "punctuation.section.brackets.ferret"
             },
             "2": {
-              "name": "punctuation.definition.string.begin.ferret"
+              "name": "keyword.operator.query.ferret"
+            },
+            "4": {
+              "name": "meta.embedded.inline.ferret string.quoted.other.template.ferret entity.name.tag.dialect.ferret"
+            },
+            "6": {
+              "name": "meta.embedded.inline.ferret string.quoted.other.template.ferret punctuation.definition.string.begin.ferret"
             }
           },
           "end": "`",
           "endCaptures": {
             "0": {
-              "name": "punctuation.definition.string.end.ferret"
+              "name": "meta.embedded.inline.ferret string.quoted.other.template.ferret punctuation.definition.string.end.ferret"
             }
           },
           "applyEndPatternLast": true,
@@ -198,20 +204,26 @@
     "dialect-tags": {
       "patterns": [
         {
-          "name": "meta.embedded.inline.ferret string.quoted.double.ferret",
-          "begin": "\\b([A-Za-z][A-Za-z0-9_]*)(\")",
+          "contentName": "meta.embedded.inline.ferret string.quoted.double.ferret",
+          "begin": "(\\[)(~\\??)(\\s*)([A-Za-z][A-Za-z0-9_]*)(\\s*)(\")",
           "beginCaptures": {
             "1": {
-              "name": "entity.name.tag.dialect.ferret"
+              "name": "punctuation.section.brackets.ferret"
             },
             "2": {
-              "name": "punctuation.definition.string.begin.ferret"
+              "name": "keyword.operator.query.ferret"
+            },
+            "4": {
+              "name": "meta.embedded.inline.ferret string.quoted.double.ferret entity.name.tag.dialect.ferret"
+            },
+            "6": {
+              "name": "meta.embedded.inline.ferret string.quoted.double.ferret punctuation.definition.string.begin.ferret"
             }
           },
           "end": "\"",
           "endCaptures": {
             "0": {
-              "name": "punctuation.definition.string.end.ferret"
+              "name": "meta.embedded.inline.ferret string.quoted.double.ferret punctuation.definition.string.end.ferret"
             }
           },
           "applyEndPatternLast": true,
@@ -223,20 +235,26 @@
           ]
         },
         {
-          "name": "meta.embedded.inline.ferret string.quoted.single.ferret",
-          "begin": "\\b([A-Za-z][A-Za-z0-9_]*)(')",
+          "contentName": "meta.embedded.inline.ferret string.quoted.single.ferret",
+          "begin": "(\\[)(~\\??)(\\s*)([A-Za-z][A-Za-z0-9_]*)(\\s*)(')",
           "beginCaptures": {
             "1": {
-              "name": "entity.name.tag.dialect.ferret"
+              "name": "punctuation.section.brackets.ferret"
             },
             "2": {
-              "name": "punctuation.definition.string.begin.ferret"
+              "name": "keyword.operator.query.ferret"
+            },
+            "4": {
+              "name": "meta.embedded.inline.ferret string.quoted.single.ferret entity.name.tag.dialect.ferret"
+            },
+            "6": {
+              "name": "meta.embedded.inline.ferret string.quoted.single.ferret punctuation.definition.string.begin.ferret"
             }
           },
           "end": "'",
           "endCaptures": {
             "0": {
-              "name": "punctuation.definition.string.end.ferret"
+              "name": "meta.embedded.inline.ferret string.quoted.single.ferret punctuation.definition.string.end.ferret"
             }
           },
           "applyEndPatternLast": true,
@@ -248,20 +266,26 @@
           ]
         },
         {
-          "name": "meta.embedded.inline.ferret string.quoted.other.ferret",
-          "begin": "\\b([A-Za-z][A-Za-z0-9_]*)(´)",
+          "contentName": "meta.embedded.inline.ferret string.quoted.other.ferret",
+          "begin": "(\\[)(~\\??)(\\s*)([A-Za-z][A-Za-z0-9_]*)(\\s*)(´)",
           "beginCaptures": {
             "1": {
-              "name": "entity.name.tag.dialect.ferret"
+              "name": "punctuation.section.brackets.ferret"
             },
             "2": {
-              "name": "punctuation.definition.string.begin.ferret"
+              "name": "keyword.operator.query.ferret"
+            },
+            "4": {
+              "name": "meta.embedded.inline.ferret string.quoted.other.ferret entity.name.tag.dialect.ferret"
+            },
+            "6": {
+              "name": "meta.embedded.inline.ferret string.quoted.other.ferret punctuation.definition.string.begin.ferret"
             }
           },
           "end": "´",
           "endCaptures": {
             "0": {
-              "name": "punctuation.definition.string.end.ferret"
+              "name": "meta.embedded.inline.ferret string.quoted.other.ferret punctuation.definition.string.end.ferret"
             }
           },
           "patterns": [

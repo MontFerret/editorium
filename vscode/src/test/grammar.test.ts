@@ -66,6 +66,38 @@ function assertScope(
   );
 }
 
+function assertNoScope(
+  tokens: FerretToken[],
+  unexpectedScope: string,
+): void {
+  const scoped = tokens.filter((token) =>
+    token.scopes.includes(unexpectedScope),
+  );
+
+  assert.deepStrictEqual(
+    scoped,
+    [],
+    `Expected no token to include ${unexpectedScope}; got ${scoped
+      .map((token) => `${JSON.stringify(token.text)}: ${token.scopes.join(' ')}`)
+      .join(' | ')}`,
+  );
+}
+
+function assertNotScope(
+  tokens: FerretToken[],
+  text: string,
+  unexpectedScope: string,
+): void {
+  const matches = tokensWithText(tokens, text);
+
+  assert.ok(
+    matches.every((token) => !token.scopes.includes(unexpectedScope)),
+    `Expected ${JSON.stringify(text)} not to include ${unexpectedScope}; got ${matches
+      .map((token) => token.scopes.join(' '))
+      .join(' | ')}`,
+  );
+}
+
 function tokenize(source: string): FerretToken[] {
   const tokens: FerretToken[] = [];
   let ruleStack = INITIAL;
@@ -329,21 +361,25 @@ return waitfor event all {
     assertScope(tokens, '250ms', 'constant.numeric.duration.ferret');
   });
 
-  test('keeps template interpolation in Ferret and dialect payloads generic', () => {
+  test('keeps template interpolation in Ferret and dialect payloads extensible', () => {
     const tokens = tokenize(
       'let message = `hello ${user.name} ${{ nested: true }.nested}`\n' +
-        'let first = page[~ custom_selector\'a.item\']\n' +
-        'let second = page[~ arbitrary"a.item"]\n' +
-        'let third = page[~ other´a.item´]\n' +
-        'return css`a[href="${message}"]`',
+        'let first = page[~ custom_selector \'a.item\']\n' +
+        'let second = page[~? arbitrary "a.item"]\n' +
+        'let third = page[~ other ´a.item´]\n' +
+        'return page[~ sql `a[href="${message}"]`]',
     );
 
     assertScope(tokens, '${', 'punctuation.section.interpolation.begin.ferret');
     assertScope(tokens, 'true', 'constant.language.boolean.ferret');
-    assertScope(tokens, 'css', 'entity.name.tag.dialect.ferret');
+    assertScope(tokens, 'sql', 'entity.name.tag.dialect.ferret');
     assertScope(tokens, 'custom_selector', 'entity.name.tag.dialect.ferret');
     assertScope(tokens, 'arbitrary', 'entity.name.tag.dialect.ferret');
     assertScope(tokens, 'other', 'entity.name.tag.dialect.ferret');
+    assertScope(tokens, '~?', 'keyword.operator.query.ferret');
+    assertNotScope(tokens, '~?', 'meta.embedded.inline.ferret');
+    assertNotScope(tokens, '[', 'meta.embedded.inline.ferret');
+    assertNotScope(tokens, ']', 'meta.embedded.inline.ferret');
     assert.ok(
       tokensWithText(tokens, 'a[href="').some((token) =>
         token.scopes.includes('meta.embedded.inline.ferret'),
@@ -359,6 +395,51 @@ return waitfor event all {
         token.scopes.includes('meta.embedded.inline.ferret'),
       ),
     );
+  });
+
+  test('does not classify ordinary identifier and string adjacency as query literals', () => {
+    const tokens = tokenize(`foo "bar"
+foo 'bar'
+let foo = "bar"
+return foo
+"plain string"
+some_identifier
+foo"adjacent"
+sql\`standalone\``);
+
+    assertNoScope(tokens, 'meta.embedded.inline.ferret');
+    assertScope(tokens, 'bar', 'string.quoted.double.ferret');
+    assertScope(tokens, 'bar', 'string.quoted.single.ferret');
+    assertScope(tokens, 'plain string', 'string.quoted.double.ferret');
+    assertScope(tokens, 'adjacent', 'string.quoted.double.ferret');
+    assertScope(
+      tokens,
+      'standalone',
+      'string.quoted.other.template.ferret',
+    );
+    assertNotScope(tokens, 'foo', 'entity.name.tag.dialect.ferret');
+    assertNotScope(tokens, 'sql', 'entity.name.tag.dialect.ferret');
+  });
+
+  test('keeps incomplete standalone templates out of embedded-query scopes', () => {
+    const tokens = tokenize('sql`');
+
+    assertNoScope(tokens, 'meta.embedded.inline.ferret');
+    assertNotScope(tokens, 'sql', 'entity.name.tag.dialect.ferret');
+    assertScope(tokens, '`', 'string.quoted.other.template.ferret');
+  });
+
+  test('ends a completed dialect payload before following Ferret code', () => {
+    const tokens = tokenize(`let q = page[~ sql\`select * from users\`]
+return q`);
+
+    assertScope(
+      tokens,
+      'select * from users',
+      'meta.embedded.inline.ferret',
+    );
+    assertScope(tokens, 'return', 'keyword.control.flow.ferret');
+    assertNotScope(tokens, 'return', 'meta.embedded.inline.ferret');
   });
 
   test('tokenizes unfinished constructs without losing earlier scopes', () => {

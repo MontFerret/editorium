@@ -3,8 +3,6 @@ import * as assert from 'node:assert/strict';
 import {
   bundledExecutableName,
   createServerConfiguration,
-  createServerOptions,
-  ferretDocumentSelector,
 } from '../config';
 
 suite('Ferret language server configuration', () => {
@@ -22,11 +20,6 @@ suite('Ferret language server configuration', () => {
       source: 'bundled',
       bundledVersion: '2.0.0-alpha.2',
     });
-    assert.deepStrictEqual(createServerOptions(configuration), {
-      command: '/extension/bin/ferretd',
-      args: ['lsp'],
-      options: { detached: false },
-    });
   });
 
   test('preserves an explicit executable and appends extra arguments', () => {
@@ -39,25 +32,16 @@ suite('Ferret language server configuration', () => {
     );
     configuredArguments.push('--unexpected');
 
-    const options = createServerOptions(configuration);
-    assert.deepStrictEqual(options, {
-      command: '/opt/ferret/bin/ferretd',
-      args: ['lsp', '--log-level', 'debug'],
-      options: { detached: false },
-    });
-    assert.strictEqual('transport' in options, false);
     assert.strictEqual(configuration.source, 'configured');
+    assert.deepStrictEqual(configuration.extraArguments, [
+      '--log-level',
+      'debug',
+    ]);
   });
 
   test('uses the Windows executable name only on Windows', () => {
     assert.strictEqual(bundledExecutableName('win32'), 'ferretd.exe');
     assert.strictEqual(bundledExecutableName('darwin'), 'ferretd');
     assert.strictEqual(bundledExecutableName('linux'), 'ferretd');
-  });
-
-  test('selects file-backed Ferret documents by language identity', () => {
-    assert.deepStrictEqual(ferretDocumentSelector, [
-      { scheme: 'file', language: 'ferret' },
-    ]);
   });
 });

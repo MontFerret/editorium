@@ -4,12 +4,9 @@ import {
   readServerConfiguration,
   restartLanguageServerCommand,
 } from './config';
-import {
-  ConfiguredTraceOutputChannel,
-  LanguageServerController,
-  createLanguageClient,
-  showOutputAction,
-} from './server';
+import { createLanguageClient } from './language-client';
+import { LanguageServerController, showOutputAction } from './server';
+import { ConfiguredTraceOutputChannel } from './trace-output';
 
 let controller: LanguageServerController | undefined;
 

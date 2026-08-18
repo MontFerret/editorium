@@ -24,6 +24,10 @@ completion, hover information, signature help, symbols and navigation,
 semantic tokens, and document formatting. The extension does not implement
 those features independently.
 
+Language-server features currently require a Ferret document with a file URI.
+Untitled Ferret documents still receive TextMate highlighting, but `ferretd`
+does not yet accept their non-file document URIs.
+
 Debugging and query execution are not included.
 
 ## Bundled language server
