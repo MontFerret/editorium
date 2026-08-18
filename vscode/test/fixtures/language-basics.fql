@@ -1,0 +1,20 @@
+use web::html as html
+
+// Bind parameters and reusable local functions are ordinary Ferret syntax.
+func label(item, prefix) => `${prefix}: ${item.name}`
+
+let source = @items ?? [
+    { name: "Ada", active: true, score: 12.5 },
+    { name: 'Grace', active: false, score: 1e2 }
+]
+var processed = 0
+processed += 1
+
+return {
+    first: html::normalize(label(source[0], "item")),
+    processed: processed,
+    wait: 250ms,
+    range: 1..3,
+    legacyQuote: ´still supported´,
+    missing: none
+}

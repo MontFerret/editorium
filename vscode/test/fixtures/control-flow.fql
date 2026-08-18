@@ -1,0 +1,24 @@
+let users = [
+    { name: "Ada", role: "admin", active: true, score: 10, tags: ["math", "code"] },
+    { name: "Grace", role: "member", active: true, score: 9, tags: ["compiler"] }
+]
+
+return for user, index in users {
+    filter user.active
+    sort user.score desc
+    limit 10
+
+    let title = match user.role {
+        "admin" when user.active => "Administrator",
+        "guest" => "Guest",
+        _ => "Member"
+    }
+
+    return {
+        index: index,
+        title: title,
+        tags: (for tag in user.tags {
+            return tag
+        })
+    }
+}

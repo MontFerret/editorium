@@ -1,0 +1,12 @@
+{
+  "folders": [
+    {
+      "name": "primary",
+      "path": "."
+    },
+    {
+      "name": "secondary",
+      "path": "multi-root-secondary"
+    }
+  ]
+}

@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  distribution-targets:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate distribution matrix
+        id: matrix
+        shell: bash
+        run: echo "matrix=$(node vscode/scripts/distribution.mjs matrix)" >> "$GITHUB_OUTPUT"
+
+  editor-packages:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build packages
+        run: npm run build
+
+      - name: Prepare pinned ferretd
+        run: npm run vscode:prepare -- --target linux-x64
+
+      - name: Test packages
+        env:
+          FERRETD_TEST_PATH: ${{ github.workspace }}/vscode/bin/ferretd
+        run: xvfb-run -a npm test
+
+  vscode-distributions:
+    needs:
+      - distribution-targets
+      - editor-packages
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.distribution-targets.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Package target VSIX
+        run: npm run vscode:package -- --target ${{ matrix.target }}
+
+      - name: Recheck package contents
+        run: npm run package:check --workspace vscode -- --target ${{ matrix.target }}
+
+      - name: Test installed Linux x64 VSIX
+        if: matrix.target == 'linux-x64'
+        run: xvfb-run -a npm run test:installed --workspace vscode
+
+      - name: Upload target VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: ferret-vscode-${{ matrix.target }}
+          path: vscode/*.vsix
+          if-no-files-found: error

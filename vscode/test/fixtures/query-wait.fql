@@ -1,0 +1,12 @@
+let page = web::html::open("https://example.com", { driver: "cdp" })
+let cards = page[~ css`.product-card`]
+let first = page[~? css`.product-card`]
+let selected = query one `.product-card` in page
+    using css
+    options { visible: true }
+
+return waitfor value selected
+    when .visible
+    timeout 5s
+    every 250ms
+    on timeout return none

@@ -1,0 +1,3 @@
+LET value=1
+FUNC add(left,right)=>left+right
+RETURN add(value,2)

@@ -1,0 +1,13 @@
+{
+  "name": "ferret-installed-vsix-tests",
+  "displayName": "Ferret Installed VSIX Tests",
+  "version": "0.0.0",
+  "publisher": "ferretlang-tests",
+  "private": true,
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ]
+}
