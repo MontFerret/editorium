@@ -27,6 +27,19 @@ jobs:
       - name: Build packages
         run: npm run build
 
+      - name: Install ferretd integration-test release
+        env:
+          FERRETD_VERSION: v2.0.0-alpha.1
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "https://github.com/MontFerret/ferretd/releases/download/${FERRETD_VERSION}/ferretd_checksums.txt"
+          curl -fsSLO "https://github.com/MontFerret/ferretd/releases/download/${FERRETD_VERSION}/ferretd_linux_x86_64.tar.gz"
+          grep ' ferretd_linux_x86_64.tar.gz$' ferretd_checksums.txt | sha256sum --check -
+          mkdir ferretd-integration
+          tar -xzf ferretd_linux_x86_64.tar.gz -C ferretd-integration
+          echo "$RUNNER_TEMP/ferretd-integration" >> "$GITHUB_PATH"
+          echo "FERRETD_TEST_PATH=$RUNNER_TEMP/ferretd-integration/ferretd" >> "$GITHUB_ENV"
+
       - name: Test packages
         run: xvfb-run -a npm test
 

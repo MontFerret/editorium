@@ -5,6 +5,7 @@ const extensionId = 'ferretlang.fql';
 
 interface FerretManifest {
   activationEvents?: unknown;
+  extensionKind: string[];
   contributes: {
     languages: Array<{
       id: string;
@@ -17,6 +18,24 @@ interface FerretManifest {
       scopeName: string;
       path: string;
     }>;
+    commands: Array<{
+      command: string;
+      title: string;
+      category: string;
+    }>;
+    configuration: {
+      title: string;
+      properties: Record<
+        string,
+        {
+          type: string;
+          default: unknown;
+          scope: string;
+          items?: { type: string };
+          enum?: string[];
+        }
+      >;
+    };
   };
 }
 
@@ -47,13 +66,16 @@ function getExtension(): vscode.Extension<unknown> {
 }
 
 suite('Ferret declarative language support', () => {
-  test('contributes the Ferret language, configuration, and grammar', () => {
+  test('contributes language support and thin-client configuration', () => {
     const manifest = getExtension().packageJSON as FerretManifest;
 
     assert.strictEqual('activationEvents' in manifest, false);
+    assert.deepStrictEqual(manifest.extensionKind, ['workspace']);
     assert.deepStrictEqual(Object.keys(manifest.contributes), [
       'languages',
       'grammars',
+      'commands',
+      'configuration',
     ]);
     assert.deepStrictEqual(manifest.contributes.languages, [
       {
@@ -70,6 +92,51 @@ suite('Ferret declarative language support', () => {
         path: './syntaxes/ferret.tmLanguage.json',
       },
     ]);
+    assert.deepStrictEqual(manifest.contributes.commands, [
+      {
+        command: 'ferret.restartLanguageServer',
+        title: 'Restart Language Server',
+        category: 'Ferret',
+      },
+    ]);
+
+    const properties = manifest.contributes.configuration.properties;
+    assert.deepStrictEqual(
+      {
+        type: properties['ferret.server.path']?.type,
+        default: properties['ferret.server.path']?.default,
+        scope: properties['ferret.server.path']?.scope,
+      },
+      { type: 'string', default: '', scope: 'window' },
+    );
+    assert.deepStrictEqual(
+      {
+        type: properties['ferret.server.args']?.type,
+        items: properties['ferret.server.args']?.items,
+        default: properties['ferret.server.args']?.default,
+        scope: properties['ferret.server.args']?.scope,
+      },
+      {
+        type: 'array',
+        items: { type: 'string' },
+        default: [],
+        scope: 'window',
+      },
+    );
+    assert.deepStrictEqual(
+      {
+        type: properties['ferret.trace.server']?.type,
+        values: properties['ferret.trace.server']?.enum,
+        default: properties['ferret.trace.server']?.default,
+        scope: properties['ferret.trace.server']?.scope,
+      },
+      {
+        type: 'string',
+        values: ['off', 'messages', 'verbose'],
+        default: 'off',
+        scope: 'window',
+      },
+    );
   });
 
   test('declares comments, pairs, and conservative brace indentation', async () => {
@@ -187,8 +254,18 @@ suite('Ferret declarative language support', () => {
     assert.strictEqual(document.languageId, 'ferret');
 
     await vscode.window.showTextDocument(document);
-    await extension.activate();
+    await waitForActivation(extension);
 
     assert.strictEqual(extension.isActive, true);
   });
 });
+
+async function waitForActivation(
+  extension: vscode.Extension<unknown>,
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+
+  while (!extension.isActive && Date.now() < deadline) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+}

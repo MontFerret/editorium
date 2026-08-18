@@ -27,6 +27,9 @@
   "engines": {
     "vscode": "^1.95.0"
   },
+  "extensionKind": [
+    "workspace"
+  ],
   "main": "./out/extension.js",
   "files": [
     "syntaxes/ferret.tmLanguage.json",
@@ -55,16 +58,60 @@
         "scopeName": "source.ferret",
         "path": "./syntaxes/ferret.tmLanguage.json"
       }
-    ]
+    ],
+    "commands": [
+      {
+        "command": "ferret.restartLanguageServer",
+        "title": "Restart Language Server",
+        "category": "Ferret"
+      }
+    ],
+    "configuration": {
+      "title": "Ferret",
+      "properties": {
+        "ferret.server.path": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "markdownDescription": "Path to the `ferretd` executable. Leave empty to resolve `ferretd` from the extension host's `PATH`. Run **Ferret: Restart Language Server** after changing this setting."
+        },
+        "ferret.server.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "window",
+          "markdownDescription": "Advanced arguments appended after the required `lsp` command. Run **Ferret: Restart Language Server** after changing this setting."
+        },
+        "ferret.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "enumDescriptions": [
+            "Disable Language Server Protocol tracing.",
+            "Trace sent and received Language Server Protocol messages without payload details.",
+            "Trace sent and received Language Server Protocol messages including payload details."
+          ],
+          "default": "off",
+          "scope": "window",
+          "markdownDescription": "Controls Language Server Protocol tracing in the **Ferret** output channel for troubleshooting."
+        }
+      }
+    }
   },
   "scripts": {
     "build": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
+    "bundle": "node ./scripts/build.mjs",
+    "compile": "tsc -p ./ && npm run bundle",
+    "watch": "node ./scripts/build.mjs --watch",
     "test": "npm run compile && vscode-test",
     "package": "vsce package --no-dependencies",
     "package:check": "npm run build && node ./scripts/check-package.mjs",
-    "vscode:prepublish": "npm run build"
+    "vscode:prepublish": "tsc -p ./ && node ./scripts/build.mjs --production"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
@@ -73,8 +120,12 @@
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.2",
     "typescript": "^6.0.3",
     "vscode-oniguruma": "^2.0.1",
     "vscode-textmate": "^9.3.2"
+  },
+  "dependencies": {
+    "vscode-languageclient": "10.1.0"
   }
 }
