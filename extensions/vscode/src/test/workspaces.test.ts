@@ -70,4 +70,29 @@ suite('Ferret daemon endpoints and workspaces', () => {
       undefined,
     );
   });
+
+  test('reports only workspace identities that become invalid', () => {
+    const registry = new FerretWorkspaceRegistry();
+    const invalidated: string[][] = [];
+    const listener = registry.onDidInvalidateWorkspaces((event) => {
+      invalidated.push([...event.workspaceIds]);
+    });
+
+    try {
+      registry.set({ id: 'first', root: '/workspace' });
+      registry.set({ id: 'first', root: '/workspace/' });
+      registry.set({ id: 'second', root: '/workspace' });
+      registry.set({ id: 'nested', root: '/workspace/nested' });
+      registry.delete('/workspace/nested');
+      registry.clear();
+
+      assert.deepStrictEqual(invalidated, [
+        ['first'],
+        ['nested'],
+        ['second'],
+      ]);
+    } finally {
+      listener.dispose();
+    }
+  });
 });

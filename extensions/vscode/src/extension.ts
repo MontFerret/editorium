@@ -6,11 +6,13 @@ import {
 } from './config';
 import { FerretServerController } from './controller';
 import { DaemonController } from './daemon/manager';
+import { FerretExecutionManager } from './execution/manager';
 import { createLanguageClient } from './language-client';
 import { LanguageServerController, showOutputAction } from './server';
 import { ConfiguredTraceOutputChannel } from './trace-output';
 
 let controller: FerretServerController | undefined;
+let executionManager: FerretExecutionManager | undefined;
 
 export async function activate(
   context: vscode.ExtensionContext,
@@ -47,8 +49,14 @@ export async function activate(
     daemon,
     output,
   );
+  const activeExecutionManager = new FerretExecutionManager(
+    daemon,
+    activeController.executions,
+    daemon.workspaceRegistry,
+  );
 
   controller = activeController;
+  executionManager = activeExecutionManager;
   await activeController.updateWorkspaceFolders(workspaceRoots());
   context.subscriptions.push(
     output,
@@ -73,8 +81,11 @@ export async function activate(
 
 export async function deactivate(): Promise<void> {
   const activeController = controller;
+  const activeExecutionManager = executionManager;
   controller = undefined;
+  executionManager = undefined;
 
+  await activeExecutionManager?.dispose();
   await activeController?.stop();
 }
 

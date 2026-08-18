@@ -21,6 +21,19 @@ export const ferretDocumentSelector: DocumentSelector = [
   { scheme: 'file', language: languageId },
 ];
 
+export function isFerretDocument(
+  document: Pick<
+    vscode.TextDocument,
+    'isUntitled' | 'languageId' | 'uri'
+  >,
+): boolean {
+  return (
+    !document.isUntitled &&
+    document.uri.scheme === 'file' &&
+    document.languageId === languageId
+  );
+}
+
 export interface LanguageClientHandle {
   readonly initializeResult: InitializeResult | undefined;
 

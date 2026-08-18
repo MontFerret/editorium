@@ -85,6 +85,25 @@ export class FerretExecutionClientError extends Error {
   }
 }
 
+export type ExecutionManagerErrorCode =
+  | 'unsupported-document'
+  | 'document-dirty'
+  | 'document-changed'
+  | 'workspace-unavailable'
+  | 'execution-already-running'
+  | 'disposed';
+
+export class ExecutionManagerError extends Error {
+  public constructor(
+    public readonly code: ExecutionManagerErrorCode,
+    message: string,
+    public readonly documentUri?: string,
+  ) {
+    super(message);
+    this.name = 'ExecutionManagerError';
+  }
+}
+
 export function normalizeExecutionError(
   error: unknown,
   operation: FerretExecutionOperation,
