@@ -108,8 +108,11 @@
     "build": "npm run compile",
     "bundle": "node ./scripts/build.mjs",
     "compile": "tsc -p ./ && npm run bundle",
+    "proto:check": "buf lint && node ./scripts/generate-proto.mjs --check",
+    "proto:generate": "node ./scripts/generate-proto.mjs",
     "watch": "node ./scripts/build.mjs --watch",
-    "test": "npm run compile && vscode-test",
+    "test": "npm run proto:check && npm run compile && vscode-test && node ./scripts/daemon-smoke.mjs",
+    "test:daemon": "npm run compile && node ./scripts/daemon-smoke.mjs",
     "test:installed": "npm run compile && node ./scripts/test-installed.mjs",
     "package": "node ./scripts/distribution.mjs package",
     "package:check": "node ./scripts/distribution.mjs check",
@@ -120,6 +123,7 @@
     "vscode:prepublish": "tsc -p ./ && node ./scripts/build.mjs --production"
   },
   "devDependencies": {
+    "@bufbuild/buf": "^1.72.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
     "@types/vscode": "1.95.0",
@@ -127,11 +131,14 @@
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.2",
+    "ts-proto": "^2.12.0",
     "typescript": "^6.0.3",
     "vscode-oniguruma": "^2.0.1",
     "vscode-textmate": "^9.3.2"
   },
   "dependencies": {
+    "@bufbuild/protobuf": "^2.14.0",
+    "@grpc/grpc-js": "^1.14.4",
     "vscode-languageclient": "10.1.0"
   }
 }
