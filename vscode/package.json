@@ -29,6 +29,8 @@
   },
   "main": "./out/extension.js",
   "files": [
+    "syntaxes/ferret.tmLanguage.json",
+    "language-configuration.json",
     "out/extension.js",
     "README.md",
     "LICENSE"
@@ -43,7 +45,15 @@
         ],
         "extensions": [
           ".fql"
-        ]
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ferret",
+        "scopeName": "source.ferret",
+        "path": "./syntaxes/ferret.tmLanguage.json"
       }
     ]
   },
@@ -63,6 +73,8 @@
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.9.2",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.3.2"
   }
 }

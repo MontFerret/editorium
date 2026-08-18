@@ -3,9 +3,22 @@
 This package provides Visual Studio Code support for Ferret Query Language
 files. It is under active development.
 
-The current foundation registers `.fql` files as the `ferret` language. Syntax
-highlighting, language-server integration, diagnostics, completion, formatting,
-and other language features are not included yet.
+Opening a `.fql` file provides a declarative editing baseline without requiring
+`ferretd`:
+
+- syntax highlighting for current Ferret v2 constructs;
+- line and block comments;
+- bracket matching and automatic pair insertion;
+- conservative brace-based indentation; and
+- folding for structurally indented blocks.
+
+The TextMate grammar is a resilient lexical fallback. It recognizes language
+syntax, functions, namespaces, templates, and dialect-tagged query payloads,
+but it does not parse or semantically analyze Ferret programs.
+
+Language-server integration, diagnostics, completion, hover information,
+semantic intelligence, formatting, debugging, and execution are not included
+yet. Those features will be provided through later `ferretd` integrations.
 
 ## Development
 
@@ -32,7 +45,7 @@ files are ignored by Git.
 1. Open the repository root in Visual Studio Code.
 2. Press `F5` and select **Run Ferret Extension** if prompted.
 3. In the Extension Development Host, open a file ending in `.fql`.
-4. Confirm that the language mode shown by VS Code is **Ferret**.
+4. Confirm that the language mode shown by VS Code is **Ferret** and inspect
+   the fixtures under `test/fixtures`.
 
-The extension entry point intentionally performs no runtime work at this
-milestone.
+The extension entry point intentionally performs no runtime work.

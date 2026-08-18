@@ -1,0 +1,613 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Ferret",
+  "scopeName": "source.ferret",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#function-declarations"
+    },
+    {
+      "include": "#bindings"
+    },
+    {
+      "include": "#dialect-templates"
+    },
+    {
+      "include": "#dialect-tags"
+    },
+    {
+      "include": "#templates"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#parameters"
+    },
+    {
+      "include": "#function-calls"
+    },
+    {
+      "include": "#namespaces"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#punctuation"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.ferret",
+          "begin": "//",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.ferret"
+            }
+          },
+          "end": "$"
+        },
+        {
+          "name": "comment.block.ferret",
+          "begin": "/\\*",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.begin.ferret"
+            }
+          },
+          "end": "\\*/",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.end.ferret"
+            }
+          }
+        }
+      ]
+    },
+    "function-declarations": {
+      "patterns": [
+        {
+          "name": "meta.function.parameters.ferret",
+          "begin": "(?i:(\\bfunc\\b))\\s+([A-Za-z][A-Za-z0-9_]*)(\\s*\\()",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.function.ferret"
+            },
+            "2": {
+              "name": "entity.name.function.ferret"
+            },
+            "3": {
+              "name": "punctuation.definition.parameters.begin.ferret"
+            }
+          },
+          "end": "(\\))|(?=\\s*(?:=>|\\{))",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.parameters.end.ferret"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#comments"
+            },
+            {
+              "name": "variable.parameter.ferret",
+              "match": "\\b[A-Za-z][A-Za-z0-9_]*\\b|_"
+            },
+            {
+              "name": "punctuation.separator.comma.ferret",
+              "match": ","
+            }
+          ]
+        }
+      ]
+    },
+    "bindings": {
+      "patterns": [
+        {
+          "match": "(?i:(\\b(?:let|var)\\b))\\s+([A-Za-z][A-Za-z0-9_]*|_)(?=\\s*=)",
+          "captures": {
+            "1": {
+              "name": "storage.type.variable.ferret"
+            },
+            "2": {
+              "name": "variable.other.definition.ferret"
+            }
+          }
+        },
+        {
+          "match": "(?i:(\\bfor\\b)\\s+([A-Za-z][A-Za-z0-9_]*|_)(?:\\s*(,)\\s*([A-Za-z][A-Za-z0-9_]*))?\\s+(in)\\b)",
+          "captures": {
+            "1": {
+              "name": "keyword.control.loop.ferret"
+            },
+            "2": {
+              "name": "variable.other.definition.ferret"
+            },
+            "3": {
+              "name": "punctuation.separator.comma.ferret"
+            },
+            "4": {
+              "name": "variable.other.definition.ferret"
+            },
+            "5": {
+              "name": "keyword.operator.comparison.ferret"
+            }
+          }
+        },
+        {
+          "match": "(?i:(\\bfor\\b)\\s+([A-Za-z][A-Za-z0-9_]*|_)(?=\\s+(?:do\\s+)?while\\b))",
+          "captures": {
+            "1": {
+              "name": "keyword.control.loop.ferret"
+            },
+            "2": {
+              "name": "variable.other.definition.ferret"
+            }
+          }
+        }
+      ]
+    },
+    "dialect-templates": {
+      "patterns": [
+        {
+          "name": "meta.embedded.inline.ferret string.quoted.other.template.ferret",
+          "begin": "\\b([A-Za-z][A-Za-z0-9_]*)(`)",
+          "beginCaptures": {
+            "1": {
+              "name": "entity.name.tag.dialect.ferret"
+            },
+            "2": {
+              "name": "punctuation.definition.string.begin.ferret"
+            }
+          },
+          "end": "`",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.ferret"
+            }
+          },
+          "applyEndPatternLast": true,
+          "patterns": [
+            {
+              "include": "#interpolation"
+            },
+            {
+              "name": "constant.character.escape.ferret",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "dialect-tags": {
+      "patterns": [
+        {
+          "name": "meta.embedded.inline.ferret string.quoted.double.ferret",
+          "begin": "\\b([A-Za-z][A-Za-z0-9_]*)(\")",
+          "beginCaptures": {
+            "1": {
+              "name": "entity.name.tag.dialect.ferret"
+            },
+            "2": {
+              "name": "punctuation.definition.string.begin.ferret"
+            }
+          },
+          "end": "\"",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.ferret"
+            }
+          },
+          "applyEndPatternLast": true,
+          "patterns": [
+            {
+              "name": "constant.character.escape.ferret",
+              "match": "\\\\.|\"\""
+            }
+          ]
+        },
+        {
+          "name": "meta.embedded.inline.ferret string.quoted.single.ferret",
+          "begin": "\\b([A-Za-z][A-Za-z0-9_]*)(')",
+          "beginCaptures": {
+            "1": {
+              "name": "entity.name.tag.dialect.ferret"
+            },
+            "2": {
+              "name": "punctuation.definition.string.begin.ferret"
+            }
+          },
+          "end": "'",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.ferret"
+            }
+          },
+          "applyEndPatternLast": true,
+          "patterns": [
+            {
+              "name": "constant.character.escape.ferret",
+              "match": "\\\\.|''"
+            }
+          ]
+        },
+        {
+          "name": "meta.embedded.inline.ferret string.quoted.other.ferret",
+          "begin": "\\b([A-Za-z][A-Za-z0-9_]*)(´)",
+          "beginCaptures": {
+            "1": {
+              "name": "entity.name.tag.dialect.ferret"
+            },
+            "2": {
+              "name": "punctuation.definition.string.begin.ferret"
+            }
+          },
+          "end": "´",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.ferret"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.ferret",
+              "match": "\\\\´"
+            }
+          ]
+        }
+      ]
+    },
+    "templates": {
+      "patterns": [
+        {
+          "name": "string.quoted.other.template.ferret",
+          "begin": "`",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.ferret"
+            }
+          },
+          "end": "`",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.ferret"
+            }
+          },
+          "applyEndPatternLast": true,
+          "patterns": [
+            {
+              "include": "#interpolation"
+            },
+            {
+              "name": "constant.character.escape.ferret",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "interpolation": {
+      "name": "meta.interpolation.ferret",
+      "begin": "\\$\\{",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.section.interpolation.begin.ferret"
+        }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.interpolation.end.ferret"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#nested-interpolation-braces"
+        },
+        {
+          "include": "$self"
+        }
+      ]
+    },
+    "nested-interpolation-braces": {
+      "name": "meta.brace.ferret",
+      "begin": "\\{",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.section.braces.begin.ferret"
+        }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.braces.end.ferret"
+        }
+      },
+      "patterns": [
+        {
+          "include": "$self"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.ferret",
+          "begin": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.ferret"
+            }
+          },
+          "end": "\"",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.ferret"
+            }
+          },
+          "applyEndPatternLast": true,
+          "patterns": [
+            {
+              "name": "constant.character.escape.ferret",
+              "match": "\\\\.|\"\""
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.ferret",
+          "begin": "'",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.ferret"
+            }
+          },
+          "end": "'",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.ferret"
+            }
+          },
+          "applyEndPatternLast": true,
+          "patterns": [
+            {
+              "name": "constant.character.escape.ferret",
+              "match": "\\\\.|''"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.other.ferret",
+          "begin": "´",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.ferret"
+            }
+          },
+          "end": "´",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.ferret"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.ferret",
+              "match": "\\\\´"
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.duration.ferret",
+          "match": "(?i:(?<![A-Za-z0-9_])(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:e[+-]?[0-9]+)?(?:ms|s|m|h|d)(?![A-Za-z0-9_]))"
+        },
+        {
+          "name": "constant.numeric.float.ferret",
+          "match": "(?<![A-Za-z0-9_])(?:0|[1-9][0-9]*)(?:\\.[0-9]+(?:[eE][+-]?[0-9]+)?|[eE][+-]?[0-9]+)(?![A-Za-z0-9_])"
+        },
+        {
+          "name": "constant.numeric.integer.ferret",
+          "match": "(?<![A-Za-z0-9_])[0-9]+(?![A-Za-z0-9_])"
+        }
+      ]
+    },
+    "parameters": {
+      "patterns": [
+        {
+          "match": "(@)([A-Za-z][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.variable.ferret"
+            },
+            "2": {
+              "name": "variable.parameter.ferret"
+            }
+          }
+        }
+      ]
+    },
+    "function-calls": {
+      "patterns": [
+        {
+          "name": "entity.name.function.ferret",
+          "match": "\\b[A-Za-z][A-Za-z0-9_]*\\b(?=\\s*\\()"
+        }
+      ]
+    },
+    "namespaces": {
+      "patterns": [
+        {
+          "name": "entity.name.namespace.ferret",
+          "match": "\\b[A-Za-z][A-Za-z0-9_]*\\b(?=::)"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.dispatch.ferret",
+          "match": "<-"
+        },
+        {
+          "name": "keyword.operator.quantifier.ferret",
+          "match": "(?i:\\b(?:all|any|none)\\b(?=\\s*(?:(?:not\\s+)?in\\b|==|!=|>=|<=|>|<)))"
+        },
+        {
+          "name": "keyword.operator.comparison.ferret",
+          "match": "(?i:\\b(?:in|like)\\b)|=~|!~|==|!=|>=|<=|>|<"
+        },
+        {
+          "name": "keyword.operator.logical.ferret",
+          "match": "(?i:\\b(?:and|or|not)\\b)|&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.query.ferret",
+          "match": "~\\?|~"
+        },
+        {
+          "name": "keyword.operator.spread.ferret",
+          "match": "\\.\\.\\."
+        },
+        {
+          "name": "keyword.operator.range.ferret",
+          "match": "\\.\\."
+        },
+        {
+          "name": "keyword.operator.arrow.ferret",
+          "match": "=>"
+        },
+        {
+          "name": "keyword.operator.assignment.augmented.ferret",
+          "match": "\\*=|/=|\\+=|-="
+        },
+        {
+          "name": "keyword.operator.assignment.ferret",
+          "match": "=(?!=|~|>)"
+        },
+        {
+          "name": "keyword.operator.coalesce.ferret",
+          "match": "\\?\\?"
+        },
+        {
+          "name": "keyword.operator.optional.ferret",
+          "match": "\\?"
+        },
+        {
+          "name": "keyword.operator.arithmetic.ferret",
+          "match": "\\+\\+|--|[+*/%\\-]"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.ferret",
+          "match": "(?i:\\b(?:true|false)\\b)"
+        },
+        {
+          "name": "constant.language.null.ferret",
+          "match": "(?i:\\b(?:none|null)\\b)"
+        },
+        {
+          "name": "variable.language.anonymous.ferret",
+          "match": "(?<![A-Za-z0-9_])_(?![A-Za-z0-9_])"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "storage.type.variable.ferret",
+          "match": "(?i:\\b(?:let|var)\\b)"
+        },
+        {
+          "name": "storage.type.function.ferret",
+          "match": "(?i:\\bfunc\\b)"
+        },
+        {
+          "name": "keyword.control.import.ferret",
+          "match": "(?i:\\b(?:use|as)\\b)"
+        },
+        {
+          "name": "keyword.control.loop.ferret",
+          "match": "(?i:\\b(?:for|do|while)\\b)"
+        },
+        {
+          "name": "keyword.control.conditional.ferret",
+          "match": "(?i:\\b(?:match|when)\\b)"
+        },
+        {
+          "name": "keyword.control.flow.ferret",
+          "match": "(?i:\\b(?:return|delete)\\b)"
+        },
+        {
+          "name": "keyword.control.query.ferret",
+          "match": "(?i:\\b(?:query|using|filter|sort|limit|collect|aggregate|into|keep|with|distinct|asc|desc|exists|count|one|value|all|any|at|least)\\b)"
+        },
+        {
+          "name": "keyword.control.wait.ferret",
+          "match": "(?i:\\b(?:waitfor|dispatch|event|trigger|timeout|every|backoff|jitter|options)\\b)"
+        },
+        {
+          "name": "keyword.control.exception.ferret",
+          "match": "(?i:\\b(?:on|error|fail|retry|delay)\\b)"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.section.braces.ferret",
+          "match": "[{}]"
+        },
+        {
+          "name": "punctuation.section.brackets.ferret",
+          "match": "[\\[\\]]"
+        },
+        {
+          "name": "punctuation.section.parens.ferret",
+          "match": "[()]"
+        },
+        {
+          "name": "punctuation.separator.namespace.ferret",
+          "match": "::"
+        },
+        {
+          "name": "punctuation.separator.comma.ferret",
+          "match": ","
+        },
+        {
+          "name": "punctuation.separator.key-value.ferret",
+          "match": ":"
+        },
+        {
+          "name": "punctuation.accessor.ferret",
+          "match": "\\."
+        },
+        {
+          "name": "punctuation.terminator.statement.ferret",
+          "match": ";"
+        }
+      ]
+    }
+  }
+}

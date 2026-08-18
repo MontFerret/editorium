@@ -16,8 +16,10 @@ const actualFiles = output
 const expectedFiles = [
   'LICENSE',
   'README.md',
+  'language-configuration.json',
   'out/extension.js',
   'package.json',
+  'syntaxes/ferret.tmLanguage.json',
 ].sort();
 
 assert.deepStrictEqual(

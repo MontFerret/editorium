@@ -1,0 +1,9 @@
+let items = [
+    { kind: "ready", value: 1 },
+    { kind: "pending", value: 2 }
+
+return for item in items {
+    filter item.
+    return match item.kind {
+        "ready" => `value: ${item.value}`,
+        _ =>
