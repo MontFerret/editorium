@@ -25,4 +25,18 @@ npm run package:check
 ```
 
 The root commands run the corresponding script in every npm workspace that
-provides it.
+provides it. VS Code distribution commands acquire the explicitly pinned
+`ferretd` release, verify its published checksum, and default to the current
+host target:
+
+```sh
+npm run vscode:prepare
+npm run vscode:package
+npm run vscode:install
+```
+
+Pass `--target <target>` after `--` for an explicit supported target, for
+example `npm run vscode:package -- --target linux-arm64`. Generated downloads,
+staged executables, and VSIX files are ignored by Git. See
+[`vscode/RELEASING.md`](vscode/RELEASING.md) for the distribution matrix and
+release procedure.

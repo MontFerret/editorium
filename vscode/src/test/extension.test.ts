@@ -31,6 +31,7 @@ interface FerretManifest {
           type: string;
           default: unknown;
           scope: string;
+          markdownDescription?: string;
           items?: { type: string };
           enum?: string[];
         }
@@ -108,6 +109,14 @@ suite('Ferret declarative language support', () => {
         scope: properties['ferret.server.path']?.scope,
       },
       { type: 'string', default: '', scope: 'window' },
+    );
+    assert.match(
+      properties['ferret.server.path']?.markdownDescription ?? '',
+      /Overrides the `ferretd` binary bundled with the Ferret extension/u,
+    );
+    assert.match(
+      properties['ferret.server.path']?.markdownDescription ?? '',
+      /will not fall back to the bundled daemon/u,
     );
     assert.deepStrictEqual(
       {

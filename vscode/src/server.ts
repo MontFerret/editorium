@@ -118,7 +118,17 @@ export class LanguageServerController {
     };
 
     this.output.info('Starting Ferret language server');
-    this.output.info(`Executable: ${configuration.executable}`);
+    if (configuration.source === 'bundled') {
+      this.output.info('Ferret language server source: bundled');
+      this.output.info(
+        `Bundled ferretd: ${configuration.bundledVersion}`,
+      );
+    } else {
+      this.output.info(
+        'Ferret language server source: configured override',
+      );
+      this.output.info(`Executable: ${configuration.executable}`);
+    }
     this.output.info(
       `Arguments: ${JSON.stringify([
         'lsp',
@@ -200,11 +210,21 @@ export class LanguageServerController {
       `Ferret language server failed: ${formatError(error)}`,
     );
 
-    const message =
-      `Ferret language server failed using "${configuration.executable}". ` +
-      'Verify ferret.server.path and ferret.server.args, confirm the ' +
-      'executable can run in this extension host, and use ' +
-      '"Ferret: Restart Language Server" to retry.';
+    let message: string;
+    if (configuration.source === 'configured') {
+      message =
+        'Ferret language server failed using the configured override ' +
+        `"${configuration.executable}". Correct ferret.server.path or ` +
+        'ferret.server.args, then use "Ferret: Restart Language Server" ' +
+        'to retry. The configured override is authoritative and will not ' +
+        'fall back to the bundled daemon.';
+    } else {
+      message =
+        'The ferretd binary bundled with the Ferret extension failed to ' +
+        'start. Reinstall the extension package for this extension host, ' +
+        'check the Ferret output, and use "Ferret: Restart Language ' +
+        'Server" to retry.';
+    }
     void this.notifyFailure(message).then(
       (showOutput) => {
         if (showOutput) {

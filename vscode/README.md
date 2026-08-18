@@ -26,21 +26,22 @@ those features independently.
 
 Debugging and query execution are not included.
 
-## Install ferretd
+## Bundled language server
 
-Install `ferretd` separately from its
-[GitHub releases](https://github.com/MontFerret/ferretd/releases) or build it
-from source. By default the extension starts:
+The extension includes a compatible `ferretd` executable. No separate daemon
+installation or `PATH` configuration is required on these targets:
 
-```text
-ferretd lsp
-```
+- macOS ARM64 and x64;
+- Linux ARM64 and x64; and
+- Windows ARM64 and x64.
 
-The executable is resolved from the `PATH` of the extension host. In a remote
-SSH, Dev Container, WSL, or Codespaces window, install or configure `ferretd`
-in that remote environment rather than on the local UI machine.
+VS Code installs the platform-specific extension package for the extension
+host. In Remote SSH, Dev Container, WSL, and Codespaces windows, the bundled
+daemon therefore runs beside the extension and workspace on the remote host;
+it does not communicate back to a daemon on the local UI machine.
 
-Use an explicit path when `ferretd` is not on `PATH`:
+`ferret.server.path` remains an advanced override for development and
+troubleshooting:
 
 ```json
 {
@@ -48,8 +49,9 @@ Use an explicit path when `ferretd` is not on `PATH`:
 }
 ```
 
-An empty path restores `PATH` lookup. Advanced server arguments can be
-appended after the required `lsp` command:
+An empty path selects the bundled daemon. A non-empty path is authoritative:
+if it is invalid, startup fails rather than silently falling back. Advanced
+server arguments can be appended after the required `lsp` command:
 
 ```json
 {
@@ -58,13 +60,13 @@ appended after the required `lsp` command:
 ```
 
 After changing either setting, run **Ferret: Restart Language Server**. The
-extension deliberately does not download, update, or enforce a compatible
-version of `ferretd`.
+extension never downloads or updates executables at activation time.
 
 ## Output and troubleshooting
 
-Select **Ferret** under **View → Output** to inspect the resolved executable,
-effective arguments, lifecycle events, server stderr, and startup failures.
+Select **Ferret** under **View → Output** to inspect whether the bundled daemon
+or configured override is active, its version when available, effective
+arguments, lifecycle events, server stderr, and startup failures.
 Protocol tracing is disabled by default and can be enabled when troubleshooting:
 
 ```json
@@ -80,9 +82,10 @@ other sensitive data.
 If the server fails to start:
 
 1. Check the **Ferret** output channel for the underlying process error.
-2. Run the configured executable with `lsp` in the same local or remote
-   environment where the extension runs.
-3. Correct `ferret.server.path` or `ferret.server.args`.
+2. For the bundled daemon, reinstall the extension package matching the
+   extension host platform.
+3. For an override, run the configured executable with `lsp` in that extension
+   host and correct `ferret.server.path` or `ferret.server.args`.
 4. Run **Ferret: Restart Language Server**.
 
 Syntax highlighting and the declarative editing baseline continue to work
@@ -96,18 +99,41 @@ Install dependencies from the repository root:
 npm install
 ```
 
-The VS Code package can then be managed independently:
+The VS Code source package can then be built and tested independently:
 
 ```sh
 npm run build --workspace vscode
 npm test --workspace vscode
-npm run package --workspace vscode
-npm run package:check --workspace vscode
 ```
 
 The build bundles the language client and extension sources into
-`vscode/out/extension.js`. The package command creates
-`vscode/fql-0.1.0.vsix`. Generated output and VSIX files are ignored by Git.
+`vscode/out/extension.js`. It does not download a daemon.
+
+To stage the pinned daemon for the current host, create its platform-specific
+VSIX, or install that VSIX into the local VS Code instance, run:
+
+```sh
+npm run vscode:prepare
+npm run vscode:package
+npm run vscode:install
+```
+
+Each command accepts an explicit target, such as:
+
+```sh
+npm run vscode:package -- --target darwin-arm64
+```
+
+The package command prints and creates
+`vscode/fql-<target>-<extension-version>.vsix`. It verifies the official
+release checksum, the staged executable, the VSIX target and exact contents,
+the Unix executable mode, and the daemon bytes/version when the target is
+native. Downloads are cached under `.dist/`; the one selected binary is staged
+under `vscode/bin/`. Both locations and all VSIX files are ignored by Git.
+
+`ferretd.json` at the repository root is the sole bundled-daemon version pin.
+See [`RELEASING.md`](RELEASING.md) for target artifacts and future publication
+handoff.
 
 The real-server integration test is enabled when `FERRETD_TEST_PATH` points to
 an executable:
@@ -116,15 +142,16 @@ an executable:
 FERRETD_TEST_PATH=/absolute/path/to/ferretd npm test --workspace vscode
 ```
 
-CI downloads and verifies a pinned `ferretd` release rather than relying on an
-ambient installation.
+CI uses this override path to preserve explicit-server coverage in addition to
+the installed-VSIX bundled-server smoke test.
 
 ## Run and debug
 
 1. Open the repository root in Visual Studio Code.
-2. Press `F5` and select **Run Ferret Extension** if prompted.
-3. In the Extension Development Host, set `ferret.server.path` to a locally
-   built `ferretd` when it is not already on `PATH`.
+2. Either run `npm run vscode:prepare` to stage the pinned bundled daemon, or
+   configure `ferret.server.path` in the Extension Development Host to point
+   to a locally built daemon.
+3. Press `F5` and select **Run Ferret Extension** if prompted.
 4. Open a file ending in `.fql` and inspect the **Ferret** output channel.
 5. After rebuilding `ferretd`, run **Ferret: Restart Language Server** without
    reloading the Extension Development Host.

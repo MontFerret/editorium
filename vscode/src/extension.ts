@@ -19,7 +19,11 @@ export async function activate(
   const output = vscode.window.createOutputChannel('Ferret', { log: true });
   const traceOutput = new ConfiguredTraceOutputChannel(output);
   const activeController = new LanguageServerController(
-    readServerConfiguration,
+    () =>
+      readServerConfiguration(
+        context,
+        __BUNDLED_FERRETD_VERSION__,
+      ),
     (configuration, reportFailure) =>
       createLanguageClient(
         configuration,

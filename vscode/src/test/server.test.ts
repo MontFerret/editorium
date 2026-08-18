@@ -102,8 +102,20 @@ class OperationTracker {
   }
 }
 
-function serverConfiguration(executable: string): ServerConfiguration {
-  return { executable, extraArguments: [] };
+function serverConfiguration(
+  executable: string,
+  source: 'bundled' | 'configured' = 'configured',
+): ServerConfiguration {
+  if (source === 'bundled') {
+    return {
+      executable,
+      extraArguments: [],
+      source,
+      bundledVersion: '2.0.0-alpha.2',
+    };
+  }
+
+  return { executable, extraArguments: [], source };
 }
 
 suite('Ferret language server lifecycle', () => {
@@ -177,6 +189,12 @@ suite('Ferret language server lifecycle', () => {
     assert.ok(
       output.infos.includes('Ferret language server stopped'),
     );
+    assert.ok(
+      output.infos.includes(
+        'Ferret language server source: configured override',
+      ),
+    );
+    assert.ok(output.infos.includes('Executable: ferretd'));
   });
 
   test('restart stops the old client and reloads configuration', async () => {
@@ -185,10 +203,12 @@ suite('Ferret language server lifecycle', () => {
       {
         executable: '/first/ferretd',
         extraArguments: ['--first'],
+        source: 'configured' as const,
       },
       {
         executable: '/second/ferretd',
         extraArguments: ['--second'],
+        source: 'configured' as const,
       },
     ];
     const created: Array<{
@@ -267,6 +287,27 @@ suite('Ferret language server lifecycle', () => {
     assert.match(output.errors[0] ?? '', /initialization failed/u);
   });
 
+  test('logs bundled source and version without its installation path', async () => {
+    const output = new FakeOutput();
+    const controller = new LanguageServerController(
+      () => serverConfiguration('/extension/bin/ferretd', 'bundled'),
+      (_configuration, reportFailure) =>
+        new FakeClient(reportFailure),
+      output,
+      async () => false,
+    );
+
+    await controller.start();
+
+    assert.ok(
+      output.infos.includes('Ferret language server source: bundled'),
+    );
+    assert.ok(output.infos.includes('Bundled ferretd: 2.0.0-alpha.2'));
+    assert.ok(
+      !output.infos.some((message) => message.includes('/extension/bin')),
+    );
+  });
+
   test('reports one actionable failure per client generation', async () => {
     const output = new FakeOutput();
     const notifications: string[] = [];
@@ -296,6 +337,34 @@ suite('Ferret language server lifecycle', () => {
     assert.match(notifications[0] ?? '', /\/missing\/ferretd/u);
     assert.match(notifications[0] ?? '', /ferret\.server\.path/u);
     assert.strictEqual(output.showCalls, 1);
+  });
+
+  test('reports a bundled failure without override guidance', async () => {
+    const output = new FakeOutput();
+    const notifications: string[] = [];
+    const controller = new LanguageServerController(
+      () => serverConfiguration('/extension/bin/ferretd', 'bundled'),
+      (_configuration, reportFailure) => {
+        const client = new FakeClient(reportFailure);
+        client.startError = new Error('spawn EACCES');
+
+        return client;
+      },
+      output,
+      async (message) => {
+        notifications.push(message);
+
+        return false;
+      },
+    );
+
+    await controller.start();
+
+    assert.match(notifications[0] ?? '', /bundled with the Ferret/u);
+    assert.doesNotMatch(
+      notifications[0] ?? '',
+      /Correct ferret\.server\.path/u,
+    );
   });
 
   test('does not block startup on the failure notification choice', async () => {
