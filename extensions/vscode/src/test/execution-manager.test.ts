@@ -1,9 +1,13 @@
 import * as assert from 'node:assert/strict';
+import { performance } from 'node:perf_hooks';
 
 import * as vscode from 'vscode';
 
 import { FerretWorkspaceRegistry } from '../daemon/workspaces';
-import { ExecutionManagerError } from '../execution/errors';
+import {
+  ExecutionManagerError,
+  FerretExecutionClientError,
+} from '../execution/errors';
 import {
   FerretExecutionManager,
   type ExecutionClient,
@@ -110,6 +114,7 @@ class FakeExecutionClient implements ExecutionClient {
     readonly relativePath: string;
   }> = [];
   public createSessionGate: Promise<void> | undefined;
+  public createSessionError: Error | undefined;
   public rejectCleanup = false;
   public runError: Error | undefined;
 
@@ -125,6 +130,9 @@ class FakeExecutionClient implements ExecutionClient {
     this.calls.push('create-session');
     this.sessionRequests.push({ workspaceId, relativePath });
     await this.createSessionGate;
+    if (this.createSessionError !== undefined) {
+      throw this.createSessionError;
+    }
     const id = `session-${++this.sessionCount}`;
 
     return {
@@ -263,10 +271,12 @@ suite('Ferret execution manager', () => {
     );
 
     try {
+      const beforeStart = performance.now();
       const first = await fixture.manager.run(
         asTextDocument(document),
         parameters,
       );
+      const afterStart = performance.now();
 
       assert.deepStrictEqual(fixture.client.calls.slice(0, 4), [
         'create-session',
@@ -276,7 +286,10 @@ suite('Ferret execution manager', () => {
       ]);
       assert.strictEqual(fixture.client.executionParameters[0], parameters);
       assert.strictEqual(first.execution.status, 'running');
+      assert.ok(first.startedAt >= beforeStart);
+      assert.ok(first.startedAt <= afterStart);
       assert.strictEqual(fixture.manager.getActive(document.uri), first);
+      assert.strictEqual(fixture.manager.activeCount, 1);
       assert.strictEqual(changes[0]?.kind, 'started');
 
       fixture.client.send(first.id, 'created');
@@ -289,6 +302,7 @@ suite('Ferret execution manager', () => {
       fixture.client.send(first.id, 'completed');
       await settle();
       assert.strictEqual(fixture.manager.isRunning(document.uri), false);
+      assert.strictEqual(fixture.manager.activeCount, 0);
       assert.deepStrictEqual(fixture.client.closeExecutionIds, [first.id]);
       assert.strictEqual(changes.at(-1)?.kind, 'finished');
 
@@ -431,6 +445,59 @@ suite('Ferret execution manager', () => {
     }
   });
 
+  test('reports structured compilation failures before execution starts', async () => {
+    const fixture = createFixture();
+    const document = ferretDocument('/workspace/users.fql');
+    const failure = new FerretExecutionClientError({
+      code: 'compilation-failed',
+      operation: 'create-session',
+      message: 'Ferret session compilation failed',
+      diagnostics: [
+        {
+          uri: document.uri.toString(),
+          range: {
+            start: { line: 2, character: 4 },
+            end: { line: 2, character: 7 },
+          },
+          severity: 'error',
+          code: 'FQL1001',
+          source: 'ferret',
+          message: 'invalid expression',
+          relatedInformation: [],
+        },
+      ],
+    });
+    fixture.client.createSessionError = failure;
+    const changes: ManagedExecutionChange[] = [];
+    const listener = fixture.manager.onDidChangeExecution((change) =>
+      changes.push(change),
+    );
+
+    try {
+      await assert.rejects(
+        fixture.manager.run(asTextDocument(document)),
+        (error: unknown) => error === failure,
+      );
+
+      assert.strictEqual(fixture.manager.activeCount, 0);
+      assert.strictEqual(changes.length, 1);
+      const change = changes[0];
+      assert.ok(change?.kind === 'start-failed');
+      assert.strictEqual(
+        change.documentUri.toString(),
+        document.uri.toString(),
+      );
+      assert.ok(Number.isFinite(change.startedAt));
+      assert.deepStrictEqual(
+        change.failure.diagnostics,
+        failure.diagnostics,
+      );
+    } finally {
+      listener.dispose();
+      await disposeFixture(fixture);
+    }
+  });
+
   test('reserves pending and active documents while allowing concurrency', async () => {
     const fixture = createFixture();
     const users = ferretDocument('/workspace/users.fql');
@@ -453,6 +520,7 @@ suite('Ferret execution manager', () => {
       const second = await fixture.manager.run(asTextDocument(scrape));
       assert.strictEqual(fixture.manager.isRunning(users.uri), true);
       assert.strictEqual(fixture.manager.isRunning(scrape.uri), true);
+      assert.strictEqual(fixture.manager.activeCount, 2);
 
       await assert.rejects(
         fixture.manager.run(asTextDocument(users)),
@@ -463,6 +531,7 @@ suite('Ferret execution manager', () => {
       fixture.client.send(first.id, 'completed');
       fixture.client.send(second.id, 'completed');
       await settle();
+      assert.strictEqual(fixture.manager.activeCount, 0);
     } finally {
       gate.resolve();
       await disposeFixture(fixture);

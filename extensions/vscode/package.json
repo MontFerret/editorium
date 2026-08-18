@@ -79,6 +79,11 @@
         "category": "Ferret",
         "icon": "$(debug-stop)",
         "enablement": "editorLangId == ferret && resourceScheme == file && ferret.executionRunning"
+      },
+      {
+        "command": "ferret.showOutput",
+        "title": "Show Output",
+        "category": "Ferret"
       }
     ],
     "menus": {

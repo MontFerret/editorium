@@ -28,7 +28,21 @@ Language-server features currently require a Ferret document with a file URI.
 Untitled Ferret documents still receive TextMate highlighting, but `ferretd`
 does not yet accept their non-file document URIs.
 
-Debugging and rich query-execution result presentation are not included.
+Debugging and rich result viewers are not included.
+
+## Run a Ferret file
+
+Open a saved `.fql` file and use the editor Run button or **Ferret: Run File**.
+If the file has unsaved changes, confirm **Save and Run** so the daemon executes
+the saved version. When execution completes successfully, **Ferret Execution**
+opens under **View → Output** without taking focus from the editor and shows the
+result and elapsed time. Use **Ferret: Show Output** to reveal that channel
+directly later.
+
+The editor action changes to Cancel while the file is running, and **Ferret:
+Cancel Execution** stops the active execution. Runtime and compilation errors
+are written to the execution output with source locations when the daemon
+provides them. Different files may execute concurrently.
 
 ## Bundled language server
 
@@ -68,9 +82,12 @@ extension never downloads or updates executables at activation time.
 
 ## Output and troubleshooting
 
-Select **Ferret** under **View → Output** to inspect whether the bundled daemon
-or configured override is active, its version when available, effective
-arguments, lifecycle events, server stderr, and startup failures.
+The user-facing **Ferret Execution** channel contains query results and execution
+failures. The separate **Ferret** channel contains daemon and language-server
+diagnostics: whether the bundled daemon or configured override is active, its
+version when available, effective arguments, lifecycle events, server stderr,
+and startup failures.
+
 Protocol tracing is disabled by default and can be enabled when troubleshooting:
 
 ```json

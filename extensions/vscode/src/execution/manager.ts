@@ -1,12 +1,18 @@
+import { performance } from 'node:perf_hooks';
+
 import * as vscode from 'vscode';
 
 import type { FerretWorkspaceInvalidation } from '../daemon/workspaces';
 import type { ResolvedFerretDocument } from '../daemon/types';
 import { isFerretDocument } from '../language-client';
-import { ExecutionManagerError } from './errors';
+import {
+  ExecutionManagerError,
+  FerretExecutionClientError,
+} from './errors';
 import type {
   FerretExecution,
   FerretExecutionEvent,
+  FerretExecutionFailure,
   FerretSession,
 } from './types';
 
@@ -14,6 +20,7 @@ export interface ManagedExecution {
   readonly id: string;
   readonly sessionId: string;
   readonly documentUri: vscode.Uri;
+  /** Local monotonic milliseconds at which execution start was observed. */
   readonly startedAt: number;
   readonly execution: FerretExecution;
 
@@ -24,6 +31,13 @@ export type ManagedExecutionChange =
   | {
       readonly kind: 'started';
       readonly execution: ManagedExecution;
+    }
+  | {
+      readonly kind: 'start-failed';
+      readonly documentUri: vscode.Uri;
+      /** Local monotonic milliseconds at which the run attempt began. */
+      readonly startedAt: number;
+      readonly failure: FerretExecutionFailure;
     }
   | {
       readonly kind: 'changed';
@@ -180,6 +194,10 @@ export class FerretExecutionManager {
     return this.active.has(documentIdentity(documentUri));
   }
 
+  public get activeCount(): number {
+    return this.active.size;
+  }
+
   public getActive(
     documentUri: vscode.Uri,
   ): ManagedExecution | undefined {
@@ -206,6 +224,7 @@ export class FerretExecutionManager {
       documentKey,
       documentVersion: document.version,
     };
+    const startedAt = performance.now();
     this.pending.set(documentKey, pending);
 
     try {
@@ -303,7 +322,7 @@ export class FerretExecutionManager {
       const handle = new ManagedExecutionHandle(
         this,
         document.uri,
-        Date.now(),
+        performance.now(),
         target.workspaceId,
         target.relativePath,
         execution,
@@ -315,6 +334,9 @@ export class FerretExecutionManager {
       void this.observeExecution(documentKey, handle, watch);
 
       return handle;
+    } catch (error) {
+      this.reportStartFailure(document.uri, startedAt, error);
+      throw error;
     } finally {
       if (this.pending.get(documentKey) === pending) {
         this.pending.delete(documentKey);
@@ -323,6 +345,30 @@ export class FerretExecutionManager {
         this.releaseRetiredSession(pending.sessionId);
       }
     }
+  }
+
+  private reportStartFailure(
+    documentUri: vscode.Uri,
+    startedAt: number,
+    error: unknown,
+  ): void {
+    if (
+      !(error instanceof FerretExecutionClientError) ||
+      error.code !== 'compilation-failed'
+    ) {
+      return;
+    }
+
+    this.changeEmitter.fire({
+      kind: 'start-failed',
+      documentUri,
+      startedAt,
+      failure: {
+        category: 'session-creation',
+        message: error.message,
+        diagnostics: error.diagnostics ?? [],
+      },
+    });
   }
 
   public async cancel(documentUri: vscode.Uri): Promise<void> {

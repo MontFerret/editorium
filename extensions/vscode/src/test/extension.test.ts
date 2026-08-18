@@ -5,6 +5,7 @@ import {
   cancelExecutionCommand,
   runFileCommand,
 } from '../execution/commands';
+import { showExecutionOutputCommand } from '../execution/feedback';
 
 const extensionId = 'ferretlang.fql';
 
@@ -129,6 +130,11 @@ suite('Ferret declarative language support', () => {
         icon: '$(debug-stop)',
         enablement:
           'editorLangId == ferret && resourceScheme == file && ferret.executionRunning',
+      },
+      {
+        command: showExecutionOutputCommand,
+        title: 'Show Output',
+        category: 'Ferret',
       },
     ]);
     assert.deepStrictEqual(manifest.contributes.menus, {
@@ -316,6 +322,7 @@ suite('Ferret declarative language support', () => {
     const commands = await vscode.commands.getCommands(true);
     assert.ok(commands.includes(runFileCommand));
     assert.ok(commands.includes(cancelExecutionCommand));
+    assert.ok(commands.includes(showExecutionOutputCommand));
   });
 });
 

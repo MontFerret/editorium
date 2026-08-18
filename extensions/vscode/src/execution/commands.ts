@@ -31,8 +31,6 @@ const cancelFailedMessage =
   'Ferret could not cancel the current execution.';
 const executionInactiveMessage =
   'The Ferret execution is no longer active.';
-const watchFailedMessage =
-  'Ferret execution status could no longer be observed.';
 
 export interface ExecutionCommandManager {
   readonly onDidChangeExecution: vscode.Event<ManagedExecutionChange>;
@@ -79,8 +77,8 @@ export class ExecutionCommandController implements vscode.Disposable {
       this.host.onDidChangeActiveEditor(() =>
         this.refreshExecutionContext(),
       ),
-      this.manager.onDidChangeExecution((change) =>
-        this.handleExecutionChange(change),
+      this.manager.onDidChangeExecution(() =>
+        this.handleExecutionChange(),
       ),
     ];
     this.refreshExecutionContext();
@@ -153,16 +151,8 @@ export class ExecutionCommandController implements vscode.Disposable {
     }
   }
 
-  private handleExecutionChange(change: ManagedExecutionChange): void {
+  private handleExecutionChange(): void {
     this.refreshExecutionContext();
-
-    if (change.kind === 'watch-failed') {
-      this.output.error(
-        'Observing the Ferret execution failed',
-        change.error,
-      );
-      void this.showError(watchFailedMessage);
-    }
   }
 
   private refreshExecutionContext(): void {
@@ -220,6 +210,9 @@ export class ExecutionCommandController implements vscode.Disposable {
       return;
     }
     if (error instanceof FerretExecutionClientError) {
+      if (error.code === 'compilation-failed') {
+        return;
+      }
       await this.showError(executionClientErrorMessage(error));
       return;
     }

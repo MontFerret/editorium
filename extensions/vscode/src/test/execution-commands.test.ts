@@ -445,15 +445,22 @@ suite('Ferret execution commands', () => {
         fixture.output.errors.some(({ args }) => args.includes(failure)),
       );
 
-      fixture.manager.runError = new FerretExecutionClientError({
+      const compilationFailure = new FerretExecutionClientError({
         code: 'compilation-failed',
         operation: 'create-session',
         message: 'Ferret session compilation failed',
       });
+      fixture.manager.runError = compilationFailure;
+      const notificationCount = fixture.host.errorMessages.length;
       await fixture.host.invoke(runFileCommand);
       assert.strictEqual(
-        fixture.host.errorMessages.at(-1),
-        'Ferret session compilation failed',
+        fixture.host.errorMessages.length,
+        notificationCount,
+      );
+      assert.ok(
+        fixture.output.errors.some(({ args }) =>
+          args.includes(compilationFailure),
+        ),
       );
 
       fixture.manager.runError = new DaemonError(
@@ -568,7 +575,7 @@ suite('Ferret execution commands', () => {
     }
   });
 
-  test('returns to idle and reports a watch infrastructure failure', async () => {
+  test('returns to idle and leaves watch feedback to the feedback controller', async () => {
     const document = ferretDocument('/workspace/query.fql');
     const fixture = createFixture(document);
     const failure = new Error('raw watch failure');
@@ -582,12 +589,8 @@ suite('Ferret execution commands', () => {
         fixture.host.context.get(executionRunningContext),
         false,
       );
-      assert.deepStrictEqual(fixture.host.errorMessages, [
-        'Ferret execution status could no longer be observed.',
-      ]);
-      assert.ok(
-        fixture.output.errors.some(({ args }) => args.includes(failure)),
-      );
+      assert.deepStrictEqual(fixture.host.errorMessages, []);
+      assert.deepStrictEqual(fixture.output.errors, []);
     } finally {
       disposeFixture(fixture);
     }

@@ -188,7 +188,7 @@ suite('Ferret execution client', () => {
         value: 42,
         nested: { enabled: true, values: [null, 'ok'] },
       },
-      options: { outputContentType: '' },
+      options: { outputContentType: 'application/json' },
     });
     assert.strictEqual(createdExecution.status, 'created');
     assert.strictEqual((await client.runExecution('execution-1')).status, 'running');

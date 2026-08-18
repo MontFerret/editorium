@@ -10,6 +10,10 @@ import {
   registerExecutionCommands,
   type ExecutionCommandController,
 } from './execution/commands';
+import {
+  type ExecutionFeedbackController,
+  registerExecutionFeedback,
+} from './execution/feedback';
 import { FerretExecutionManager } from './execution/manager';
 import { createLanguageClient } from './language-client';
 import { LanguageServerController, showOutputAction } from './server';
@@ -17,6 +21,7 @@ import { ConfiguredTraceOutputChannel } from './trace-output';
 
 let controller: FerretServerController | undefined;
 let executionCommands: ExecutionCommandController | undefined;
+let executionFeedback: ExecutionFeedbackController | undefined;
 let executionManager: FerretExecutionManager | undefined;
 
 export async function activate(
@@ -63,15 +68,21 @@ export async function activate(
     activeExecutionManager,
     output,
   );
+  const activeExecutionFeedback = registerExecutionFeedback(
+    activeExecutionManager,
+    output,
+  );
 
   controller = activeController;
   executionCommands = activeExecutionCommands;
+  executionFeedback = activeExecutionFeedback;
   executionManager = activeExecutionManager;
   await activeController.updateWorkspaceFolders(workspaceRoots());
   context.subscriptions.push(
     output,
     traceOutput,
     activeExecutionCommands,
+    activeExecutionFeedback,
     vscode.commands.registerCommand(
       restartLanguageServerCommand,
       () => activeController.restart(),
@@ -93,11 +104,14 @@ export async function activate(
 export async function deactivate(): Promise<void> {
   const activeController = controller;
   const activeExecutionCommands = executionCommands;
+  const activeExecutionFeedback = executionFeedback;
   const activeExecutionManager = executionManager;
   controller = undefined;
   executionCommands = undefined;
+  executionFeedback = undefined;
   executionManager = undefined;
 
+  activeExecutionFeedback?.dispose();
   activeExecutionCommands?.dispose();
   await activeExecutionManager?.dispose();
   await activeController?.stop();

@@ -40,6 +40,8 @@ import type {
   FerretSession,
 } from './types';
 
+const jsonContentType = 'application/json';
+
 export class FerretExecutionClient {
   public constructor(
     private readonly connections: DaemonConnectionProvider,
@@ -86,7 +88,7 @@ export class FerretExecutionClient {
           {
             sessionId: { value: sessionId },
             parameters: validated,
-            options: { outputContentType: '' },
+            options: { outputContentType: jsonContentType },
           },
           callback,
         ),
