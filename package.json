@@ -1,0 +1,18 @@
+{
+  "name": "@montferret/editorium",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "vscode"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "package": "npm run package --workspaces --if-present",
+    "package:check": "npm run package:check --workspaces --if-present"
+  }
+}

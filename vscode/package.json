@@ -1,0 +1,68 @@
+{
+  "name": "fql",
+  "displayName": "Ferret",
+  "description": "Ferret Query Language support for Visual Studio Code.",
+  "version": "0.1.0",
+  "publisher": "ferretlang",
+  "preview": true,
+  "license": "Apache-2.0",
+  "author": "MontFerret Team",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MontFerret/editorium.git",
+    "directory": "vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/MontFerret/editorium/issues"
+  },
+  "homepage": "https://github.com/MontFerret/editorium/tree/main/vscode#readme",
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "ferret",
+    "fql",
+    "montferret"
+  ],
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "main": "./out/extension.js",
+  "files": [
+    "out/extension.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "ferret",
+        "aliases": [
+          "Ferret",
+          "ferret"
+        ],
+        "extensions": [
+          ".fql"
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "build": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "npm run compile && vscode-test",
+    "package": "vsce package --no-dependencies",
+    "package:check": "npm run build && node ./scripts/check-package.mjs",
+    "vscode:prepublish": "npm run build"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "@types/vscode": "1.95.0",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.9.2",
+    "typescript": "^6.0.3"
+  }
+}
