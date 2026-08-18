@@ -99,7 +99,64 @@ if (process.exitCode === undefined) {
     );
     await client.closeExecution(execution.id);
 
-    const cancellable = await client.createExecution(session.id);
+    await writeFile(
+      join(root, 'query.fql'),
+      'RETURN [@value, 84]\n',
+    );
+    const refreshedSession = await client.createSession(
+      resolved.workspaceId,
+      resolved.relativePath,
+    );
+    assert.strictEqual(
+      refreshedSession.source.revision,
+      session.source.revision + 1,
+    );
+    assert.deepStrictEqual(refreshedSession.parameters, ['value']);
+
+    const refreshedExecution = await client.createExecution(
+      refreshedSession.id,
+      { value: 7 },
+    );
+    const refreshedEvents = await observeAfter(
+      client,
+      refreshedExecution.id,
+      () => client.runExecution(refreshedExecution.id),
+    );
+    assert.deepStrictEqual(
+      refreshedEvents.map((event) => event.kind),
+      ['created', 'started', 'completed'],
+    );
+    const refreshed = refreshedEvents.at(-1)?.execution;
+    assert.strictEqual(refreshed?.status, 'completed');
+    assert.deepStrictEqual(
+      JSON.parse(
+        Buffer.from(refreshed?.output?.data ?? []).toString('utf8'),
+      ),
+      [7, 84],
+    );
+    await client.closeExecution(refreshedExecution.id);
+
+    const retainedExecution = await client.createExecution(session.id, {
+      value: 43,
+    });
+    const retainedEvents = await observeAfter(
+      client,
+      retainedExecution.id,
+      () => client.runExecution(retainedExecution.id),
+    );
+    const retained = retainedEvents.at(-1)?.execution;
+    assert.strictEqual(retained?.status, 'completed');
+    assert.strictEqual(
+      JSON.parse(
+        Buffer.from(retained?.output?.data ?? []).toString('utf8'),
+      ),
+      43,
+    );
+    await client.closeExecution(retainedExecution.id);
+
+    const cancellable = await client.createExecution(refreshedSession.id, {
+      value: 0,
+    });
     const cancelledEvents = await observeAfter(
       client,
       cancellable.id,
@@ -114,6 +171,7 @@ if (process.exitCode === undefined) {
       'cancelled',
     );
     await client.closeExecution(cancellable.id);
+    await client.closeSession(refreshedSession.id);
     await client.closeSession(session.id);
     console.log(
       `Daemon execution transport smoke passed on ${process.platform}-${process.arch}.`,
