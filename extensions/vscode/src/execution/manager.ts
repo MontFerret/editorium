@@ -94,6 +94,10 @@ export interface ExecutionDocumentEvents {
   readonly onDidSaveTextDocument: vscode.Event<vscode.TextDocument>;
 }
 
+export interface ExecutionManagerOutput {
+  error(message: string, ...args: unknown[]): void;
+}
+
 interface CachedSession {
   readonly documentKey: string;
   readonly documentUri: vscode.Uri;
@@ -180,6 +184,7 @@ export class FerretExecutionManager {
     private readonly daemon: ExecutionDaemon,
     private readonly client: ExecutionClient,
     private readonly workspaces: ExecutionWorkspaceResolver,
+    private readonly output: ExecutionManagerOutput,
     documents: ExecutionDocumentEvents = vscode.workspace,
   ) {
     this.documentSaveListener = documents.onDidSaveTextDocument(
@@ -428,20 +433,33 @@ export class FerretExecutionManager {
       [...executionIds].map(async (executionId) => {
         try {
           await this.client.cancelExecution(executionId);
-        } catch {
-          // Disposal continues through stale or unavailable daemon resources.
+        } catch (error) {
+          this.output.error(
+            `Cancelling Ferret execution "${executionId}" during disposal failed`,
+            error,
+          );
         }
         try {
           await this.client.closeExecution(executionId);
-        } catch {
-          // The daemon may already have disposed the entire generation.
+        } catch (error) {
+          this.output.error(
+            `Closing Ferret execution "${executionId}" during disposal failed`,
+            error,
+          );
         }
       }),
     );
     await Promise.allSettled(
-      sessions.map(({ session }) =>
-        this.client.closeSession(session.id),
-      ),
+      sessions.map(async ({ session }) => {
+        try {
+          await this.client.closeSession(session.id);
+        } catch (error) {
+          this.output.error(
+            `Closing Ferret Session "${session.id}" during disposal failed`,
+            error,
+          );
+        }
+      }),
     );
     await this.waitForCleanups();
 
@@ -663,6 +681,7 @@ export class FerretExecutionManager {
       Promise.resolve().then(() =>
         this.client.closeExecution(executionId),
       ),
+      `Closing Ferret execution "${executionId}" failed`,
     );
     this.closingExecutions.set(executionId, cleanup);
     void cleanup.finally(() => {
@@ -682,6 +701,7 @@ export class FerretExecutionManager {
 
     const cleanup = this.trackCleanup(
       Promise.resolve().then(() => this.client.closeSession(sessionId)),
+      `Closing Ferret Session "${sessionId}" failed`,
     );
     this.closingSessions.set(sessionId, cleanup);
     void cleanup.finally(() => {
@@ -693,8 +713,13 @@ export class FerretExecutionManager {
     return cleanup;
   }
 
-  private trackCleanup(task: Promise<void>): Promise<void> {
-    const settled = task.catch(() => undefined);
+  private trackCleanup(
+    task: Promise<void>,
+    failureMessage: string,
+  ): Promise<void> {
+    const settled = task.catch((error: unknown) => {
+      this.output.error(failureMessage, error);
+    });
     this.cleanupTasks.add(settled);
     void settled.finally(() => this.cleanupTasks.delete(settled));
 

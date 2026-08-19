@@ -11,6 +11,7 @@ import {
 } from '@grpc/grpc-js';
 
 import type { ServerConfiguration } from '../config';
+import { DaemonError } from '../daemon/errors';
 import { Status } from '../daemon/gen/google/rpc/status.pb';
 import { ApiCompatibilityError } from '../daemon/gen/ferretd/daemon/v1/daemon.pb';
 import {
@@ -136,13 +137,26 @@ suite('Ferret daemon lifecycle', () => {
       '/workspace/new',
     ]);
 
+    const invalidationOrder: string[] = [];
+    observedSignal?.addEventListener(
+      'abort',
+      () => invalidationOrder.push('generation'),
+      { once: true },
+    );
+    const workspaceListener =
+      controller.workspaceRegistry.onDidInvalidateWorkspaces(() =>
+        invalidationOrder.push('workspace'),
+      );
+
     await Promise.all([controller.stop(), controller.stop()]);
+    workspaceListener.dispose();
     assert.strictEqual(state.shutdownCalls, 1);
     assert.strictEqual(state.channelCloseCalls, 1);
     assert.strictEqual(endpoint.disposeCalls, 1);
     assert.strictEqual(process.killCalls, 0);
     assert.strictEqual(observedSignal?.aborted, true);
     assert.strictEqual(controller.workspaceRegistry.workspaces.length, 0);
+    assert.deepStrictEqual(invalidationOrder, ['generation', 'workspace']);
   });
 
   test('marks unexpected exit unavailable without restarting', async () => {
@@ -162,7 +176,19 @@ suite('Ferret daemon lifecycle', () => {
       timing,
     );
 
+    await controller.updateWorkspaceFolders(['/workspace']);
     await controller.start();
+    const invalidationOrder: string[] = [];
+    const generation = controller.requireConnection().signal;
+    generation.addEventListener(
+      'abort',
+      () => invalidationOrder.push('generation'),
+      { once: true },
+    );
+    const workspaceListener =
+      controller.workspaceRegistry.onDidInvalidateWorkspaces(() =>
+        invalidationOrder.push('workspace'),
+      );
     process.exit(2);
     await immediate();
     await immediate();
@@ -177,6 +203,8 @@ suite('Ferret daemon lifecycle', () => {
     assert.strictEqual(spawnCalls, 1);
     assert.strictEqual(state.channelCloseCalls, 1);
     assert.strictEqual(endpoint.disposeCalls, 1);
+    assert.deepStrictEqual(invalidationOrder, ['generation', 'workspace']);
+    workspaceListener.dispose();
   });
 
   test('cleans partial startup after incompatible API', async () => {
@@ -292,6 +320,52 @@ suite('Ferret daemon lifecycle', () => {
     assert.strictEqual(endpoint.disposeCalls, 1);
     assert.ok(
       output.errors.some((line) => line.includes('did not become ready')),
+    );
+  });
+
+  test('reports an immediate process startup failure without hanging', async () => {
+    const process = new FakeProcess();
+    const endpoint = fakeEndpoint();
+    const state = rpcState();
+    const output = new FakeOutput();
+    const failure = new Error('spawn ENOENT');
+    const controller = new DaemonController(
+      configuration,
+      output,
+      () => {
+        queueMicrotask(() => process.emit('error', failure));
+        return process;
+      },
+      async () => endpoint,
+      (_target, signal) =>
+        connection(
+          signal,
+          state,
+          process,
+          (_request, _metadata, _options, callback) => {
+            callback(serviceError(status.UNAVAILABLE, 'not ready'), {
+              serverInfo: undefined,
+            });
+            return fakeCall;
+          },
+        ),
+      timing,
+    );
+
+    await controller.start();
+
+    assert.throws(
+      () => controller.requireConnection(),
+      (error: unknown) =>
+        error instanceof DaemonError &&
+        error.code === 'startup-failed' &&
+        error.message.includes('spawn ENOENT'),
+    );
+    assert.strictEqual(endpoint.disposeCalls, 1);
+    assert.strictEqual(state.channelCloseCalls, 1);
+    assert.strictEqual(process.killCalls, 0);
+    assert.ok(
+      output.errors.some((line) => line.includes('spawn ENOENT')),
     );
   });
 });

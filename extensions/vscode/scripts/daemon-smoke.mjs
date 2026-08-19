@@ -40,6 +40,11 @@ try {
     process.platform === 'win32' ? constants.F_OK : constants.X_OK,
   );
 } catch {
+  if (process.env.CI !== undefined) {
+    throw new Error(
+      `Daemon transport smoke requires a ferretd executable in CI: ${binary}`,
+    );
+  }
   console.log(`Skipped daemon transport smoke; binary not found: ${binary}`);
   process.exitCode = 0;
 }

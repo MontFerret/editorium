@@ -257,7 +257,19 @@ interface Fixture {
   readonly daemon: FakeDaemon;
   readonly documents: vscode.EventEmitter<vscode.TextDocument>;
   readonly manager: FerretExecutionManager;
+  readonly output: FakeOutput;
   readonly registry: FerretWorkspaceRegistry;
+}
+
+class FakeOutput {
+  public readonly errors: Array<{
+    readonly message: string;
+    readonly error: unknown;
+  }> = [];
+
+  public error(message: string, error: unknown): void {
+    this.errors.push({ message, error });
+  }
 }
 
 suite('Ferret execution manager', () => {
@@ -667,6 +679,27 @@ suite('Ferret execution manager', () => {
     }
   });
 
+  test('logs background cleanup failures without retaining active state', async () => {
+    const fixture = createFixture();
+    const document = ferretDocument('/workspace/users.fql');
+
+    try {
+      const active = await fixture.manager.run(asTextDocument(document));
+      fixture.client.rejectCleanup = true;
+      fixture.client.send(active.id, 'completed');
+      await settle();
+
+      assert.strictEqual(fixture.manager.activeCount, 0);
+      assert.ok(
+        fixture.output.errors.some(({ message }) =>
+          message.includes(`Closing Ferret execution "${active.id}" failed`),
+        ),
+      );
+    } finally {
+      await disposeFixture(fixture);
+    }
+  });
+
   test('discards daemon generations and rebuilds from the new workspace ID', async () => {
     const fixture = createFixture();
     const document = ferretDocument('/workspace/users.fql');
@@ -795,6 +828,14 @@ suite('Ferret execution manager', () => {
     assert.deepStrictEqual(fixture.client.cancelExecutionIds, [active.id]);
     assert.ok(fixture.client.closeExecutionIds.includes(active.id));
     assert.ok(fixture.client.closeSessionIds.includes(active.sessionId));
+    assert.deepStrictEqual(
+      fixture.output.errors.map(({ message }) => message),
+      [
+        `Cancelling Ferret execution "${active.id}" during disposal failed`,
+        `Closing Ferret execution "${active.id}" during disposal failed`,
+        `Closing Ferret Session "${active.sessionId}" during disposal failed`,
+      ],
+    );
 
     const calls = fixture.client.calls.length;
     fixture.documents.fire(asTextDocument(document));
@@ -813,16 +854,18 @@ function createFixture(): Fixture {
   const client = new FakeExecutionClient();
   const daemon = new FakeDaemon();
   const documents = new vscode.EventEmitter<vscode.TextDocument>();
+  const output = new FakeOutput();
   const registry = new FerretWorkspaceRegistry();
   registry.set({ id: 'workspace-1', root: '/workspace' });
   const manager = new FerretExecutionManager(
     daemon,
     client,
     registry,
+    output,
     { onDidSaveTextDocument: documents.event },
   );
 
-  return { client, daemon, documents, manager, registry };
+  return { client, daemon, documents, manager, output, registry };
 }
 
 async function disposeFixture(fixture: Fixture): Promise<void> {

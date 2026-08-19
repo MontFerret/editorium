@@ -20,7 +20,7 @@ class FakeComponent {
   public stopGate: Promise<void> | undefined;
 
   public constructor(
-    private readonly name: string,
+    protected readonly name: string,
     events: string[],
   ) {
     this.events = events;
@@ -85,7 +85,52 @@ suite('Ferret coordinated server lifecycle', () => {
     assert.deepStrictEqual(events, ['start:lsp', 'start:daemon']);
     assert.ok(output.errors.some((line) => line.includes('daemon failed')));
   });
+
+  test('applies one selected executable generation to both services', async () => {
+    const events: string[] = [];
+    let executable = '/ferretd/first';
+    const language = new SelectedComponent(
+      'lsp',
+      events,
+      () => executable,
+    );
+    const daemon = new SelectedComponent(
+      'daemon',
+      events,
+      () => executable,
+    );
+    const controller = createController(language, daemon);
+
+    await controller.start();
+    executable = '/ferretd/second';
+    await controller.restart();
+
+    assert.deepStrictEqual(events, [
+      'start:lsp:/ferretd/first',
+      'start:daemon:/ferretd/first',
+      'stop:lsp',
+      'stop:daemon',
+      'start:lsp:/ferretd/second',
+      'start:daemon:/ferretd/second',
+    ]);
+  });
 });
+
+class SelectedComponent extends FakeComponent {
+  public constructor(
+    name: string,
+    events: string[],
+    private readonly selectedExecutable: () => string,
+  ) {
+    super(name, events);
+  }
+
+  public override async start(): Promise<void> {
+    this.events.push(
+      `start:${this.name}:${this.selectedExecutable()}`,
+    );
+  }
+}
 
 function createController(
   language: FakeComponent,

@@ -161,15 +161,18 @@ ignored by Git.
 See [`RELEASING.md`](RELEASING.md) for target artifacts and future publication
 handoff.
 
-The real-server integration test is enabled when `FERRETD_TEST_PATH` points to
-an executable:
+Real-server integration tests are a separate, explicit suite. Point
+`FERRETD_TEST_PATH` at the pinned executable and run:
 
 ```sh
-FERRETD_TEST_PATH=/absolute/path/to/ferretd npm test --workspace fql
+FERRETD_TEST_PATH=/absolute/path/to/ferretd npm run test:integration --workspace fql
 ```
 
-CI uses this override path to preserve explicit-server coverage in addition to
-the installed-VSIX bundled-server smoke test.
+The integration command fails when the override is missing or unusable. CI
+stages the daemon selected by `ferretd.json` and runs this suite in addition to
+the fast unit suite and installed-VSIX bundled-server smoke test. Both labels
+pin VS Code 1.95.0, the extension's compatibility baseline, so test-host
+behavior does not drift with the latest Stable release.
 
 ## Run and debug
 

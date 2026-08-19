@@ -63,6 +63,7 @@ export async function activate(
     daemon,
     activeController.executions,
     daemon.workspaceRegistry,
+    output,
   );
   const activeExecutionCommands = registerExecutionCommands(
     activeExecutionManager,

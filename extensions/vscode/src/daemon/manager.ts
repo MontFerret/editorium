@@ -214,18 +214,23 @@ export class DaemonController implements DaemonConnectionProvider {
   private async stopNow(): Promise<void> {
     const active = this.active;
     this.active = undefined;
-    this.workspaceRegistry.clear();
 
     if (active === undefined) {
+      this.workspaceRegistry.clear();
       await this.waitForCleanups();
       return;
     }
 
-    await this.cleanup(
+    const cleanup = this.cleanup(
       active,
       active.ready,
       new DaemonDisposedError(),
     );
+    // Abort the connection generation before publishing workspace loss. All
+    // daemon-owned identifiers belong to that generation, so consumers must
+    // invalidate them for the generation reason exactly once.
+    this.workspaceRegistry.clear();
+    await cleanup;
     await this.waitForCleanups();
     this.output.info('Ferret daemon stopped');
   }
@@ -366,9 +371,10 @@ export class DaemonController implements DaemonConnectionProvider {
     const error = unavailableDaemon(exitError);
     this.active = undefined;
     this.lastError = error;
-    this.workspaceRegistry.clear();
     this.output.error(`Ferret daemon disconnected: ${exitError.message}`);
-    await this.cleanup(active, false, error);
+    const cleanup = this.cleanup(active, false, error);
+    this.workspaceRegistry.clear();
+    await cleanup;
   }
 
   private cleanup(

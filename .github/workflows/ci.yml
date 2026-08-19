@@ -54,9 +54,12 @@ jobs:
         run: npm run vscode:prepare -- --target linux-x64
 
       - name: Test packages
+        run: xvfb-run -a npm test
+
+      - name: Test real ferretd integration
         env:
           FERRETD_TEST_PATH: ${{ github.workspace }}/extensions/vscode/bin/ferretd
-        run: xvfb-run -a npm test
+        run: xvfb-run -a npm run test:integration --workspace fql
 
   vscode-distributions:
     needs:
