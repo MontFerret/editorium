@@ -67,15 +67,22 @@ interface RootSpec {
   readonly name: string;
 }
 
+interface CapturedError {
+  readonly args: readonly unknown[];
+  readonly message: string;
+}
+
 class CaptureOutput {
-  public readonly errors: Array<{
-    readonly args: readonly unknown[];
-    readonly message: string;
-  }> = [];
+  private readonly errorEmitter =
+    new vscode.EventEmitter<CapturedError>();
+
+  public readonly errors: CapturedError[] = [];
   public readonly infos: string[] = [];
 
   public error(message: string, ...args: unknown[]): void {
-    this.errors.push({ args, message });
+    const captured = { args, message };
+    this.errors.push(captured);
+    this.errorEmitter.fire(captured);
   }
 
   public info(message: string): void {
@@ -83,6 +90,22 @@ class CaptureOutput {
   }
 
   public show(): void {}
+
+  public waitForError(
+    predicate: (error: CapturedError) => boolean,
+    description: string,
+  ): Promise<CapturedError> {
+    const captured = this.errors.find(predicate);
+    if (captured !== undefined) {
+      return Promise.resolve(captured);
+    }
+
+    return waitForEvent(this.errorEmitter.event, predicate, description);
+  }
+
+  public dispose(): void {
+    this.errorEmitter.dispose();
+  }
 }
 
 class InstrumentedExecutionClient implements ExecutionClient {
@@ -525,6 +548,7 @@ class RealExecutionFixture {
       }
     }
     this.client.dispose();
+    this.output.dispose();
     await rm(this.temporaryRoot, { recursive: true, force: true });
   }
 
@@ -892,6 +916,10 @@ suite('ferretd execution integration', () => {
       }
       assert.strictEqual(fixture.manager.activeCount, 0);
       await fixture.client.waitForNoActiveWatches();
+      await fixture.output.waitForError(
+        ({ message }) => message.startsWith('Ferret daemon disconnected:'),
+        'Ferret daemon disconnect log',
+      );
       assert.ok(
         fixture.output.errors.some(({ message }) =>
           message.startsWith('Ferret daemon disconnected:'),

@@ -195,18 +195,34 @@ test('rejects archives with missing required schemas', async (context) => {
 
 test('rejects unsafe and duplicate schema paths', async (context) => {
   const unsafeRoot = await temporaryRoot(context, versionOne);
+  await syncFerretdProto({
+    repositoryRoot: unsafeRoot,
+    fetchImplementation: archiveFetch(
+      await sourceArchive(versionOne, requiredEntries('one')),
+    ),
+  });
   await assert.rejects(
     syncFerretdProto({
       repositoryRoot: unsafeRoot,
+      force: true,
       fetchImplementation: archiveFetch(
         await sourceArchive(versionOne, [
-          ['../escape.proto', 'unsafe'],
+          ['safe/../../escape.proto', 'unsafe'],
           ...requiredEntries('one'),
         ]),
       ),
     }),
     /Unsafe schema archive path/u,
   );
+  assert.strictEqual(
+    await readFile(schemaPath(unsafeRoot, 'daemon/v1/daemon.proto'), 'utf8'),
+    'daemon one',
+  );
+  await assert.rejects(
+    readFile(join(unsafeRoot, 'shared', 'proto', 'escape.proto')),
+    { code: 'ENOENT' },
+  );
+  await assertNoProtoStaging(unsafeRoot);
 
   const unsafeRootEntry = await temporaryRoot(context, versionOne);
   await assert.rejects(
@@ -218,6 +234,22 @@ test('rejects unsafe and duplicate schema paths', async (context) => {
     }),
     /Unsafe schema archive path/u,
   );
+  await assertNoProtoStaging(unsafeRootEntry);
+
+  const unsafeWindowsPath = await temporaryRoot(context, versionOne);
+  await assert.rejects(
+    syncFerretdProto({
+      repositoryRoot: unsafeWindowsPath,
+      fetchImplementation: archiveFetch(
+        await sourceArchive(versionOne, [
+          ['..\\escape.proto', 'unsafe'],
+          ...requiredEntries('one'),
+        ]),
+      ),
+    }),
+    /Unsafe schema archive path/u,
+  );
+  await assertNoProtoStaging(unsafeWindowsPath);
 
   const duplicateRoot = await temporaryRoot(context, versionOne);
   const entries = requiredEntries('one');
@@ -295,13 +327,17 @@ test('restores the previous tree when replacement fails', async (context) => {
     await readFile(schemaPath(root, 'daemon/v1/daemon.proto'), 'utf8'),
     'daemon one',
   );
+  await assertNoProtoStaging(root);
+});
+
+async function assertNoProtoStaging(root) {
   assert.deepStrictEqual(
     (await readdir(join(root, 'shared', 'proto')))
       .filter((name) => name.startsWith('.ferretd-stage-') ||
         name.includes('.backup-')),
     [],
   );
-});
+}
 
 async function temporaryRoot(context, version) {
   const root = await mkdtemp(join(tmpdir(), 'editorium-proto-test-'));

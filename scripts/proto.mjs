@@ -8,7 +8,14 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import {
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -157,11 +164,20 @@ async function downloadAndExtract({
   }
 
   const extract = tarStream.extract();
+  const destinationRoot = resolve(destination);
   const files = new Set();
   let archiveRoot;
   let totalSize = 0;
 
   extract.on('entry', (header, stream, next) => {
+    if (header.name.indexOf('..') !== -1) {
+      stream.resume();
+      extract.destroy(
+        new Error(`Unsafe schema archive path: ${header.name}`),
+      );
+      return;
+    }
+
     let relativePath;
     try {
       relativePath = protoPath(header.name);
@@ -193,6 +209,20 @@ async function downloadAndExtract({
       );
       return;
     }
+    const outputPath = resolve(destinationRoot, relativePath);
+    const outputRelativePath = relative(destinationRoot, outputPath);
+    if (
+      outputRelativePath === '' ||
+      outputRelativePath === '..' ||
+      outputRelativePath.startsWith(`..${sep}`) ||
+      isAbsolute(outputRelativePath)
+    ) {
+      stream.resume();
+      extract.destroy(
+        new Error(`Unsafe schema archive path: ${header.name}`),
+      );
+      return;
+    }
     if (files.has(relativePath)) {
       stream.resume();
       extract.destroy(
@@ -215,7 +245,6 @@ async function downloadAndExtract({
     totalSize += header.size;
     collectStream(stream, maximumProtoFileSize).then(
       (contents) => {
-        const outputPath = join(destination, relativePath);
         mkdir(dirname(outputPath), { recursive: true })
           .then(() => writeFile(
             outputPath,
