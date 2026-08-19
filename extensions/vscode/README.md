@@ -42,7 +42,9 @@ directly later.
 The editor action changes to Cancel while the file is running, and **Ferret:
 Cancel Execution** stops the active execution. Runtime and compilation errors
 are written to the execution output with source locations when the daemon
-provides them. Different files may execute concurrently.
+provides them. Execution-time diagnostics stay in that output rather than being
+added to **Problems**, which continues to reflect live language-server analysis.
+Different files may execute concurrently.
 
 ## Bundled language server
 
