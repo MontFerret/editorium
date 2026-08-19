@@ -602,14 +602,17 @@ suite('ferretd execution integration', () => {
         count: 2,
       });
       const firstEvents = eventKinds(fixture, first.handle.id);
-      assert.deepStrictEqual(firstEvents.slice(-2), [
+      const lifecycle = [
+        'created',
         'started',
         'completed',
-      ]);
-      assert.ok(
-        firstEvents.length === 2 || firstEvents[0] === 'created',
+      ] as const;
+      assert.deepStrictEqual(
+        firstEvents,
+        lifecycle.filter((kind) => firstEvents.includes(kind)),
         `Unexpected execution lifecycle: ${firstEvents.join(', ')}`,
       );
+      assert.strictEqual(firstEvents.at(-1), 'completed');
       assert.strictEqual(fixture.manager.activeCount, 0);
       await fixture.client.waitForExecutionClose(first.handle.id);
 
