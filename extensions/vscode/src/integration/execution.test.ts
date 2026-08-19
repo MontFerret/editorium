@@ -46,6 +46,7 @@ import {
   type ManagedExecutionChange,
 } from '../execution/manager';
 import type {
+  FerretDiagnostic,
   FerretExecution,
   FerretExecutionEvent,
   FerretSession,
@@ -589,6 +590,10 @@ suite('ferretd execution integration', () => {
           'invalid.fql': sources.invalid!,
           'main.fql': sources.success!,
           'none.fql': sources.none!,
+          'runtime-errors.fql': `LET first = @first
+LET second = @second
+LET third = @third
+RETURN [first, second, third]`,
         },
       },
     ]);
@@ -638,6 +643,34 @@ suite('ferretd execution integration', () => {
       assertFinished(none.change, 'completed');
       assert.strictEqual(resultValue(none.change), null);
 
+      const runtimeDocument = await fixture.document(
+        'root',
+        'runtime-errors.fql',
+      );
+      const runtime = await runToTerminal(fixture, runtimeDocument);
+      assertFinished(runtime.change, 'failed');
+      const runtimeFailure = runtime.change.execution.execution.failure;
+      assert.ok(runtimeFailure, 'Expected runtime failure details');
+      assert.strictEqual(runtimeFailure.category, 'runtime');
+      assert.strictEqual(runtimeFailure.message, 'Found 3 errors');
+      assert.strictEqual(runtimeFailure.diagnostics.length, 3);
+      for (const [index, name] of [
+        '@first',
+        '@second',
+        '@third',
+      ].entries()) {
+        const diagnostic: FerretDiagnostic | undefined =
+          runtimeFailure.diagnostics[index];
+        assert.ok(diagnostic, `Expected runtime diagnostic ${index}`);
+        assert.strictEqual(diagnostic.range.start.line, index);
+        assert.notDeepStrictEqual(
+          diagnostic.range.start,
+          diagnostic.range.end,
+        );
+        assert.match(diagnostic.message, /missing parameter/u);
+        assert.match(diagnostic.message, new RegExp(name, 'u'));
+      }
+
       const invalid = await fixture.document('root', 'invalid.fql');
       await assert.rejects(
         fixture.manager.run(invalid),
@@ -651,6 +684,17 @@ suite('ferretd execution integration', () => {
       assert.match(userOutput, /Running main\.fql/u);
       assert.match(userOutput, /"name": "Ferret"/u);
       assert.match(userOutput, /\nnull\n/u);
+      for (const [line, name] of [
+        '@first',
+        '@second',
+        '@third',
+      ].entries()) {
+        assert.match(
+          userOutput,
+          new RegExp(`runtime-errors\\.fql:${line + 1}:\\d+`, 'u'),
+        );
+        assert.match(userOutput, new RegExp(name, 'u'));
+      }
       assert.match(userOutput, /Execution failed: invalid\.fql/u);
       assert.match(userOutput, /invalid\.fql:\d+:\d+/u);
       assert.doesNotMatch(userOutput, /grpc|protobuf|ferretd daemon/iu);
@@ -660,6 +704,7 @@ suite('ferretd execution integration', () => {
         ),
         'Expected daemon lifecycle details in the Ferret developer channel',
       );
+      assert.deepStrictEqual(fixture.output.errors, []);
     } finally {
       await fixture.dispose();
     }
@@ -1066,7 +1111,7 @@ function waitForTerminal(
 
 function assertFinished(
   change: TerminalChange,
-  expected: 'completed' | 'cancelled',
+  expected: 'completed' | 'failed' | 'cancelled',
 ): asserts change is Extract<
   ManagedExecutionChange,
   { readonly kind: 'finished' }
