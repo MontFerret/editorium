@@ -1,0 +1,4 @@
+RETURN {
+    name: "Ferret",
+    count: 2
+}

@@ -7,17 +7,19 @@
     "node": ">=22"
   },
   "workspaces": [
-    "vscode"
+    "extensions/*"
   ],
   "scripts": {
+    "postinstall": "npm run proto:sync",
+    "proto:sync": "node ./scripts/proto.mjs",
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test:distribution && npm run test --workspaces --if-present",
-    "test:distribution": "node --test ./scripts/*.test.mjs ./vscode/scripts/*.test.mjs",
+    "test:distribution": "node --test ./scripts/*.test.mjs ./extensions/vscode/scripts/*.test.mjs",
     "package": "npm run package --workspaces --if-present",
     "package:check": "npm run package:check --workspaces --if-present",
-    "vscode:prepare": "npm run distribution:prepare --workspace vscode --",
-    "vscode:package": "npm run distribution:package --workspace vscode --",
-    "vscode:install": "npm run distribution:install --workspace vscode --"
+    "vscode:prepare": "npm run distribution:prepare --workspace fql --",
+    "vscode:package": "npm run distribution:package --workspace fql --",
+    "vscode:install": "npm run distribution:install --workspace fql --"
   },
   "devDependencies": {
     "tar-stream": "2.2.0",

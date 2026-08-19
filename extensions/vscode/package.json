@@ -1,0 +1,179 @@
+{
+  "name": "fql",
+  "displayName": "Ferret",
+  "description": "Ferret Query Language support for Visual Studio Code.",
+  "version": "0.1.0",
+  "publisher": "ferretlang",
+  "preview": true,
+  "license": "Apache-2.0",
+  "author": "MontFerret Team",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MontFerret/editorium.git",
+    "directory": "extensions/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/MontFerret/editorium/issues"
+  },
+  "homepage": "https://github.com/MontFerret/editorium/tree/main/extensions/vscode#readme",
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "ferret",
+    "fql",
+    "montferret"
+  ],
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./out/extension.js",
+  "files": [
+    "syntaxes/ferret.tmLanguage.json",
+    "language-configuration.json",
+    "out/extension.js",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "ferret",
+        "aliases": [
+          "Ferret",
+          "ferret"
+        ],
+        "extensions": [
+          ".fql"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ferret",
+        "scopeName": "source.ferret",
+        "path": "./syntaxes/ferret.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "ferret.restartLanguageServer",
+        "title": "Restart Language Server",
+        "category": "Ferret"
+      },
+      {
+        "command": "ferret.runFile",
+        "title": "Run File",
+        "category": "Ferret",
+        "icon": "$(play)",
+        "enablement": "editorLangId == ferret && resourceScheme == file && !ferret.executionRunning"
+      },
+      {
+        "command": "ferret.cancelExecution",
+        "title": "Cancel Execution",
+        "category": "Ferret",
+        "icon": "$(debug-stop)",
+        "enablement": "editorLangId == ferret && resourceScheme == file && ferret.executionRunning"
+      },
+      {
+        "command": "ferret.showOutput",
+        "title": "Show Output",
+        "category": "Ferret"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "ferret.runFile",
+          "when": "resourceLangId == ferret && resourceScheme == file && !ferret.executionRunning",
+          "group": "navigation@1"
+        },
+        {
+          "command": "ferret.cancelExecution",
+          "when": "resourceLangId == ferret && resourceScheme == file && ferret.executionRunning",
+          "group": "navigation@1"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Ferret",
+      "properties": {
+        "ferret.server.path": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "markdownDescription": "Overrides the `ferretd` binary bundled with the Ferret extension. Intended primarily for development and troubleshooting. If the override is invalid, the extension will not fall back to the bundled daemon. Changing this setting restarts both the language server and execution daemon, invalidating active executions."
+        },
+        "ferret.server.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "window",
+          "markdownDescription": "Advanced arguments appended after the required `lsp` command. Changing this setting restarts only the language server; the execution daemon and active executions remain available."
+        },
+        "ferret.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "enumDescriptions": [
+            "Disable Language Server Protocol tracing.",
+            "Trace sent and received Language Server Protocol messages without payload details.",
+            "Trace sent and received Language Server Protocol messages including payload details."
+          ],
+          "default": "off",
+          "scope": "window",
+          "markdownDescription": "Controls Language Server Protocol tracing in the **Ferret** output channel for troubleshooting."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "npm run compile",
+    "bundle": "node ./scripts/build.mjs",
+    "compile": "tsc -p ./ && npm run bundle",
+    "proto:sync": "node ../../scripts/proto.mjs",
+    "proto:check": "npm run proto:sync && node ./scripts/generate-proto.mjs --check",
+    "proto:generate": "npm run proto:sync && node ./scripts/generate-proto.mjs",
+    "watch": "node ./scripts/build.mjs --watch",
+    "test": "npm run proto:check && npm run compile && vscode-test --label unit && node ./scripts/daemon-smoke.mjs",
+    "test:integration": "npm run proto:check && npm run compile && vscode-test --label integration --forbid-pending --fail-zero",
+    "test:daemon": "npm run compile && node ./scripts/daemon-smoke.mjs",
+    "test:installed": "npm run compile && node ./scripts/test-installed.mjs",
+    "package": "node ./scripts/distribution.mjs package",
+    "package:check": "node ./scripts/distribution.mjs check",
+    "distribution:prepare": "node ./scripts/distribution.mjs prepare",
+    "distribution:package": "node ./scripts/distribution.mjs package",
+    "distribution:install": "node ./scripts/distribution.mjs install",
+    "distribution:matrix": "node ./scripts/distribution.mjs matrix",
+    "vscode:prepublish": "tsc -p ./ && node ./scripts/build.mjs --production"
+  },
+  "devDependencies": {
+    "@bufbuild/buf": "^1.72.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "@types/vscode": "1.95.0",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.2",
+    "ts-proto": "^2.12.0",
+    "typescript": "^6.0.3",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.3.2"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.14.0",
+    "@grpc/grpc-js": "^1.14.4",
+    "vscode-languageclient": "10.1.0"
+  }
+}
