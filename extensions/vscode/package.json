@@ -107,7 +107,7 @@
           "type": "string",
           "default": "",
           "scope": "window",
-          "markdownDescription": "Overrides the `ferretd` binary bundled with the Ferret extension. Intended primarily for development and troubleshooting. If the override is invalid, the extension will not fall back to the bundled daemon. Run **Ferret: Restart Language Server** after changing this setting."
+          "markdownDescription": "Overrides the `ferretd` binary bundled with the Ferret extension. Intended primarily for development and troubleshooting. If the override is invalid, the extension will not fall back to the bundled daemon. Changing this setting restarts both the language server and execution daemon, invalidating active executions."
         },
         "ferret.server.args": {
           "type": "array",
@@ -116,7 +116,7 @@
           },
           "default": [],
           "scope": "window",
-          "markdownDescription": "Advanced arguments appended after the required `lsp` command. Run **Ferret: Restart Language Server** after changing this setting."
+          "markdownDescription": "Advanced arguments appended after the required `lsp` command. Changing this setting restarts only the language server; the execution daemon and active executions remain available."
         },
         "ferret.trace.server": {
           "type": "string",

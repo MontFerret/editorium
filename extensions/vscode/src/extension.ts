@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 
 import {
+  languageId,
   readServerConfiguration,
   restartLanguageServerCommand,
 } from './config';
@@ -23,6 +24,25 @@ let controller: FerretServerController | undefined;
 let executionCommands: ExecutionCommandController | undefined;
 let executionFeedback: ExecutionFeedbackController | undefined;
 let executionManager: FerretExecutionManager | undefined;
+
+interface ServerLifecycleController {
+  restart(): Promise<void>;
+  restartLanguageServer(): Promise<void>;
+}
+
+export function restartForServerConfigurationChange(
+  event: vscode.ConfigurationChangeEvent,
+  activeController: ServerLifecycleController,
+): Promise<void> | undefined {
+  if (event.affectsConfiguration(`${languageId}.server.path`)) {
+    return activeController.restart();
+  }
+  if (event.affectsConfiguration(`${languageId}.server.args`)) {
+    return activeController.restartLanguageServer();
+  }
+
+  return undefined;
+}
 
 export async function activate(
   context: vscode.ExtensionContext,
@@ -79,14 +99,31 @@ export async function activate(
   executionFeedback = activeExecutionFeedback;
   executionManager = activeExecutionManager;
   await activeController.updateWorkspaceFolders(workspaceRoots());
+  const serverConfigurationListener =
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      const restart = restartForServerConfigurationChange(
+        event,
+        activeController,
+      );
+      if (restart === undefined) {
+        return;
+      }
+
+      void restart.catch((error: unknown) => {
+        output.error(
+          `Applying Ferret server configuration failed: ${formatError(error)}`,
+        );
+      });
+    });
   context.subscriptions.push(
     output,
     traceOutput,
+    serverConfigurationListener,
     activeExecutionCommands,
     activeExecutionFeedback,
     vscode.commands.registerCommand(
       restartLanguageServerCommand,
-      () => activeController.restart(),
+      () => activeController.restartLanguageServer(),
     ),
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       void activeController

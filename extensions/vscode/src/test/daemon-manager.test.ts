@@ -235,7 +235,12 @@ suite('Ferret daemon lifecycle', () => {
       timing,
     );
 
-    await controller.start();
+    await assert.rejects(
+      controller.start(),
+      (error: unknown) =>
+        error instanceof DaemonError &&
+        error.code === 'incompatible-daemon',
+    );
 
     assert.throws(
       () => controller.requireConnection(),
@@ -274,7 +279,12 @@ suite('Ferret daemon lifecycle', () => {
       timing,
     );
 
-    await controller.start();
+    await assert.rejects(
+      controller.start(),
+      (error: unknown) =>
+        error instanceof DaemonError &&
+        error.code === 'incompatible-daemon',
+    );
 
     assert.throws(
       () => controller.requireConnection(),
@@ -312,15 +322,19 @@ suite('Ferret daemon lifecycle', () => {
       timing,
     );
 
-    await controller.start();
+    await assert.rejects(
+      controller.start(),
+      (error: unknown) =>
+        error instanceof DaemonError &&
+        error.code === 'startup-failed' &&
+        error.message.includes('did not become ready'),
+    );
 
     assert.ok(state.getInfoCalls > 1);
     assert.strictEqual(process.killCalls, 1);
     assert.deepStrictEqual(process.killSignals, ['SIGKILL']);
     assert.strictEqual(endpoint.disposeCalls, 1);
-    assert.ok(
-      output.errors.some((line) => line.includes('did not become ready')),
-    );
+    assert.deepStrictEqual(output.errors, []);
   });
 
   test('reports an immediate process startup failure without hanging', async () => {
@@ -352,7 +366,13 @@ suite('Ferret daemon lifecycle', () => {
       timing,
     );
 
-    await controller.start();
+    await assert.rejects(
+      controller.start(),
+      (error: unknown) =>
+        error instanceof DaemonError &&
+        error.code === 'startup-failed' &&
+        error.message.includes('spawn ENOENT'),
+    );
 
     assert.throws(
       () => controller.requireConnection(),
@@ -364,9 +384,7 @@ suite('Ferret daemon lifecycle', () => {
     assert.strictEqual(endpoint.disposeCalls, 1);
     assert.strictEqual(state.channelCloseCalls, 1);
     assert.strictEqual(process.killCalls, 0);
-    assert.ok(
-      output.errors.some((line) => line.includes('spawn ENOENT')),
-    );
+    assert.deepStrictEqual(output.errors, []);
   });
 });
 

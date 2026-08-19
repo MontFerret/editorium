@@ -77,8 +77,15 @@ server arguments can be appended after the required `lsp` command:
 }
 ```
 
-After changing either setting, run **Ferret: Restart Language Server**. The
-extension never downloads or updates executables at activation time.
+Changing `ferret.server.path` automatically restarts both the language server
+and execution daemon because both use the selected executable; this invalidates
+active executions. Changing `ferret.server.args` automatically restarts only
+the language server. The extension never downloads or updates executables at
+activation time.
+
+Use **Ferret: Restart Language Server** to restart only language features. The
+execution daemon, its workspace registrations, and active executions continue
+running across that command.
 
 ## Output and troubleshooting
 
@@ -182,8 +189,9 @@ behavior does not drift with the latest Stable release.
    to a locally built daemon.
 3. Press `F5` and select **Run Ferret Extension** if prompted.
 4. Open a file ending in `.fql` and inspect the **Ferret** output channel.
-5. After rebuilding `ferretd`, run **Ferret: Restart Language Server** without
-   reloading the Extension Development Host.
+5. After rebuilding `ferretd`, run **Ferret: Restart Language Server** to test
+   only the new LSP process. Reload the Extension Development Host when daemon
+   and execution changes also need the rebuilt executable.
 
 Fixtures under `test/fixtures` cover valid and deliberately incomplete Ferret
 documents.

@@ -26,6 +26,24 @@ export class FerretServerController {
     return this.enqueue(() => this.startBoth());
   }
 
+  public restartLanguageServer(): Promise<void> {
+    return this.enqueue(() => this.languageServer.restart());
+  }
+
+  public restartDaemon(): Promise<void> {
+    return this.enqueue(async () => {
+      this.output.info('Ferret daemon restart requested');
+      try {
+        await this.daemon.stop();
+      } catch (error) {
+        this.output.error(
+          `Stopping Ferret daemon failed: ${formatError(error)}`,
+        );
+      }
+      await this.startDaemon();
+    });
+  }
+
   public restart(): Promise<void> {
     if (this.restarting !== undefined) {
       return this.restarting;
@@ -66,13 +84,25 @@ export class FerretServerController {
       this.daemon.start(),
     ]);
     if (daemon.status === 'rejected') {
-      this.output.error(
-        `Starting Ferret daemon failed: ${formatError(daemon.reason)}`,
-      );
+      this.reportDaemonStartFailure(daemon.reason);
     }
     if (language.status === 'rejected') {
       throw language.reason;
     }
+  }
+
+  private async startDaemon(): Promise<void> {
+    try {
+      await this.daemon.start();
+    } catch (error) {
+      this.reportDaemonStartFailure(error);
+    }
+  }
+
+  private reportDaemonStartFailure(error: unknown): void {
+    this.output.error(
+      `Starting Ferret daemon failed: ${formatError(error)}`,
+    );
   }
 
   private async stopBoth(): Promise<void> {

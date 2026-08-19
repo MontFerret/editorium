@@ -6,8 +6,22 @@ import {
   runFileCommand,
 } from '../execution/commands';
 import { showExecutionOutputCommand } from '../execution/feedback';
+import { restartForServerConfigurationChange } from '../extension';
 
 const extensionId = 'ferretlang.fql';
+
+class FakeServerLifecycleController {
+  public restarts = 0;
+  public languageServerRestarts = 0;
+
+  public async restart(): Promise<void> {
+    this.restarts += 1;
+  }
+
+  public async restartLanguageServer(): Promise<void> {
+    this.languageServerRestarts += 1;
+  }
+}
 
 interface FerretManifest {
   activationEvents?: unknown;
@@ -80,6 +94,47 @@ function getExtension(): vscode.Extension<unknown> {
 
   return extension;
 }
+
+suite('Ferret server configuration lifecycle', () => {
+  test('restarts both services when the executable path changes', async () => {
+    const controller = new FakeServerLifecycleController();
+
+    await restartForServerConfigurationChange(
+      configurationChange('ferret.server.path'),
+      controller,
+    );
+
+    assert.strictEqual(controller.restarts, 1);
+    assert.strictEqual(controller.languageServerRestarts, 0);
+  });
+
+  test('restarts only the LSP when its arguments change', async () => {
+    const controller = new FakeServerLifecycleController();
+
+    await restartForServerConfigurationChange(
+      configurationChange('ferret.server.args'),
+      controller,
+    );
+
+    assert.strictEqual(controller.restarts, 0);
+    assert.strictEqual(controller.languageServerRestarts, 1);
+  });
+
+  test('gives a path change precedence when both settings change', async () => {
+    const controller = new FakeServerLifecycleController();
+
+    await restartForServerConfigurationChange(
+      configurationChange(
+        'ferret.server.path',
+        'ferret.server.args',
+      ),
+      controller,
+    );
+
+    assert.strictEqual(controller.restarts, 1);
+    assert.strictEqual(controller.languageServerRestarts, 0);
+  });
+});
 
 suite('Ferret declarative language support', () => {
   test('contributes language support and thin-client configuration', () => {
@@ -334,4 +389,13 @@ async function waitForActivation(
   while (!extension.isActive && Date.now() < deadline) {
     await new Promise<void>((resolve) => setTimeout(resolve, 10));
   }
+}
+
+function configurationChange(
+  ...affected: readonly string[]
+): vscode.ConfigurationChangeEvent {
+  return {
+    affectsConfiguration: (section: string) =>
+      affected.includes(section),
+  } as vscode.ConfigurationChangeEvent;
 }

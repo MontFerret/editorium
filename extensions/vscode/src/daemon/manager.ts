@@ -191,7 +191,6 @@ export class DaemonController implements DaemonConnectionProvider {
     } catch (error) {
       const mapped = mapStartupError(error);
       this.lastError = mapped;
-      this.output.error(`Ferret daemon failed: ${mapped.message}`);
 
       if (active !== undefined) {
         if (this.active === active) {
@@ -208,6 +207,8 @@ export class DaemonController implements DaemonConnectionProvider {
           );
         }
       }
+
+      throw mapped;
     }
   }
 
