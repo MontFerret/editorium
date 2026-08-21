@@ -1,17 +1,17 @@
 import * as assert from 'node:assert/strict';
 
-import {
-  bundledExecutableName,
-  createServerConfiguration,
-} from '../config';
+import { createServerConfiguration } from '../config';
+import { createFerretdExecutable } from '../ferretd';
 
 suite('Ferret language server configuration', () => {
   test('uses the bundled ferretd by default', () => {
     const configuration = createServerConfiguration(
-      '',
+      createFerretdExecutable(
+        '',
+        '/extension/bin/ferretd',
+        '2.0.0-alpha.2',
+      ),
       [],
-      '/extension/bin/ferretd',
-      '2.0.0-alpha.2',
     );
 
     assert.deepStrictEqual(configuration, {
@@ -25,10 +25,12 @@ suite('Ferret language server configuration', () => {
   test('preserves an explicit executable and appends extra arguments', () => {
     const configuredArguments = ['--log-level', 'debug'];
     const configuration = createServerConfiguration(
-      '/opt/ferret/bin/ferretd',
+      createFerretdExecutable(
+        '/opt/ferret/bin/ferretd',
+        '/extension/bin/ferretd',
+        '2.0.0-alpha.2',
+      ),
       configuredArguments,
-      '/extension/bin/ferretd',
-      '2.0.0-alpha.2',
     );
     configuredArguments.push('--unexpected');
 
@@ -37,11 +39,5 @@ suite('Ferret language server configuration', () => {
       '--log-level',
       'debug',
     ]);
-  });
-
-  test('uses the Windows executable name only on Windows', () => {
-    assert.strictEqual(bundledExecutableName('win32'), 'ferretd.exe');
-    assert.strictEqual(bundledExecutableName('darwin'), 'ferretd');
-    assert.strictEqual(bundledExecutableName('linux'), 'ferretd');
   });
 });

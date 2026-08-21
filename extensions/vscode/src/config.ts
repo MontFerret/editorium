@@ -1,67 +1,36 @@
 import * as vscode from 'vscode';
 
+import type { FerretdExecutable } from './ferretd';
+
 export const languageId = 'ferret';
 export const restartLanguageServerCommand =
   'ferret.restartLanguageServer';
 
 export type TraceSetting = 'off' | 'messages' | 'verbose';
 
-interface ServerConfigurationBase {
-  readonly executable: string;
+export type ServerConfiguration = FerretdExecutable & {
   readonly extraArguments: readonly string[];
-}
-
-export type ServerConfiguration =
-  | (ServerConfigurationBase & {
-      readonly source: 'bundled';
-      readonly bundledVersion: string;
-    })
-  | (ServerConfigurationBase & {
-      readonly source: 'configured';
-    });
+};
 
 export function createServerConfiguration(
-  configuredPath: string,
+  selection: FerretdExecutable,
   configuredArguments: readonly string[],
-  bundledExecutable: string,
-  bundledVersion: string,
 ): ServerConfiguration {
-  if (configuredPath !== '') {
-    return {
-      executable: configuredPath,
-      extraArguments: [...configuredArguments],
-      source: 'configured',
-    };
-  }
-
   return {
-    executable: bundledExecutable,
+    ...selection,
     extraArguments: [...configuredArguments],
-    source: 'bundled',
-    bundledVersion,
   };
 }
 
 export function readServerConfiguration(
-  context: vscode.ExtensionContext,
-  bundledVersion: string,
+  selection: FerretdExecutable,
 ): ServerConfiguration {
   const configuration = vscode.workspace.getConfiguration(languageId);
 
   return createServerConfiguration(
-    configuration.get<string>('server.path', ''),
+    selection,
     configuration.get<readonly string[]>('server.args', []),
-    context.asAbsolutePath(
-      `bin/${bundledExecutableName(process.platform)}`,
-    ),
-    bundledVersion,
   );
-}
-
-export function bundledExecutableName(
-  platform: NodeJS.Platform,
-): 'ferretd' | 'ferretd.exe' {
-  return platform === 'win32' ? 'ferretd.exe' : 'ferretd';
 }
 
 export function readTraceSetting(): TraceSetting {

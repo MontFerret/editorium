@@ -28,7 +28,32 @@ Language-server features currently require a Ferret document with a file URI.
 Untitled Ferret documents still receive TextMate highlighting, but `ferretd`
 does not yet accept their non-file document URIs.
 
-Debugging and rich result viewers are not included.
+Rich result viewers are not included.
+
+## Debug a Ferret file
+
+Native launch debugging connects VS Code directly to `ferretd dap` over stdio.
+Each debug session receives its own adapter process, which exits when that
+session ends. The extension selects the compatible `ferretd` executable and
+registers the transport; debugging behavior remains implemented by `ferretd`.
+Before launch, it removes the VS Code-owned `type`, `request`, and `name`
+metadata together with VS Code's private session bookkeeping; all Ferret launch
+arguments otherwise remain unchanged for strict validation by `ferretd`.
+
+Add a launch configuration such as:
+
+```json
+{
+  "type": "ferret",
+  "request": "launch",
+  "name": "Debug Ferret",
+  "program": "${file}"
+}
+```
+
+Only launch configuration and adapter plumbing are documented here. The
+extension does not proxy DAP messages or independently implement breakpoints,
+stepping, stack frames, variables, or evaluation.
 
 ## Run a Ferret file
 
@@ -46,7 +71,7 @@ provides them. Execution-time diagnostics stay in that output rather than being
 added to **Problems**, which continues to reflect live language-server analysis.
 Different files may execute concurrently.
 
-## Bundled language server
+## Bundled ferretd
 
 The extension includes a compatible `ferretd` executable. No separate daemon
 installation or `PATH` configuration is required on these targets:
@@ -61,7 +86,7 @@ daemon therefore runs beside the extension and workspace on the remote host;
 it does not communicate back to a daemon on the local UI machine.
 
 `ferret.server.path` remains an advanced override for development and
-troubleshooting:
+troubleshooting across language features, execution, and debugging:
 
 ```json
 {
@@ -81,9 +106,11 @@ server arguments can be appended after the required `lsp` command:
 
 Changing `ferret.server.path` automatically restarts both the language server
 and execution daemon because both use the selected executable; this invalidates
-active executions. Changing `ferret.server.args` automatically restarts only
-the language server. The extension never downloads or updates executables at
-activation time.
+active executions. Existing debug sessions keep the adapter process that VS
+Code already started, while later sessions use the new selection. Changing
+`ferret.server.args` automatically restarts only the language server and does
+not change the exact `dap` command. The extension never downloads or updates
+executables at activation time.
 
 Use **Ferret: Restart Language Server** to restart only language features. The
 execution daemon, its workspace registrations, and active executions continue

@@ -38,6 +38,27 @@ interface FerretManifest {
       scopeName: string;
       path: string;
     }>;
+    debuggers: Array<{
+      type: string;
+      label: string;
+      languages: string[];
+      configurationAttributes: Record<
+        string,
+        {
+          required: string[];
+          properties: Record<
+            string,
+            {
+              type?: string;
+              description?: string;
+              enum?: string[];
+            }
+          >;
+        }
+      >;
+      initialConfigurations?: unknown;
+      configurationSnippets?: unknown;
+    }>;
     commands: Array<{
       command: string;
       title: string;
@@ -145,6 +166,7 @@ suite('Ferret declarative language support', () => {
     assert.deepStrictEqual(Object.keys(manifest.contributes), [
       'languages',
       'grammars',
+      'debuggers',
       'commands',
       'menus',
       'configuration',
@@ -164,6 +186,38 @@ suite('Ferret declarative language support', () => {
         path: './syntaxes/ferret.tmLanguage.json',
       },
     ]);
+    assert.strictEqual(manifest.contributes.debuggers.length, 1);
+    const debuggerContribution = manifest.contributes.debuggers[0];
+    assert.ok(debuggerContribution);
+    assert.strictEqual(debuggerContribution.type, 'ferret');
+    assert.strictEqual(debuggerContribution.label, 'Ferret');
+    assert.deepStrictEqual(debuggerContribution.languages, ['ferret']);
+    assert.strictEqual(
+      'initialConfigurations' in debuggerContribution,
+      false,
+    );
+    assert.strictEqual(
+      'configurationSnippets' in debuggerContribution,
+      false,
+    );
+    assert.deepStrictEqual(
+      Object.keys(debuggerContribution.configurationAttributes),
+      ['launch'],
+    );
+    const launch = debuggerContribution.configurationAttributes.launch;
+    assert.ok(launch);
+    assert.ok(launch.required.includes('program'));
+    assert.deepStrictEqual(launch.properties.request?.enum, ['launch']);
+    assert.deepStrictEqual(
+      {
+        type: launch.properties.program?.type,
+        description: launch.properties.program?.description,
+      },
+      {
+        type: 'string',
+        description: 'Path to the Ferret program to debug.',
+      },
+    );
     assert.deepStrictEqual(manifest.contributes.commands, [
       {
         command: 'ferret.restartLanguageServer',
@@ -224,7 +278,7 @@ suite('Ferret declarative language support', () => {
     );
     assert.match(
       properties['ferret.server.path']?.markdownDescription ?? '',
-      /will not fall back to the bundled daemon/u,
+      /will not fall back to the bundled executable/u,
     );
     assert.deepStrictEqual(
       {

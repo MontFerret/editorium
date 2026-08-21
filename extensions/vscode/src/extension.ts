@@ -7,6 +7,8 @@ import {
 } from './config';
 import { FerretServerController } from './controller';
 import { DaemonController } from './daemon/manager';
+import { registerFerretDebugAdapter } from './debug/adapter';
+import { registerFerretLaunchConfigurationTracker } from './debug/configuration';
 import {
   registerExecutionCommands,
   type ExecutionCommandController,
@@ -16,6 +18,10 @@ import {
   registerExecutionFeedback,
 } from './execution/feedback';
 import { FerretExecutionManager } from './execution/manager';
+import {
+  readFerretdExecutable,
+  requireFerretdExecutable,
+} from './ferretd';
 import { createLanguageClient } from './language-client';
 import { LanguageServerController, showOutputAction } from './server';
 import { ConfiguredTraceOutputChannel } from './trace-output';
@@ -49,11 +55,13 @@ export async function activate(
 ): Promise<void> {
   const output = vscode.window.createOutputChannel('Ferret', { log: true });
   const traceOutput = new ConfiguredTraceOutputChannel(output);
-  const readConfiguration = () =>
-    readServerConfiguration(
+  const readExecutable = () =>
+    readFerretdExecutable(
       context,
       __BUNDLED_FERRETD_VERSION__,
     );
+  const readConfiguration = () =>
+    readServerConfiguration(readExecutable());
   const languageServer = new LanguageServerController(
     readConfiguration,
     (configuration, reportFailure) =>
@@ -73,7 +81,7 @@ export async function activate(
       return selected === showOutputAction;
     },
   );
-  const daemon = new DaemonController(readConfiguration, output);
+  const daemon = new DaemonController(readExecutable, output);
   const activeController = new FerretServerController(
     languageServer,
     daemon,
@@ -93,6 +101,12 @@ export async function activate(
     activeExecutionManager,
     output,
   );
+  const debugAdapterRegistration = registerFerretDebugAdapter(
+    () => requireFerretdExecutable(readExecutable()),
+    output,
+  );
+  const debugConfigurationRegistration =
+    registerFerretLaunchConfigurationTracker();
 
   controller = activeController;
   executionCommands = activeExecutionCommands;
@@ -121,6 +135,8 @@ export async function activate(
     serverConfigurationListener,
     activeExecutionCommands,
     activeExecutionFeedback,
+    debugAdapterRegistration,
+    debugConfigurationRegistration,
     vscode.commands.registerCommand(
       restartLanguageServerCommand,
       () => activeController.restartLanguageServer(),

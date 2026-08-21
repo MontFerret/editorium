@@ -5,7 +5,7 @@ import { isAbsolute, resolve } from 'node:path';
 
 import { Metadata, status } from '@grpc/grpc-js';
 
-import type { ServerConfiguration } from '../config';
+import type { FerretdExecutable } from '../ferretd';
 import type { ServerOutput } from '../server';
 import {
   DaemonDisposedError,
@@ -104,7 +104,7 @@ export class DaemonController implements DaemonConnectionProvider {
   public readonly workspaceRegistry = new FerretWorkspaceRegistry();
 
   public constructor(
-    private readonly readConfiguration: () => ServerConfiguration,
+    private readonly readExecutable: () => FerretdExecutable,
     private readonly output: ServerOutput,
     private readonly createProcess: DaemonProcessFactory = spawnDaemon,
     private readonly createEndpoint: () => Promise<DaemonEndpoint> =
@@ -149,7 +149,7 @@ export class DaemonController implements DaemonConnectionProvider {
       return;
     }
 
-    const configuration = this.readConfiguration();
+    const selection = this.readExecutable();
     let endpoint: DaemonEndpoint | undefined;
     let active: ActiveDaemon | undefined;
 
@@ -160,7 +160,7 @@ export class DaemonController implements DaemonConnectionProvider {
       this.output.info(`Ferret daemon arguments: ${JSON.stringify(args)}`);
 
       const process = this.createProcess(
-        configuration.executable,
+        selection.executable,
         args,
       );
       const abort = new AbortController();
