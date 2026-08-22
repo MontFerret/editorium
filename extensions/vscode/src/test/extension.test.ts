@@ -38,6 +38,9 @@ interface FerretManifest {
       scopeName: string;
       path: string;
     }>;
+    breakpoints: Array<{
+      language: string;
+    }>;
     debuggers: Array<{
       type: string;
       label: string;
@@ -169,6 +172,7 @@ suite('Ferret declarative language support', () => {
     assert.deepStrictEqual(Object.keys(manifest.contributes), [
       'languages',
       'grammars',
+      'breakpoints',
       'debuggers',
       'commands',
       'menus',
@@ -187,6 +191,11 @@ suite('Ferret declarative language support', () => {
         language: 'ferret',
         scopeName: 'source.ferret',
         path: './syntaxes/ferret.tmLanguage.json',
+      },
+    ]);
+    assert.deepStrictEqual(manifest.contributes.breakpoints, [
+      {
+        language: manifest.contributes.languages[0]?.id,
       },
     ]);
     assert.strictEqual(manifest.contributes.debuggers.length, 1);

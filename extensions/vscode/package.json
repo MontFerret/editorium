@@ -63,6 +63,11 @@
         "path": "./syntaxes/ferret.tmLanguage.json"
       }
     ],
+    "breakpoints": [
+      {
+        "language": "ferret"
+      }
+    ],
     "debuggers": [
       {
         "type": "ferret",
