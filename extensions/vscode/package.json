@@ -63,6 +63,11 @@
         "path": "./syntaxes/ferret.tmLanguage.json"
       }
     ],
+    "breakpoints": [
+      {
+        "language": "ferret"
+      }
+    ],
     "debuggers": [
       {
         "type": "ferret",
@@ -78,7 +83,20 @@
             "properties": {
               "program": {
                 "type": "string",
-                "description": "Path to the Ferret program to debug."
+                "description": "Path to the .fql Ferret program to debug. Required in launch.json; zero-configuration debugging uses the active file."
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working directory for the debugged Ferret program. Optional; zero-configuration debugging uses the containing workspace folder or the file's directory."
+              },
+              "parameters": {
+                "type": "object",
+                "description": "Object containing FQL bind parameter values."
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "default": false,
+                "description": "Pause before normal program execution begins."
               }
             }
           }

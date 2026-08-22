@@ -32,28 +32,35 @@ Rich result viewers are not included.
 
 ## Debug a Ferret file
 
-Native launch debugging connects VS Code directly to `ferretd dap` over stdio.
-Each debug session receives its own adapter process, which exits when that
-session ends. The extension selects the compatible `ferretd` executable and
-registers the transport; debugging behavior remains implemented by `ferretd`.
-Before launch, it removes the VS Code-owned `type`, `request`, and `name`
-metadata together with VS Code's private session bookkeeping; all Ferret launch
-arguments otherwise remain unchanged for strict validation by `ferretd`.
+Open a file-backed `.fql` document and press `F5`. The extension uses the active
+file as the program and selects its containing workspace folder as the working
+directory. A standalone `.fql` file outside the open workspace uses its own
+directory, so the standard workflow does not require `.vscode/launch.json`.
 
-Add a launch configuration such as:
+Create an explicit launch configuration when a script needs custom paths,
+parameters, or entry behavior:
 
 ```json
 {
   "type": "ferret",
   "request": "launch",
-  "name": "Debug Ferret",
-  "program": "${file}"
+  "name": "Debug API scraper",
+  "program": "${workspaceFolder}/scripts/scrape.fql",
+  "cwd": "${workspaceFolder}",
+  "parameters": {
+    "baseUrl": "https://example.com",
+    "limit": 10
+  },
+  "stopOnEntry": true
 }
 ```
 
-Only launch configuration and adapter plumbing are documented here. The
-extension does not proxy DAP messages or independently implement breakpoints,
-stepping, stack frames, variables, or evaluation.
+Explicit Ferret values and ordinary VS Code launch metadata are passed to the
+adapter unchanged. Native launch debugging connects VS Code directly to
+`ferretd dap` over stdio. Each session receives its own adapter process, and
+debugging semantics remain implemented by `ferretd`; the extension does not
+proxy DAP messages or independently implement breakpoint, stepping, stack,
+variable, or evaluation behavior.
 
 ## Run a Ferret file
 
