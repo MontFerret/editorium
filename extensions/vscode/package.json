@@ -31,6 +31,9 @@
     "workspace"
   ],
   "main": "./out/extension.js",
+  "activationEvents": [
+    "onDebugResolve:ferret"
+  ],
   "files": [
     "syntaxes/ferret.tmLanguage.json",
     "language-configuration.json",
@@ -58,6 +61,28 @@
         "language": "ferret",
         "scopeName": "source.ferret",
         "path": "./syntaxes/ferret.tmLanguage.json"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "ferret",
+        "label": "Ferret",
+        "languages": [
+          "ferret"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Path to the Ferret program to debug."
+              }
+            }
+          }
+        }
       }
     ],
     "commands": [
@@ -107,7 +132,7 @@
           "type": "string",
           "default": "",
           "scope": "window",
-          "markdownDescription": "Overrides the `ferretd` binary bundled with the Ferret extension. Intended primarily for development and troubleshooting. If the override is invalid, the extension will not fall back to the bundled daemon. Changing this setting restarts both the language server and execution daemon, invalidating active executions."
+          "markdownDescription": "Overrides the `ferretd` binary bundled with the Ferret extension for language features, execution, and debugging. Intended primarily for development and troubleshooting. If the override is invalid, the extension will not fall back to the bundled executable. Changing this setting restarts the language server and execution daemon, invalidating active executions; existing debug sessions keep their current adapter process, while new sessions use the updated selection."
         },
         "ferret.server.args": {
           "type": "array",
