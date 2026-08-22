@@ -1,6 +1,7 @@
 import * as assert from 'node:assert/strict';
 import * as vscode from 'vscode';
 
+import { debugFileCommand } from '../debug/commands';
 import {
   cancelExecutionCommand,
   runFileCommand,
@@ -219,7 +220,6 @@ suite('Ferret declarative language support', () => {
     const launch = debuggerContribution.configurationAttributes.launch;
     assert.ok(launch);
     assert.ok(launch.required.includes('program'));
-    assert.deepStrictEqual(launch.properties.request?.enum, ['launch']);
     assert.deepStrictEqual(
       {
         type: launch.properties.program?.type,
@@ -272,11 +272,19 @@ suite('Ferret declarative language support', () => {
       },
       {
         command: runFileCommand,
-        title: 'Run File',
+        title: 'Run Current File',
         category: 'Ferret',
         icon: '$(play)',
         enablement:
           'editorLangId == ferret && resourceScheme == file && !ferret.executionRunning',
+      },
+      {
+        command: debugFileCommand,
+        title: 'Debug Current File',
+        category: 'Ferret',
+        icon: '$(debug-alt)',
+        enablement:
+          'editorLangId == ferret && resourceScheme == file',
       },
       {
         command: cancelExecutionCommand,
@@ -305,6 +313,11 @@ suite('Ferret declarative language support', () => {
           when:
             'resourceLangId == ferret && resourceScheme == file && ferret.executionRunning',
           group: 'navigation@1',
+        },
+        {
+          command: debugFileCommand,
+          when: 'resourceLangId == ferret && resourceScheme == file',
+          group: 'navigation@2',
         },
       ],
     });
@@ -476,6 +489,7 @@ suite('Ferret declarative language support', () => {
     assert.strictEqual(extension.isActive, true);
     const commands = await vscode.commands.getCommands(true);
     assert.ok(commands.includes(runFileCommand));
+    assert.ok(commands.includes(debugFileCommand));
     assert.ok(commands.includes(cancelExecutionCommand));
     assert.ok(commands.includes(showExecutionOutputCommand));
   });

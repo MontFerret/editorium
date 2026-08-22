@@ -111,10 +111,17 @@
       },
       {
         "command": "ferret.runFile",
-        "title": "Run File",
+        "title": "Run Current File",
         "category": "Ferret",
         "icon": "$(play)",
         "enablement": "editorLangId == ferret && resourceScheme == file && !ferret.executionRunning"
+      },
+      {
+        "command": "ferret.debugFile",
+        "title": "Debug Current File",
+        "category": "Ferret",
+        "icon": "$(debug-alt)",
+        "enablement": "editorLangId == ferret && resourceScheme == file"
       },
       {
         "command": "ferret.cancelExecution",
@@ -140,6 +147,11 @@
           "command": "ferret.cancelExecution",
           "when": "resourceLangId == ferret && resourceScheme == file && ferret.executionRunning",
           "group": "navigation@1"
+        },
+        {
+          "command": "ferret.debugFile",
+          "when": "resourceLangId == ferret && resourceScheme == file",
+          "group": "navigation@2"
         }
       ]
     },

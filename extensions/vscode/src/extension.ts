@@ -8,6 +8,7 @@ import {
 import { FerretServerController } from './controller';
 import { DaemonController } from './daemon/manager';
 import { registerFerretDebugAdapter } from './debug/adapter';
+import { registerFerretDebugCommand } from './debug/commands';
 import { registerFerretDebugConfigurationProvider } from './debug/configuration';
 import {
   registerExecutionCommands,
@@ -107,6 +108,7 @@ export async function activate(
   );
   const debugConfigurationRegistration =
     registerFerretDebugConfigurationProvider();
+  const debugCommandRegistration = registerFerretDebugCommand();
 
   controller = activeController;
   executionCommands = activeExecutionCommands;
@@ -137,6 +139,7 @@ export async function activate(
     activeExecutionFeedback,
     debugAdapterRegistration,
     debugConfigurationRegistration,
+    debugCommandRegistration,
     vscode.commands.registerCommand(
       restartLanguageServerCommand,
       () => activeController.restartLanguageServer(),

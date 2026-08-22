@@ -2,6 +2,8 @@ import * as assert from 'node:assert/strict';
 
 import * as vscode from 'vscode';
 
+import { debugFileCommand } from '../debug/commands';
+
 const extensionId = 'ferretlang.fql';
 const debugType = 'ferret';
 const explicitSessionName = 'Ferret DAP integration';
@@ -9,48 +11,16 @@ const currentFileSessionName = 'Debug Current Ferret File';
 const eventTimeout = 15_000;
 
 suite('ferretd DAP integration', () => {
-  test('starts the active file without launch.json in its containing workspace', async () => {
-    await configureFerretd();
-    const secondary = vscode.workspace.workspaceFolders?.find(
-      (folder) => folder.name === 'secondary',
+  test('starts the active file through the standard F5 action', async () => {
+    await runCurrentFileDebugSession(() =>
+      vscode.commands.executeCommand('workbench.action.debug.start'),
     );
-    assert.ok(secondary, 'Expected the secondary workspace folder');
-    const program = vscode.Uri.joinPath(secondary.uri, 'secondary.fql');
-    const document = await vscode.workspace.openTextDocument(program);
-    await vscode.window.showTextDocument(document);
-    const started = waitForDebugSession(
-      vscode.debug.onDidStartDebugSession,
-      'start',
-      currentFileSessionName,
-    );
-    const terminated = waitForDebugSession(
-      vscode.debug.onDidTerminateDebugSession,
-      'terminate',
-      currentFileSessionName,
-    );
+  });
 
-    let session: vscode.DebugSession | undefined;
-    let sessionTerminated = false;
-    try {
-      const [, startedSession] = await Promise.all([
-        vscode.commands.executeCommand('workbench.action.debug.start'),
-        started,
-      ]);
-      session = startedSession;
-      assert.strictEqual(session.type, debugType);
-      assert.strictEqual(session.name, currentFileSessionName);
-      assert.strictEqual(session.configuration.program, program.fsPath);
-      assert.strictEqual(session.configuration.cwd, secondary.uri.fsPath);
-      assert.strictEqual(session.configuration.stopOnEntry, false);
-
-      const stopped = await terminated;
-      assert.strictEqual(stopped.id, session.id);
-      sessionTerminated = true;
-    } finally {
-      if (session !== undefined && !sessionTerminated) {
-        await vscode.debug.stopDebugging(session);
-      }
-    }
+  test('starts the active file through the Ferret debug command', async () => {
+    await runCurrentFileDebugSession(() =>
+      vscode.commands.executeCommand(debugFileCommand),
+    );
   });
 
   test('launches and terminates through the registered debug adapter', async () => {
@@ -119,6 +89,49 @@ suite('ferretd DAP integration', () => {
     }
   });
 });
+
+async function runCurrentFileDebugSession(
+  start: () => Thenable<unknown>,
+): Promise<void> {
+  await configureFerretd();
+  const secondary = vscode.workspace.workspaceFolders?.find(
+    (folder) => folder.name === 'secondary',
+  );
+  assert.ok(secondary, 'Expected the secondary workspace folder');
+  const program = vscode.Uri.joinPath(secondary.uri, 'secondary.fql');
+  const document = await vscode.workspace.openTextDocument(program);
+  await vscode.window.showTextDocument(document);
+  const started = waitForDebugSession(
+    vscode.debug.onDidStartDebugSession,
+    'start',
+    currentFileSessionName,
+  );
+  const terminated = waitForDebugSession(
+    vscode.debug.onDidTerminateDebugSession,
+    'terminate',
+    currentFileSessionName,
+  );
+
+  let session: vscode.DebugSession | undefined;
+  let sessionTerminated = false;
+  try {
+    const [, startedSession] = await Promise.all([start(), started]);
+    session = startedSession;
+    assert.strictEqual(session.type, debugType);
+    assert.strictEqual(session.name, currentFileSessionName);
+    assert.strictEqual(session.configuration.program, program.fsPath);
+    assert.strictEqual(session.configuration.cwd, secondary.uri.fsPath);
+    assert.strictEqual(session.configuration.stopOnEntry, false);
+
+    const stopped = await terminated;
+    assert.strictEqual(stopped.id, session.id);
+    sessionTerminated = true;
+  } finally {
+    if (session !== undefined && !sessionTerminated) {
+      await vscode.debug.stopDebugging(session);
+    }
+  }
+}
 
 async function configureFerretd(): Promise<void> {
   await vscode.workspace

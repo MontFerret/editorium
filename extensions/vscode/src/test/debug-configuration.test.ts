@@ -122,6 +122,30 @@ suite('Ferret debug configuration provider', () => {
     assert.deepStrictEqual(host.errors, []);
   });
 
+  test('resolves the debug command through the current-file defaults', async () => {
+    const host = new FakeConfigurationHost();
+    const document = ferretDocument('/workspace/query.fql');
+    host.activeDocument = document;
+    host.workspaceFolder = workspaceFolder('primary', '/workspace', 0);
+    const provider = new FerretDebugConfigurationProvider(host);
+
+    const resolved = await provider.resolveDebugConfiguration(
+      undefined,
+      { type: 'ferret' } as vscode.DebugConfiguration,
+    );
+
+    assert.deepStrictEqual(resolved, {
+      type: 'ferret',
+      request: 'launch',
+      name: 'Debug Current Ferret File',
+      program: '${file}',
+      cwd: host.workspaceFolder.uri.fsPath,
+      stopOnEntry: false,
+    });
+    assert.deepStrictEqual(host.workspaceFolderRequests, [document.uri]);
+    assert.deepStrictEqual(host.errors, []);
+  });
+
   test('preserves explicit Ferret values and future metadata', async () => {
     const host = new FakeConfigurationHost();
     const provider = new FerretDebugConfigurationProvider(host);
@@ -179,20 +203,25 @@ suite('Ferret debug configuration provider', () => {
     assert.strictEqual(explicitNull?.stopOnEntry, null);
   });
 
-  test('rejects zero-configuration debugging without an active editor', async () => {
-    const host = new FakeConfigurationHost();
-    const provider = new FerretDebugConfigurationProvider(host);
+  test('rejects current-file debugging without an active editor', async () => {
+    for (const configuration of [
+      zeroConfiguration(),
+      { type: 'ferret' } as vscode.DebugConfiguration,
+    ]) {
+      const host = new FakeConfigurationHost();
+      const provider = new FerretDebugConfigurationProvider(host);
 
-    assert.strictEqual(
-      await provider.resolveDebugConfiguration(
+      assert.strictEqual(
+        await provider.resolveDebugConfiguration(
+          undefined,
+          configuration,
+        ),
         undefined,
-        zeroConfiguration(),
-      ),
-      undefined,
-    );
-    assert.deepStrictEqual(host.errors, [
-      'Open a Ferret (.fql) file before starting a debug session.',
-    ]);
+      );
+      assert.deepStrictEqual(host.errors, [
+        'Open a Ferret (.fql) file before starting a debug session.',
+      ]);
+    }
   });
 
   test('rejects a non-Ferret active document', async () => {
