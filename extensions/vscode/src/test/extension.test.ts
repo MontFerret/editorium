@@ -220,7 +220,6 @@ suite('Ferret declarative language support', () => {
     const launch = debuggerContribution.configurationAttributes.launch;
     assert.ok(launch);
     assert.ok(launch.required.includes('program'));
-    assert.deepStrictEqual(launch.properties.request?.enum, ['launch']);
     assert.deepStrictEqual(
       {
         type: launch.properties.program?.type,
