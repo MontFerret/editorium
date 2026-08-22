@@ -32,10 +32,12 @@ Rich result viewers are not included.
 
 ## Debug a Ferret file
 
-Open a file-backed `.fql` document and press `F5`. The extension uses the active
-file as the program and selects its containing workspace folder as the working
-directory. A standalone `.fql` file outside the open workspace uses its own
-directory, so the standard workflow does not require `.vscode/launch.json`.
+Open a file-backed `.fql` document and use the editor Debug button, run
+**Ferret: Debug Current File**, or press `F5`. All three start the native VS Code
+debugger backed by `ferretd dap`. The extension uses the active file as the
+program and selects its containing workspace folder as the working directory.
+A standalone `.fql` file outside the open workspace uses its own directory, so
+the standard workflow does not require `.vscode/launch.json`.
 
 Create an explicit launch configuration when a script needs custom paths,
 parameters, or entry behavior:
@@ -64,12 +66,12 @@ variable, or evaluation behavior.
 
 ## Run a Ferret file
 
-Open a saved `.fql` file and use the editor Run button or **Ferret: Run File**.
-If the file has unsaved changes, confirm **Save and Run** so the daemon executes
-the saved version. When execution completes successfully, **Ferret Execution**
-opens under **View → Output** without taking focus from the editor and shows the
-result and elapsed time. Use **Ferret: Show Output** to reveal that channel
-directly later.
+Open a saved `.fql` file and use the editor Run button or **Ferret: Run Current
+File**. Both use the normal Ferret execution service. If the file has unsaved
+changes, confirm **Save and Run** so the daemon executes the saved version. When
+execution completes successfully, **Ferret Execution** opens under **View →
+Output** without taking focus from the editor and shows the result and elapsed
+time. Use **Ferret: Show Output** to reveal that channel directly later.
 
 The editor action changes to Cancel while the file is running, and **Ferret:
 Cancel Execution** stops the active execution. Runtime and compilation errors

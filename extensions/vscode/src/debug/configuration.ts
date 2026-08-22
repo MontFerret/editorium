@@ -60,7 +60,7 @@ export class FerretDebugConfigurationProvider
     _folder: vscode.WorkspaceFolder | undefined,
     debugConfiguration: vscode.DebugConfiguration,
   ): Promise<vscode.DebugConfiguration | undefined> {
-    if (isZeroConfiguration(debugConfiguration)) {
+    if (isCurrentFileConfiguration(debugConfiguration)) {
       return this.resolveCurrentFileConfiguration(debugConfiguration);
     }
 
@@ -139,13 +139,15 @@ export function registerFerretDebugConfigurationProvider(
   );
 }
 
-function isZeroConfiguration(
+function isCurrentFileConfiguration(
   configuration: vscode.DebugConfiguration,
 ): boolean {
   return (
-    configuration.type === undefined &&
+    (configuration.type === undefined ||
+      configuration.type === ferretDebugType) &&
     configuration.request === undefined &&
-    configuration.name === undefined
+    configuration.name === undefined &&
+    configuration.program === undefined
   );
 }
 
