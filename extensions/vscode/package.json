@@ -31,6 +31,9 @@
     "workspace"
   ],
   "main": "./out/extension.js",
+  "activationEvents": [
+    "onDebugResolve:ferret"
+  ],
   "files": [
     "syntaxes/ferret.tmLanguage.json",
     "language-configuration.json",

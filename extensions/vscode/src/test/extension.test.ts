@@ -24,7 +24,7 @@ class FakeServerLifecycleController {
 }
 
 interface FerretManifest {
-  activationEvents?: unknown;
+  activationEvents: string[];
   extensionKind: string[];
   contributes: {
     languages: Array<{
@@ -161,7 +161,9 @@ suite('Ferret declarative language support', () => {
   test('contributes language support and thin-client configuration', () => {
     const manifest = getExtension().packageJSON as FerretManifest;
 
-    assert.strictEqual('activationEvents' in manifest, false);
+    assert.deepStrictEqual(manifest.activationEvents, [
+      'onDebugResolve:ferret',
+    ]);
     assert.deepStrictEqual(manifest.extensionKind, ['workspace']);
     assert.deepStrictEqual(Object.keys(manifest.contributes), [
       'languages',
