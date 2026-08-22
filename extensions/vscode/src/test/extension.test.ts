@@ -51,6 +51,7 @@ interface FerretManifest {
             {
               type?: string;
               description?: string;
+              default?: unknown;
               enum?: string[];
             }
           >;
@@ -217,7 +218,41 @@ suite('Ferret declarative language support', () => {
       },
       {
         type: 'string',
-        description: 'Path to the Ferret program to debug.',
+        description:
+          'Path to the .fql Ferret program to debug. Required in launch.json; zero-configuration debugging uses the active file.',
+      },
+    );
+    assert.deepStrictEqual(
+      {
+        type: launch.properties.cwd?.type,
+        description: launch.properties.cwd?.description,
+      },
+      {
+        type: 'string',
+        description:
+          "Working directory for the debugged Ferret program. Optional; zero-configuration debugging uses the containing workspace folder or the file's directory.",
+      },
+    );
+    assert.deepStrictEqual(
+      {
+        type: launch.properties.parameters?.type,
+        description: launch.properties.parameters?.description,
+      },
+      {
+        type: 'object',
+        description: 'Object containing FQL bind parameter values.',
+      },
+    );
+    assert.deepStrictEqual(
+      {
+        type: launch.properties.stopOnEntry?.type,
+        default: launch.properties.stopOnEntry?.default,
+        description: launch.properties.stopOnEntry?.description,
+      },
+      {
+        type: 'boolean',
+        default: false,
+        description: 'Pause before normal program execution begins.',
       },
     );
     assert.deepStrictEqual(manifest.contributes.commands, [
