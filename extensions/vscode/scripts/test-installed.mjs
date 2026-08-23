@@ -11,7 +11,7 @@ import {
   runTests,
 } from '@vscode/test-electron';
 
-import { detectHostTarget } from './distribution.mjs';
+import { detectHostTarget, vsixFilename } from './distribution.mjs';
 
 const execFileAsync = promisify(execFile);
 const packageRoot = fileURLToPath(new URL('../', import.meta.url));
@@ -24,7 +24,7 @@ async function main() {
   const target = detectHostTarget();
   const vsixPath = process.env.FERRET_VSIX_PATH ?? join(
     packageRoot,
-    `${packageManifest.name}-${target.id}-${packageManifest.version}.vsix`,
+    vsixFilename(packageManifest.version, target),
   );
   const profileRoot = await mkdtemp(
     join(shortTemporaryRoot(), 'fv-'),
