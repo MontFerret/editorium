@@ -167,6 +167,10 @@ export function githubMatrix() {
   };
 }
 
+export function vsixFilename(version, target) {
+  return `ferret-vscode-${version}-${target.id}.vsix`;
+}
+
 export async function prepareTarget(target, options = {}) {
   rejectUnsafeCrossPackaging(target, options.platform ?? process.platform);
 
@@ -231,7 +235,7 @@ export async function packageTarget(target, options = {}) {
   );
   const vsixPath = join(
     targetPackageRoot,
-    `${manifest.name}-${target.id}-${manifest.version}.vsix`,
+    vsixFilename(manifest.version, target),
   );
 
   await execFileAsync(
@@ -390,7 +394,7 @@ async function checkTarget(target) {
   );
   const vsixPath = join(
     packageRoot,
-    `${packageManifest.name}-${target.id}-${packageManifest.version}.vsix`,
+    vsixFilename(packageManifest.version, target),
   );
   const stagedBinary = join(packageRoot, 'bin', target.binaryName);
 
