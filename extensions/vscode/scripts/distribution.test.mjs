@@ -14,6 +14,7 @@ import {
   resolveTarget,
   supportedTargets,
   validateVSIX,
+  vsixFilename,
 } from './distribution.mjs';
 
 const expectedTargets = [
@@ -37,6 +38,20 @@ test('keeps the supported target, artifact, and runner matrix together', () => {
   assert.deepStrictEqual(
     githubMatrix().include,
     expectedTargets.map(([target, , runner]) => ({ target, runner })),
+  );
+});
+
+test('derives deterministic release filenames from the shared targets', () => {
+  assert.deepStrictEqual(
+    supportedTargets.map((target) => vsixFilename('0.2.0-beta.1', target)),
+    [
+      'ferret-vscode-0.2.0-beta.1-darwin-arm64.vsix',
+      'ferret-vscode-0.2.0-beta.1-darwin-x64.vsix',
+      'ferret-vscode-0.2.0-beta.1-linux-x64.vsix',
+      'ferret-vscode-0.2.0-beta.1-linux-arm64.vsix',
+      'ferret-vscode-0.2.0-beta.1-win32-x64.vsix',
+      'ferret-vscode-0.2.0-beta.1-win32-arm64.vsix',
+    ],
   );
 });
 
@@ -99,7 +114,7 @@ test('validates the exact platform-specific VSIX contents', async (context) => {
   const root = await mkdtemp(join(tmpdir(), 'editorium-vsix-test-'));
   context.after(() => rm(root, { recursive: true, force: true }));
   const stagedBinary = join(root, 'ferretd');
-  const vsixPath = join(root, 'fql-linux-x64-0.1.0.vsix');
+  const vsixPath = join(root, 'ferret-vscode-0.1.0-linux-x64.vsix');
   const binary = Buffer.from('packaged daemon bytes');
   await writeFile(stagedBinary, binary, { mode: 0o755 });
   await createVSIX(vsixPath, binary);
