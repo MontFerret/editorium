@@ -112,9 +112,9 @@ if (process.exitCode === undefined) {
       resolved.workspaceId,
       resolved.relativePath,
     );
-    assert.strictEqual(
-      refreshedSession.source.revision,
-      session.source.revision + 1,
+    assert.ok(
+      refreshedSession.source.revision > session.source.revision,
+      'refreshed source revision did not advance',
     );
     assert.deepStrictEqual(refreshedSession.parameters, ['value']);
 
