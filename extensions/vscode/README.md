@@ -30,6 +30,27 @@ does not yet accept their non-file document URIs.
 
 Rich result viewers are not included.
 
+## Format FQL documents
+
+Use **Format Document** or **Format Document With…** and select **Ferret** to
+format a file-backed `.fql` document. The extension sends the standard LSP
+`textDocument/formatting` request to `ferretd`, which applies Ferret's canonical
+formatter to the current editor contents, including unsaved changes. Editorium
+does not implement separate formatting rules.
+
+To make Ferret the default formatter for FQL and format files when they are
+saved, add the standard language-specific editor settings:
+
+```json
+"[ferret]": {
+  "editor.defaultFormatter": "ferretlang.fql",
+  "editor.formatOnSave": true
+}
+```
+
+Formatting uses the running language-server connection and does not require a
+custom save command or a language-server restart.
+
 ## Debug a Ferret file
 
 Open a file-backed `.fql` document and use the editor Debug button, run

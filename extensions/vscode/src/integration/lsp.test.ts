@@ -1,4 +1,8 @@
 import * as assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import * as vscode from 'vscode';
 
 const extensionId = 'ferretlang.fql';
@@ -126,19 +130,147 @@ suite('ferretd LSP integration', () => {
         semanticTokens.data.length > 0,
         'Expected semantic tokens over the TextMate fallback',
       );
-
-      const edits = await vscode.commands.executeCommand<
-        vscode.TextEdit[]
-      >(
-        'vscode.executeFormatDocumentProvider',
-        fixture,
-        { tabSize: 2, insertSpaces: true },
-      );
-      assert.ok(edits.length > 0, 'Expected document formatting edits');
     } finally {
       await vscode.commands.executeCommand(
         'workbench.action.closeActiveEditor',
       );
+    }
+  });
+
+  test('formats unsaved documents and formats on save through ferretd', async () => {
+    const executable = requireFerretdPath();
+
+    await vscode.workspace
+      .getConfiguration('ferret')
+      .update(
+        'server.path',
+        executable,
+        vscode.ConfigurationTarget.Global,
+      );
+    await vscode.commands.executeCommand(restartCommand);
+
+    const temporaryRoot = await mkdtemp(
+      join(tmpdir(), 'ferret-formatting-integration-'),
+    );
+    const path = join(temporaryRoot, 'formatting.fql');
+    const uri = vscode.Uri.file(path);
+    const savedSource = 'return "saved"';
+
+    let document: vscode.TextDocument | undefined;
+    let editorConfiguration: vscode.WorkspaceConfiguration | undefined;
+    let originalDefaultFormatter: string | undefined;
+    let originalFormatOnSave: boolean | undefined;
+
+    try {
+      await writeFile(path, savedSource);
+      document = await vscode.workspace.openTextDocument(uri);
+      assert.strictEqual(document.languageId, 'ferret');
+      await vscode.window.showTextDocument(document);
+
+      editorConfiguration = vscode.workspace.getConfiguration('editor', {
+        uri,
+        languageId: document.languageId,
+      });
+      originalDefaultFormatter = editorConfiguration.inspect<string>(
+        'defaultFormatter',
+      )?.globalLanguageValue;
+      originalFormatOnSave = editorConfiguration.inspect<boolean>(
+        'formatOnSave',
+      )?.globalLanguageValue;
+      await editorConfiguration.update(
+        'defaultFormatter',
+        extensionId,
+        vscode.ConfigurationTarget.Global,
+        true,
+      );
+      await editorConfiguration.update(
+        'formatOnSave',
+        false,
+        vscode.ConfigurationTarget.Global,
+        true,
+      );
+
+      await replaceDocument(
+        document,
+        'LET value=1\nRETURN {value:value}',
+      );
+      await vscode.commands.executeCommand('editor.action.formatDocument');
+
+      assert.strictEqual(
+        document.getText(),
+        'let value = 1\nreturn { value: value }',
+      );
+      assert.strictEqual(document.isDirty, true);
+      assert.strictEqual(await readFile(path, 'utf8'), savedSource);
+
+      await replaceDocument(
+        document,
+        'LET result={first:1,second:2}\nRETURN result',
+      );
+      await vscode.commands.executeCommand('editor.action.formatDocument');
+
+      assert.strictEqual(
+        document.getText(),
+        'let result = { first: 1, second: 2 }\nreturn result',
+      );
+      assert.strictEqual(document.isDirty, true);
+      assert.strictEqual(await readFile(path, 'utf8'), savedSource);
+
+      await editorConfiguration.update(
+        'formatOnSave',
+        true,
+        vscode.ConfigurationTarget.Global,
+        true,
+      );
+      await replaceDocument(document, 'RETURN {outer:{inner:1}}');
+
+      assert.strictEqual(document.isDirty, true);
+      assert.strictEqual(await document.save(), true);
+      assert.strictEqual(
+        document.getText(),
+        'return { outer: { inner: 1 } }',
+      );
+      assert.strictEqual(document.isDirty, false);
+      assert.strictEqual(
+        await readFile(path, 'utf8'),
+        'return { outer: { inner: 1 } }',
+      );
+    } finally {
+      try {
+        if (editorConfiguration !== undefined) {
+          try {
+            await editorConfiguration.update(
+              'formatOnSave',
+              originalFormatOnSave,
+              vscode.ConfigurationTarget.Global,
+              true,
+            );
+          } finally {
+            await editorConfiguration.update(
+              'defaultFormatter',
+              originalDefaultFormatter,
+              vscode.ConfigurationTarget.Global,
+              true,
+            );
+          }
+        }
+      } finally {
+        try {
+          if (document !== undefined && !document.isClosed) {
+            await vscode.window.showTextDocument(document);
+            if (document.isDirty) {
+              await vscode.commands.executeCommand(
+                'workbench.action.files.revert',
+              );
+            }
+            await vscode.commands.executeCommand(
+              'workbench.action.closeActiveEditor',
+            );
+          }
+        } finally {
+          await rm(temporaryRoot, { recursive: true, force: true });
+        }
+      }
     }
   });
 });
@@ -155,6 +287,20 @@ function requireFerretdPath(): string {
 
 function completionLabel(item: vscode.CompletionItem): string {
   return typeof item.label === 'string' ? item.label : item.label.label;
+}
+
+async function replaceDocument(
+  document: vscode.TextDocument,
+  source: string,
+): Promise<void> {
+  const last = document.lineAt(document.lineCount - 1);
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(
+    document.uri,
+    new vscode.Range(0, 0, last.lineNumber, last.range.end.character),
+    source,
+  );
+  assert.strictEqual(await vscode.workspace.applyEdit(edit), true);
 }
 
 async function waitForDiagnostics(
