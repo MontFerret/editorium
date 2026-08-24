@@ -146,7 +146,19 @@ func TestVSCodeDistributionPathsAreIntegrationLocal(t *testing.T) {
 
 func TestValidateVSIXChecksExactContentsMetadataBytesAndMode(t *testing.T) {
 	root := t.TempDir()
-	target, _ := resolveTarget("linux-x64")
+	var target vscodeTarget
+	for _, candidate := range vscodeTargets {
+		if candidate.Unix && !isNativeTarget(candidate) {
+			target = candidate
+			break
+		}
+	}
+	if target.ID == "" {
+		t.Fatal("no non-native Unix VS Code target available")
+	}
+	// Structural cross-target validation must not execute these intentionally
+	// synthetic daemon bytes. Native packaging jobs validate the staged real
+	// ferretd executable and its version on each matching runner.
 	binary := []byte("packaged daemon bytes")
 	staged := filepath.Join(root, "ferretd")
 	writeTestFile(t, staged, binary, 0o755)
@@ -166,7 +178,7 @@ func TestValidateVSIXChecksExactContentsMetadataBytesAndMode(t *testing.T) {
 			entries["extension/extra"] = testZipEntry{[]byte("extra"), 0o100644}
 		}, "unexpected VSIX contents"},
 		{"wrong target", func(entries map[string]testZipEntry) {
-			entries["extension.vsixmanifest"] = testZipEntry{[]byte(`<Identity TargetPlatform="darwin-arm64"/>`), 0o100644}
+			entries["extension.vsixmanifest"] = testZipEntry{[]byte(`<Identity TargetPlatform="wrong-target"/>`), 0o100644}
 		}, "target platform"},
 		{"wrong manifest", func(entries map[string]testZipEntry) {
 			entries["extension/package.json"] = testZipEntry{[]byte(`{"name":"fql","version":"9.9.9","publisher":"ferretlang"}`), 0o100644}
