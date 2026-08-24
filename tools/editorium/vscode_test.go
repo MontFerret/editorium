@@ -128,6 +128,22 @@ func TestVSCodeNodeToolingIsIntegrationLocal(t *testing.T) {
 	}
 }
 
+func TestVSCodeDistributionPathsAreIntegrationLocal(t *testing.T) {
+	root := t.TempDir()
+	target, err := resolveTarget("linux-arm64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRoot := filepath.Join(root, "extensions", "vscode", "dist")
+	if got := vscodeDistributionRoot(root); got != wantRoot {
+		t.Fatalf("vscodeDistributionRoot() = %q, want %q", got, wantRoot)
+	}
+	wantPath := filepath.Join(wantRoot, "ferret-vscode-0.2.0-beta.1-linux-arm64.vsix")
+	if got := vscodeVSIXPath(root, "0.2.0-beta.1", target); got != wantPath {
+		t.Fatalf("vscodeVSIXPath() = %q, want %q", got, wantPath)
+	}
+}
+
 func TestValidateVSIXChecksExactContentsMetadataBytesAndMode(t *testing.T) {
 	root := t.TempDir()
 	target, _ := resolveTarget("linux-x64")
@@ -176,13 +192,13 @@ func TestValidateVSIXChecksExactContentsMetadataBytesAndMode(t *testing.T) {
 func TestCleanVSCodeOwnsOnlyIntegrationOutputs(t *testing.T) {
 	root := t.TempDir()
 	packageRoot := vscodePackageRoot(root)
-	for _, path := range []string{"out/output.js", "bin/ferretd", ".vscode-test/cache", "ferret.vsix", "node_modules/keep", "src/daemon/gen/keep.pb.ts"} {
+	for _, path := range []string{"out/output.js", "bin/ferretd", ".vscode-test/cache", "dist/ferret.vsix", "node_modules/keep", "src/daemon/gen/keep.pb.ts"} {
 		writeTestFile(t, filepath.Join(packageRoot, path), []byte("data"), 0o644)
 	}
 	if err := cleanVSCode(root); err != nil {
 		t.Fatal(err)
 	}
-	for _, removed := range []string{"out", "bin", ".vscode-test", "ferret.vsix"} {
+	for _, removed := range []string{"out", "bin", ".vscode-test", "dist"} {
 		if _, err := os.Stat(filepath.Join(packageRoot, removed)); !os.IsNotExist(err) {
 			t.Fatalf("%s remains: %v", removed, err)
 		}
@@ -202,6 +218,7 @@ func TestRunExtensionsCleanScopesSharedOwnership(t *testing.T) {
 			".dist/cache/artifact",
 			"shared/proto/ferretd/daemon/v1/daemon.proto",
 			"extensions/vscode/out/extension.js",
+			"extensions/vscode/dist/ferret.vsix",
 			"extensions/vscode/node_modules/keep",
 			"extensions/vscode/src/daemon/gen/keep.pb.ts",
 		} {
@@ -214,6 +231,11 @@ func TestRunExtensionsCleanScopesSharedOwnership(t *testing.T) {
 		if err := runExtensions(context.Background(), root, "clean", []string{"vscode"}); err != nil {
 			t.Fatal(err)
 		}
+		for _, removed := range []string{"extensions/vscode/out", "extensions/vscode/dist"} {
+			if _, err := os.Stat(filepath.Join(root, removed)); !os.IsNotExist(err) {
+				t.Fatalf("targeted clean left %s: %v", removed, err)
+			}
+		}
 		for _, preserved := range []string{".dist/cache/artifact", "shared/proto/ferretd/daemon/v1/daemon.proto", "extensions/vscode/node_modules/keep", "extensions/vscode/src/daemon/gen/keep.pb.ts"} {
 			if _, err := os.Stat(filepath.Join(root, preserved)); err != nil {
 				t.Fatalf("targeted clean removed %s: %v", preserved, err)
@@ -225,7 +247,7 @@ func TestRunExtensionsCleanScopesSharedOwnership(t *testing.T) {
 		if err := runExtensions(context.Background(), root, "clean", nil); err != nil {
 			t.Fatal(err)
 		}
-		for _, removed := range []string{".dist", "shared/proto/ferretd", "extensions/vscode/out"} {
+		for _, removed := range []string{".dist", "shared/proto/ferretd", "extensions/vscode/out", "extensions/vscode/dist"} {
 			if _, err := os.Stat(filepath.Join(root, removed)); !os.IsNotExist(err) {
 				t.Fatalf("unscoped clean left %s: %v", removed, err)
 			}

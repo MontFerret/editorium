@@ -87,8 +87,9 @@ make install vscode CODE=code-insiders
 The adapter verifies the pinned official release checksum, safe bounded archive
 extraction, staged executable, VSIX target and exact contents, manifest version,
 bundled daemon bytes, Unix executable mode, and native `ferretd --version`
-output. Downloads live under `.dist/`; staged executables and deterministic
-VSIX files live under `extensions/vscode/` and are ignored by Git. See
+output. Downloads live under `.dist/`; staged executables live under
+`extensions/vscode/bin/`, and deterministic VSIX files live under
+`extensions/vscode/dist/`. See
 [`extensions/vscode/RELEASING.md`](extensions/vscode/RELEASING.md) for the
 target matrix and release contract.
 

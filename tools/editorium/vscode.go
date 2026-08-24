@@ -289,7 +289,11 @@ func packageVSCodeTarget(ctx context.Context, root string, target vscodeTarget) 
 		return packagedTarget{}, err
 	}
 	packageRoot := vscodePackageRoot(root)
-	vsixPath := filepath.Join(packageRoot, vsixFilename(manifest.Version, target))
+	distributionRoot := vscodeDistributionRoot(root)
+	if err := os.MkdirAll(distributionRoot, 0o755); err != nil {
+		return packagedTarget{}, err
+	}
+	vsixPath := vscodeVSIXPath(root, manifest.Version, target)
 	vsce := filepath.Join(packageRoot, "node_modules", "@vscode", "vsce", "vsce")
 	if err := runCommand(ctx, packageRoot, nil, "node", vsce, "package", "--target", target.ID, "--no-dependencies", "--out", vsixPath); err != nil {
 		return packagedTarget{}, err
@@ -311,7 +315,7 @@ func checkVSCodeTarget(ctx context.Context, root string, target vscodeTarget) er
 		return err
 	}
 	packageRoot := vscodePackageRoot(root)
-	path := filepath.Join(packageRoot, vsixFilename(manifest.Version, target))
+	path := vscodeVSIXPath(root, manifest.Version, target)
 	staged := filepath.Join(packageRoot, "bin", target.BinaryName)
 	if _, err := validateVSIX(ctx, path, target, staged, version, manifest); err != nil {
 		return err
@@ -460,7 +464,7 @@ func testInstalledVSIX(ctx context.Context, root string, target vscodeTarget) er
 		return err
 	}
 	packageRoot := vscodePackageRoot(root)
-	path := filepath.Join(packageRoot, vsixFilename(manifest.Version, target))
+	path := vscodeVSIXPath(root, manifest.Version, target)
 	return runCommand(ctx, packageRoot, []string{"FERRET_VSIX_PATH=" + path}, executableName("npm"), "run", "test:installed")
 }
 
@@ -484,6 +488,14 @@ func vscodePackageRoot(root string) string {
 	return filepath.Join(root, "extensions", "vscode")
 }
 
+func vscodeDistributionRoot(root string) string {
+	return filepath.Join(vscodePackageRoot(root), "dist")
+}
+
+func vscodeVSIXPath(root, version string, target vscodeTarget) string {
+	return filepath.Join(vscodeDistributionRoot(root), vsixFilename(version, target))
+}
+
 func vsixFilename(version string, target vscodeTarget) string {
 	return fmt.Sprintf("ferret-vscode-%s-%s.vsix", version, target.ID)
 }
@@ -494,17 +506,8 @@ func isNativeTarget(target vscodeTarget) bool {
 
 func cleanVSCode(root string) error {
 	packageRoot := vscodePackageRoot(root)
-	for _, directory := range []string{"out", "bin", ".vscode-test"} {
+	for _, directory := range []string{"out", "bin", ".vscode-test", "dist"} {
 		if err := os.RemoveAll(filepath.Join(packageRoot, directory)); err != nil {
-			return err
-		}
-	}
-	artifacts, err := filepath.Glob(filepath.Join(packageRoot, "*.vsix"))
-	if err != nil {
-		return err
-	}
-	for _, artifact := range artifacts {
-		if err := os.Remove(artifact); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}

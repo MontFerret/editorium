@@ -197,12 +197,13 @@ make package vscode TARGET=darwin-arm64
 ```
 
 The package command prints and creates
-`extensions/vscode/ferret-vscode-<extension-version>-<target>.vsix`. It
+`extensions/vscode/dist/ferret-vscode-<extension-version>-<target>.vsix`. It
 verifies the official release checksum, the staged executable, the VSIX target
 and exact contents, the Unix executable mode, and the daemon bytes/version
 when the target is native. Downloads are cached under `.dist/`; the one
-selected binary is staged under `extensions/vscode/bin/`. Both locations and
-all VSIX files are ignored by Git.
+selected binary is staged under `extensions/vscode/bin/`, and VSIX artifacts
+are written under `extensions/vscode/dist/`. All three locations are ignored by
+Git.
 
 `ferretd.json` at the repository root is the sole bundled-daemon version pin.
 See [`RELEASING.md`](RELEASING.md) for target artifacts and the tagged GitHub

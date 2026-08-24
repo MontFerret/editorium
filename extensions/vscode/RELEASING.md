@@ -65,8 +65,8 @@ ferret-vscode-<extension-version>-win32-arm64.vsix
 5. Let CI acquire, execute, package, and validate every native target.
 
 Do not commit `.dist/`, `shared/proto/ferretd/`,
-`extensions/vscode/bin/`, or generated VSIX files. Do not replace the official
-artifacts with locally compiled binaries.
+`extensions/vscode/bin/`, or `extensions/vscode/dist/`. Do not replace the
+official artifacts with locally compiled binaries.
 
 ## Publish a GitHub Release
 

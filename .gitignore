@@ -3,7 +3,7 @@ out/
 .vscode-test/
 .dist/
 extensions/vscode/bin/
+extensions/vscode/dist/
 shared/proto/ferretd/
-*.vsix
 .idea/
 .vscode/
