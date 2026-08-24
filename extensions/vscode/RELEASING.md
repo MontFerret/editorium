@@ -92,10 +92,94 @@ remote is confirmed to contain that exact tag at the intended commit.
 
 The tag-triggered workflow validates the tag/manifest match and builds all six
 native packages. Only after the complete asset set succeeds does it create the
-GitHub Release. SemVer prereleases create GitHub prereleases. A rerun is a no-op
-when published metadata and assets already match; an incomplete draft is
-replaced.
+GitHub Release. A rerun is a no-op when published metadata and assets already
+match; an incomplete draft is replaced.
 
-Marketplace publication is not part of this workflow. It uses no Marketplace
-credentials, never invokes `vsce publish`, and does not modify or infer the
-package version.
+The GitHub Release is the canonical distribution archive. For an exact numeric
+`major.minor.patch` version, the workflow next publishes the same validated
+VSIX bytes to Visual Studio Marketplace. The Marketplace job does not rebuild
+or repackage the extension. A Marketplace failure leaves the GitHub Release
+intact and fails the workflow visibly so publication can be resumed.
+
+SemVer prerelease versions such as `0.2.0-alpha.1`, `0.2.0-beta.1`, and
+`0.2.0-rc.1` continue to create GitHub prereleases but intentionally skip
+Marketplace publication. Versions with build metadata also skip because the
+Marketplace extension version must be exactly `major.minor.patch`. The
+Marketplace pre-release channel and its separate numeric version progression
+are not implemented; the workflow never passes `--pre-release`.
+
+## Configure Marketplace trusted publishing
+
+The source-controlled Marketplace identity is:
+
+```text
+Publisher: ferretlang
+Extension: ferretlang.fql
+```
+
+Before pushing the first stable release tag:
+
+1. In GitHub, create an environment named `vscode-marketplace`. Leave it
+   without secrets or required reviewers by default. Protection rules can be
+   added later without changing the workflow.
+2. In the Visual Studio Marketplace publisher management UI for `ferretlang`,
+   create a GitHub trusted-publishing policy with these exact values:
+
+   ```text
+   GitHub organization: MontFerret
+   Repository:          editorium
+   Workflow:            .github/workflows/release-vscode.yml
+   Publisher:           ferretlang
+   ```
+
+   If the UI offers an environment restriction, set it to
+   `vscode-marketplace`; otherwise retain the workflow-file restriction above.
+3. Do not create `VSCE_PAT`, `AZURE_DEVOPS_EXT_PAT`, a client secret, or any
+   other Marketplace credential in GitHub. Trusted publishing requires none.
+
+The Marketplace job has only `contents: read` and `id-token: write`. It uses
+Node.js 22, installs the exact `@vscode/vsce` version from
+`extensions/vscode/package-lock.json`, downloads the six existing workflow
+artifacts, and verifies the complete canonical target set before the first
+remote operation. It then runs, in deterministic filename order:
+
+```sh
+LC_ALL=C node extensions/vscode/node_modules/@vscode/vsce/vsce publish \
+  --oidc \
+  --skip-duplicate \
+  --packagePath release-assets/*.vsix
+```
+
+`--oidc` requests a GitHub token for the Marketplace audience and exchanges it
+for a short-lived publishing credential. It does not fall back to PAT
+authentication. Each VSIX retains the target metadata created by the
+`vsce package --target` build step; the publishing command does not pass a
+second target list.
+
+## Recover a Marketplace publication
+
+Marketplace uploads are sequential remote operations and cannot be fully
+transactional. The workflow minimizes partial releases by verifying that all
+six non-empty expected VSIX files are present before invoking `vsce`. An
+unexpected upload error stops the command immediately and fails the job.
+
+Rerun the failed workflow for the same tag. The matching GitHub Release remains
+a no-op. `--skip-duplicate` skips a publisher/name/version/target combination
+already present in Marketplace and continues with missing targets; it does not
+skip local artifact, manifest, publisher, or version validation, and it does
+not compare already-published remote bytes.
+
+Authentication failures are distinct from package failures:
+
+- An error about a missing GitHub OIDC request URL or token means the job did
+  not receive `id-token: write` permission.
+- `Marketplace OIDC token exchange failed` indicates a missing or mismatched
+  Marketplace trusted-publishing policy, including organization, repository,
+  workflow, publisher, or environment restrictions.
+- VSIX manifest, publisher, target, version, or package-content errors are
+  package validation failures and must be fixed in source; they are not OIDC
+  configuration failures.
+
+Validate the workflow and package structure locally, configure trusted
+publishing, and use the first intended stable release as the end-to-end test.
+Do not publish a disposable production extension version merely to test OIDC.

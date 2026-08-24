@@ -17,7 +17,11 @@ import (
 	"strings"
 )
 
-const maximumVSIXEntrySize = 128 * 1024 * 1024
+const (
+	maximumVSIXEntrySize       = 128 * 1024 * 1024
+	vscodeMarketplaceName      = "fql"
+	vscodeMarketplacePublisher = "ferretlang"
+)
 
 type vscodeTarget struct {
 	ID           string `json:"target,omitempty"`
@@ -40,8 +44,9 @@ var vscodeTargets = []vscodeTarget{
 }
 
 type vscodeManifest struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+	Publisher string `json:"publisher"`
 }
 
 type preparedTarget struct {
@@ -334,7 +339,7 @@ func validateVSIX(ctx context.Context, path string, target vscodeTarget, stagedB
 	expected := []string{
 		"[Content_Types].xml", "extension.vsixmanifest", "extension/LICENSE.txt", binaryEntry,
 		"extension/language-configuration.json", "extension/out/extension.js", "extension/package.json",
-		"extension/readme.md", "extension/syntaxes/ferret.tmLanguage.json",
+		"extension/readme.md", "extension/media/icon.png", "extension/syntaxes/ferret.tmLanguage.json",
 	}
 	sort.Strings(expected)
 	entries := make(map[string]*zip.File)
@@ -369,7 +374,7 @@ func validateVSIX(ctx context.Context, path string, target vscodeTarget, stagedB
 	if err := json.Unmarshal(packageBytes, &packagedManifest); err != nil {
 		return "", err
 	}
-	if packagedManifest.Name != manifest.Name || packagedManifest.Version != manifest.Version {
+	if packagedManifest.Name != manifest.Name || packagedManifest.Version != manifest.Version || packagedManifest.Publisher != manifest.Publisher {
 		return "", fmt.Errorf("packaged manifest identity does not match source manifest")
 	}
 	binaryBytes, err := readZipEntry(entries[binaryEntry])
@@ -478,8 +483,11 @@ func readVSCodeManifest(root string) (vscodeManifest, error) {
 	if err := json.Unmarshal(contents, &manifest); err != nil {
 		return vscodeManifest{}, err
 	}
-	if manifest.Name == "" || !validVersion(manifest.Version) {
+	if manifest.Name != vscodeMarketplaceName || !validVersion(manifest.Version) {
 		return vscodeManifest{}, fmt.Errorf("invalid VS Code package manifest: %s", path)
+	}
+	if manifest.Publisher != vscodeMarketplacePublisher {
+		return vscodeManifest{}, fmt.Errorf("VS Code package publisher %q does not match Marketplace publisher %q", manifest.Publisher, vscodeMarketplacePublisher)
 	}
 	return manifest, nil
 }

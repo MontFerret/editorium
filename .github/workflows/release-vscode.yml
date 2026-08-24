@@ -18,6 +18,7 @@ jobs:
     outputs:
       version: ${{ steps.metadata.outputs.version }}
       prerelease: ${{ steps.metadata.outputs.prerelease }}
+      marketplace_eligible: ${{ steps.metadata.outputs.marketplace_eligible }}
       title: ${{ steps.metadata.outputs.title }}
 
     steps:
@@ -43,7 +44,7 @@ jobs:
     permissions:
       contents: read
 
-  publish:
+  github-release:
     needs:
       - release-metadata
       - validate-and-package
@@ -119,3 +120,63 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: echo "GitHub Release $RELEASE_TAG already has the validated metadata and complete asset set."
+
+      - name: Explain Marketplace skip
+        if: needs.release-metadata.outputs.marketplace_eligible != 'true'
+        env:
+          RELEASE_VERSION: ${{ needs.release-metadata.outputs.version }}
+        run: echo "VS Code Marketplace requires an exact major.minor.patch version; $RELEASE_VERSION remains a GitHub Release only."
+
+  publish-marketplace:
+    needs:
+      - release-metadata
+      - github-release
+    if: needs.release-metadata.outputs.marketplace_eligible == 'true'
+    runs-on: ubuntu-24.04
+    environment: vscode-marketplace
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extensions/vscode/package-lock.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: tools/editorium/go.mod
+          cache-dependency-path: tools/editorium/go.sum
+
+      - name: Install publishing tool
+        working-directory: extensions/vscode
+        run: npm ci
+
+      - name: Download validated VSIX artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ferret-vscode-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify complete Marketplace package set
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: go -C tools/editorium run . release-ci check-assets --tag "$RELEASE_TAG" --directory release-assets
+
+      - name: Publish platform packages to VS Code Marketplace
+        env:
+          LC_ALL: C
+        shell: bash
+        run: |
+          node extensions/vscode/node_modules/@vscode/vsce/vsce publish \
+            --oidc \
+            --skip-duplicate \
+            --packagePath release-assets/*.vsix

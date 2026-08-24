@@ -20,10 +20,11 @@ const (
 )
 
 type releaseMetadata struct {
-	Tag        string `json:"tag"`
-	Version    string `json:"version"`
-	Prerelease bool   `json:"prerelease"`
-	Title      string `json:"title"`
+	Tag                 string `json:"tag"`
+	Version             string `json:"version"`
+	Prerelease          bool   `json:"prerelease"`
+	MarketplaceEligible bool   `json:"marketplace_eligible"`
+	Title               string `json:"title"`
 }
 
 type githubRelease struct {
@@ -113,8 +114,17 @@ func resolveReleaseMetadata(extension, version, root string) (releaseMetadata, e
 	}
 	tag := extension + "/v" + version
 	return releaseMetadata{
-		Tag: tag, Version: version, Prerelease: semver.Prerelease("v"+version) != "", Title: "Ferret VS Code " + version,
+		Tag:                 tag,
+		Version:             version,
+		Prerelease:          semver.Prerelease("v"+version) != "",
+		MarketplaceEligible: marketplaceVersionEligible(version),
+		Title:               "Ferret VS Code " + version,
 	}, nil
+}
+
+func marketplaceVersionEligible(version string) bool {
+	canonical := "v" + version
+	return validVersion(version) && semver.Prerelease(canonical) == "" && semver.Build(canonical) == ""
 }
 
 func requireReleaseRepositoryState(ctx context.Context, root, extension string) (string, error) {
@@ -324,7 +334,7 @@ func runReleaseCI(root string, args []string) error {
 			}
 			fmt.Println(string(encoded))
 		case "github":
-			fmt.Printf("version=%s\nprerelease=%t\ntitle=%s\n", metadata.Version, metadata.Prerelease, metadata.Title)
+			fmt.Printf("version=%s\nprerelease=%t\nmarketplace_eligible=%t\ntitle=%s\n", metadata.Version, metadata.Prerelease, metadata.MarketplaceEligible, metadata.Title)
 		default:
 			return fmt.Errorf("unknown metadata format: %s", *format)
 		}

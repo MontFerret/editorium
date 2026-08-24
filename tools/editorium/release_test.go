@@ -18,12 +18,12 @@ func TestReleaseMetadataAssetsAndPublishedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metadata.Tag != "vscode/v0.1.0" || metadata.Version != "0.1.0" || metadata.Prerelease || metadata.Title != "Ferret VS Code 0.1.0" {
+	if metadata.Tag != "vscode/v0.1.0" || metadata.Version != "0.1.0" || metadata.Prerelease || !metadata.MarketplaceEligible || metadata.Title != "Ferret VS Code 0.1.0" {
 		t.Fatalf("metadata = %#v", metadata)
 	}
 	writeVSCodePackageManifest(t, root, "0.2.0-beta.2")
 	prerelease, err := resolveReleaseMetadata("vscode", "0.2.0-beta.2", root)
-	if err != nil || !prerelease.Prerelease {
+	if err != nil || !prerelease.Prerelease || prerelease.MarketplaceEligible {
 		t.Fatalf("prerelease metadata = %#v, %v", prerelease, err)
 	}
 	for _, version := range []string{"", "1.2", "01.2.3", "v1.2.3", "latest"} {
@@ -65,6 +65,37 @@ func TestReleaseMetadataAssetsAndPublishedState(t *testing.T) {
 	matching.Name = "Wrong title"
 	if _, err := decideReleaseAction(&matching, metadata); err == nil || !strings.Contains(err.Error(), "conflicts") {
 		t.Fatalf("conflicting release error = %v", err)
+	}
+}
+
+func TestMarketplaceReleaseEligibilityAndPublisher(t *testing.T) {
+	root := t.TempDir()
+	for _, test := range []struct {
+		version  string
+		eligible bool
+	}{
+		{"0.1.0", true},
+		{"1.2.3", true},
+		{"0.2.0-alpha.1", false},
+		{"0.2.0-beta.2", false},
+		{"0.2.0-rc.1", false},
+		{"1.2.3+build.1", false},
+	} {
+		t.Run(test.version, func(t *testing.T) {
+			writeVSCodePackageManifest(t, root, test.version)
+			metadata, err := resolveReleaseMetadata("vscode", test.version, root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if metadata.MarketplaceEligible != test.eligible {
+				t.Fatalf("MarketplaceEligible = %t, want %t", metadata.MarketplaceEligible, test.eligible)
+			}
+		})
+	}
+
+	writeVSCodePackageManifestWithPublisher(t, root, "1.2.3", "not-ferretlang")
+	if _, err := resolveReleaseMetadata("vscode", "1.2.3", root); err == nil || !strings.Contains(err.Error(), `does not match Marketplace publisher "ferretlang"`) {
+		t.Fatalf("publisher mismatch error = %v", err)
 	}
 }
 
@@ -224,8 +255,12 @@ func matchingRelease(metadata releaseMetadata) githubRelease {
 }
 
 func writeVSCodePackageManifest(t *testing.T, root, version string) {
+	writeVSCodePackageManifestWithPublisher(t, root, version, vscodeMarketplacePublisher)
+}
+
+func writeVSCodePackageManifestWithPublisher(t *testing.T, root, version, publisher string) {
 	t.Helper()
-	writeTestFile(t, filepath.Join(root, "extensions", "vscode", "package.json"), []byte("{\"name\":\"fql\",\"version\":\""+version+"\"}\n"), 0o644)
+	writeTestFile(t, filepath.Join(root, "extensions", "vscode", "package.json"), []byte("{\"name\":\"fql\",\"version\":\""+version+"\",\"publisher\":\""+publisher+"\"}\n"), 0o644)
 }
 
 type releaseGitFixture struct {
