@@ -79,7 +79,6 @@ export function unary<Response>(
 
   return new Promise<Response>((resolve, reject) => {
     let settled = false;
-    let call: ClientUnaryCall;
     const onAbort = (): void => {
       if (!settled) {
         call.cancel();
@@ -105,7 +104,7 @@ export function unary<Response>(
       }
     };
 
-    call = invoke(finish);
+    const call = invoke(finish);
     if (settled) {
       return;
     }

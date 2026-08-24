@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -11,21 +11,16 @@ import {
   runTests,
 } from '@vscode/test-electron';
 
-import { detectHostTarget, vsixFilename } from './distribution.mjs';
-
 const execFileAsync = promisify(execFile);
 const packageRoot = fileURLToPath(new URL('../', import.meta.url));
-const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
 
 async function main() {
-  const packageManifest = JSON.parse(
-    await readFile(join(packageRoot, 'package.json'), 'utf8'),
-  );
-  const target = detectHostTarget();
-  const vsixPath = process.env.FERRET_VSIX_PATH ?? join(
-    packageRoot,
-    vsixFilename(packageManifest.version, target),
-  );
+  const vsixPath = process.env.FERRET_VSIX_PATH;
+  if (vsixPath === undefined || vsixPath === '') {
+    throw new Error(
+      'FERRET_VSIX_PATH is required; run this helper through the Go distribution adapter',
+    );
+  }
   const profileRoot = await mkdtemp(
     join(shortTemporaryRoot(), 'fv-'),
   );
@@ -57,7 +52,7 @@ async function main() {
         'installed-harness',
       ),
       extensionTestsPath: join(
-        repositoryRoot,
+        packageRoot,
         'node_modules',
         '@vscode',
         'test-cli',

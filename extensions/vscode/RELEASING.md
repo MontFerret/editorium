@@ -1,10 +1,9 @@
 # VS Code distribution
 
-Editorium produces one Ferret VSIX for each supported VS Code target. The
-packages all use the extension version in `extensions/vscode/package.json` and
-the daemon/protocol version pinned in the repository-root `ferretd.json`.
-The canonical VS Code release tag is `vscode/v<version>`; this namespace keeps
-the extension independently versioned from future Editorium targets.
+Editorium produces one Ferret VSIX for each supported VS Code target. Every
+package uses the extension version in `extensions/vscode/package.json` and the
+daemon/protocol version pinned in the root `ferretd.json`. The canonical release
+tag is `vscode/v<version>`, keeping this integration independently versioned.
 
 | VS Code target | Official ferretd artifact | Native CI runner |
 | --- | --- | --- |
@@ -15,31 +14,35 @@ the extension independently versioned from future Editorium targets.
 | `win32-x64` | `ferretd_windows_x86_64.zip` | `windows-2025` |
 | `win32-arm64` | `ferretd_windows_arm64.zip` | `windows-11-arm` |
 
-The target table in `scripts/distribution.mjs` is authoritative; the CI matrix
-is generated from it rather than duplicated in workflow YAML.
+The explicit target catalog in `tools/editorium` is authoritative. It keeps
+VS Code identifiers, Go host normalization, official artifact/archive names,
+executables and modes, CI runners, and deterministic filenames together. CI
+generates its matrix from that catalog instead of duplicating it in workflow
+YAML.
 
 ## Build a distribution
 
-Run the package command from the repository root with a target:
+Install the native VS Code tools once, then package from the repository root:
 
 ```sh
-npm ci
-npm run vscode:package -- --target linux-x64
+npm --prefix extensions/vscode ci
+make package vscode TARGET=linux-x64
 ```
 
-The workflow downloads `ferretd_checksums.txt` and the matching archive only
-from the pinned official GitHub release. It verifies SHA-256 before extracting
-or executing anything, stages one `bin/ferretd` or `bin/ferretd.exe`, calls
-`vsce package --target`, and validates the resulting VSIX. A checksum mismatch,
-missing executable, malformed archive, wrong package target, unexpected file,
-lost executable bit, byte mismatch, or incorrect native version fails closed.
+Omit `TARGET` to package the host. The adapter downloads
+`ferretd_checksums.txt` and the matching archive only from the pinned official
+GitHub release. It verifies SHA-256 before safe, bounded root-file extraction;
+stages one `bin/ferretd` or `bin/ferretd.exe`; invokes `vsce package --target`;
+and validates the resulting VSIX. A corrupt cache entry is evicted. A checksum
+mismatch, malformed archive, wrong target or manifest, unexpected file, lost
+executable bit, byte mismatch, or incorrect native version fails closed.
 
-Unix targets may be cross-packaged on another Unix host. Windows hosts reject
-Unix targets because `vsce` cannot preserve their POSIX executable mode.
-Official release packages should come from the native CI jobs so every daemon
-is executed both before and after VSIX packaging.
+Unix targets may be structurally cross-packaged on another Unix host. Windows
+hosts reject Unix targets because `vsce` cannot preserve their POSIX executable
+mode. Official releases use native CI jobs so every daemon is executed before
+and after VSIX packaging.
 
-The resulting files use deterministic release asset names:
+The release assets are named deterministically:
 
 ```text
 ferret-vscode-<extension-version>-darwin-arm64.vsix
@@ -56,11 +59,10 @@ ferret-vscode-<extension-version>-win32-arm64.vsix
    `ferretd_checksums.txt`, and that `ferretd --version` reports the intended
    version.
 2. Change only the `ferretd` value in the root `ferretd.json`.
-3. Run `npm run proto:sync` and
-   `npm run proto:generate --workspace fql`, then review the generated client
-   changes.
-4. Run the tests, then package the native target locally.
-5. Let the CI matrix acquire, execute, package, and validate every target.
+3. Run `make proto-sync FORCE=1` and `make proto-generate vscode`, then review
+   the generated client changes.
+4. Run `make lint`, `make test`, and `make package vscode`.
+5. Let CI acquire, execute, package, and validate every native target.
 
 Do not commit `.dist/`, `shared/proto/ferretd/`,
 `extensions/vscode/bin/`, or generated VSIX files. Do not replace the official
@@ -68,33 +70,32 @@ artifacts with locally compiled binaries.
 
 ## Publish a GitHub Release
 
-1. Update `extensions/vscode/package.json` to the intended SemVer version.
-2. Commit and merge the version change.
-3. Create the exactly matching namespaced tag, for example:
+1. Update `extensions/vscode/package.json` to the intended canonical SemVer.
+2. Commit and merge that version change to `main`.
+3. On a clean local `main` that tracks and exactly matches `origin/main`, run:
 
    ```sh
-   git tag vscode/v0.1.0
+   make release vscode 0.1.0
    ```
 
-4. Push the tag:
+The release command fetches remote `main` and `vscode/*` tags into isolated
+refs, validates the branch/upstream/cleanliness and tracked manifest, rejects
+an existing local or remote tag, and requires the explicit version to equal the
+manifest. It then runs the same Go checks, prepare, build, lint, complete test,
+host packaging, and package verification adapters used by Make. After a final
+cleanliness, HEAD, and tag-availability check, it creates an annotated
+`vscode/v<version>` tag at the unchanged HEAD and pushes that tag to `origin`.
 
-   ```sh
-   git push origin vscode/v0.1.0
-   ```
+The command never edits the manifest, creates a release commit, infers a version,
+or publishes locally. If the push fails, it removes the local tag unless the
+remote is confirmed to contain that exact tag at the intended commit.
 
-The dedicated release workflow validates the `vscode/v<version>` tag and
-requires its version to match `extensions/vscode/package.json` exactly before
-running any packaging job. It then runs the same build, test, native daemon,
-VSIX validation, and installed-package checks as ordinary CI for every target
-in the authoritative distribution table above.
-
-Only after all six target jobs succeed does the workflow create the GitHub
-Release and attach the complete VSIX set. SemVer prerelease versions such as
-`vscode/v0.2.0-beta.1` create GitHub prereleases; stable versions create normal
-releases. Rerunning a completed release is a no-op when its metadata and asset
-set already match, while an incomplete draft from an interrupted attempt is
+The tag-triggered workflow validates the tag/manifest match and builds all six
+native packages. Only after the complete asset set succeeds does it create the
+GitHub Release. SemVer prereleases create GitHub prereleases. A rerun is a no-op
+when published metadata and assets already match; an incomplete draft is
 replaced.
 
 Marketplace publication is not part of this workflow. It uses no Marketplace
-credentials, does not run `vsce publish`, and does not modify or infer the
+credentials, never invokes `vsce publish`, and does not modify or infer the
 package version.

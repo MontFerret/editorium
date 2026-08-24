@@ -151,6 +151,8 @@ class InstrumentedExecutionClient implements ExecutionClient {
     signal?: AbortSignal,
   ): AsyncIterable<FerretExecutionEvent> {
     const source = this.inner.watchExecution(executionId, signal);
+    // The async iterator method has its own `this`; retain the client owner.
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
     const client = this;
 
     return {
@@ -1158,7 +1160,10 @@ function waitForEvent<T>(
   description: string,
 ): Promise<T> {
   return new Promise<T>((resolveEvent, rejectEvent) => {
+    // Assigned after finish is defined because finish closes over both handles.
+    // eslint-disable-next-line prefer-const
     let listener: vscode.Disposable | undefined;
+    // eslint-disable-next-line prefer-const
     let timer: NodeJS.Timeout | undefined;
     const finish = (action: () => void): void => {
       listener?.dispose();

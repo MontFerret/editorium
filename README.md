@@ -8,79 +8,95 @@ Ferret and its language server.
 
 - [`extensions/vscode/`](extensions/vscode/README.md) — Visual Studio Code
   support for Ferret Query Language files.
-- `shared/` — editor-independent inputs that may be consumed by more than one
-  integration. Protocol schemas live under `shared/proto/`; generated clients
-  remain owned by each extension.
-- `scripts/` — repository-level acquisition and validation tooling.
+- `shared/` — editor-independent inputs. Protocol schemas live under
+  `shared/proto/`; generated clients remain owned by each extension.
+- `tools/editorium/` — the Go implementation behind the repository Make
+  interface, including integration dispatch, daemon/protocol acquisition,
+  packaging, CI matrices, and releases.
 
-Future editor integrations belong under `extensions/`. Editor-specific source,
-generated clients, packaging, and tests stay with their extension rather than
-forming a shared editor runtime before one is needed.
+Future editor integrations belong under `extensions/`. Adding one requires an
+explicit Go catalog/adapter entry; it does not change the public Make commands.
+
+## Repository commands
+
+GNU Make is the documented monorepo interface. Run `make help` for the concise
+command list and `make extensions` for the sorted integration catalog.
+
+```sh
+make prepare                 # prepare every integration
+make build                   # build every integration
+make test                    # test Go tooling and every integration
+make lint                    # format/vet Go and lint every integration
+make clean                   # remove all integration outputs and shared caches
+```
+
+Safe commands also accept one or more integration names, for example
+`make build vscode` or `make test vscode`. A targeted clean removes only that
+integration's outputs; unscoped `make clean` additionally removes `.dist/` and
+the synchronized `shared/proto/ferretd/` cache. Neither form removes
+`node_modules` or committed generated clients.
+
+Go 1.26 implements the repository tooling. Node.js 22 or newer and npm provide
+the VS Code dependency and native-tool layer. Install that layer explicitly
+after cloning:
+
+```sh
+npm --prefix extensions/vscode ci
+```
+
+Installing dependencies does not synchronize schemas, download `ferretd`, or
+run repository preparation. The VS Code manifest and lockfile own that Node
+toolchain locally; the repository root has no npm metadata. Use Make for normal
+repository operations.
 
 ## Protocol schemas
 
 [`ferretd.json`](ferretd.json) is the sole version pin for both the daemon
 bundled in distributions and the ferretd protocol schemas used to generate
-editor clients. `npm install` and `npm ci` automatically download the
-`proto/ferretd/` tree from that exact `v<version>` tag into
-`shared/proto/ferretd/`. The synchronized files and their version marker are
-ignored by Git; `shared/proto/google/rpc/status.proto` is a separately owned,
-committed third-party input shared by editor integrations.
-
-Run synchronization explicitly when needed:
+editor clients. The pinned `proto/ferretd/` tree is cached under
+`shared/proto/ferretd/`; its files and `.ferretd-version` marker are ignored by
+Git. `shared/proto/google/rpc/status.proto` is a separately owned, committed
+third-party input.
 
 ```sh
-npm run proto:sync
-npm run proto:sync -- --force
+make proto-sync
+make proto-sync FORCE=1
+make proto-generate vscode
+make proto-check vscode
 ```
 
-The first command is a no-op when the local marker and required schemas match
-`ferretd.json`. `--force` downloads and atomically replaces the managed schema
-tree even when the version is unchanged. A failed download or extraction keeps
-the previous tree intact.
+Synchronization is a no-op when the marker and required schemas match the pin.
+A forced sync atomically replaces the entire managed tree. Failed downloads,
+validation, or extraction preserve the prior cache. Generation writes the
+committed extension client; checking generates into a temporary tree and
+requires byte-for-byte equality.
 
-## Development
+## VS Code distributions
 
-Node.js 22 or newer and npm are required for the JavaScript workspaces.
+Packaging and installation require one explicit integration and default to the
+current host target:
 
 ```sh
-npm install
-npm run build
-npm test
-npm run package
-npm run package:check
+make prepare vscode
+make package vscode
+make package vscode TARGET=linux-arm64
+make install vscode
+make install vscode CODE=code-insiders
 ```
 
-The root commands run the corresponding script in every npm workspace that
-provides it. Committed generated clients are verified by workspace tests and
-can be regenerated from the synchronized inputs with:
-
-```sh
-npm run proto:generate --workspace fql
-npm run proto:check --workspace fql
-```
-
-VS Code distribution commands acquire the explicitly pinned `ferretd` release,
-verify its published checksum, and default to the current host target:
-
-```sh
-npm run vscode:prepare
-npm run vscode:package
-npm run vscode:install
-```
-
-Pass `--target <target>` after `--` for an explicit supported target, for
-example `npm run vscode:package -- --target linux-arm64`. Generated downloads,
-staged executables, and VSIX files are ignored by Git. See
+The adapter verifies the pinned official release checksum, safe bounded archive
+extraction, staged executable, VSIX target and exact contents, manifest version,
+bundled daemon bytes, Unix executable mode, and native `ferretd --version`
+output. Downloads live under `.dist/`; staged executables and deterministic
+VSIX files live under `extensions/vscode/` and are ignored by Git. See
 [`extensions/vscode/RELEASING.md`](extensions/vscode/RELEASING.md) for the
-distribution matrix and release procedure.
+target matrix and release contract.
 
 ## Update ferretd
 
 1. Change the single `ferretd` version in `ferretd.json`.
-2. Run `npm run proto:sync`.
-3. Run `npm run proto:generate --workspace fql` and review generated client
-   changes.
-4. Run `npm test`, `npm run package`, and `npm run package:check`.
-5. Commit the version, generated clients, and any compatibility changes; do not
-   commit `shared/proto/ferretd/`.
+2. Run `make proto-sync FORCE=1`.
+3. Run `make proto-generate vscode` and review generated client changes.
+4. Run `make lint`, `make test`, and `make package vscode`.
+5. Commit the pin, generated clients, and any compatibility changes; do not
+   commit `shared/proto/ferretd/`, `.dist/`, staged binaries, or VSIX files.

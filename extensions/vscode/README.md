@@ -159,39 +159,41 @@ while the server is unavailable.
 
 ## Development
 
-Install dependencies from the repository root:
+Install the VS Code dependency/native-tool layer from the repository root:
 
 ```sh
-npm install
+npm --prefix extensions/vscode ci
 ```
 
-The VS Code source package can then be built and tested independently:
+Dependency installation has no repository preparation side effects. Use the
+root Make interface for normal development:
 
 ```sh
-npm run build --workspace fql
-npm test --workspace fql
+make prepare vscode
+make build vscode
+make lint vscode
+make test vscode
 ```
 
 The build bundles the language client and extension sources into
 `extensions/vscode/out/extension.js`. It does not download a daemon.
-Installation synchronizes the ferretd schemas selected by the root
-`ferretd.json` into `shared/proto/`; client generation never reads an
-editor-local copy. Use `npm run proto:sync` at the repository root to check the
-schema cache, or add `-- --force` to refresh it.
+`make prepare vscode` synchronizes the ferretd schemas selected by the root
+`ferretd.json` into `shared/proto/` and stages the pinned daemon for the host.
+Client generation never reads an editor-local schema copy. Use
+`make proto-sync FORCE=1` to refresh the cache even when its marker matches, and
+`make proto-check vscode` to verify committed generated clients.
 
-To stage the pinned daemon for the current host, create its platform-specific
-VSIX, or install that VSIX into the local VS Code instance, run:
+Create a platform-specific VSIX or install it into the local VS Code instance:
 
 ```sh
-npm run vscode:prepare
-npm run vscode:package
-npm run vscode:install
+make package vscode
+make install vscode
 ```
 
-Each command accepts an explicit target, such as:
+Packaging defaults to the host and accepts an explicit target:
 
 ```sh
-npm run vscode:package -- --target darwin-arm64
+make package vscode TARGET=darwin-arm64
 ```
 
 The package command prints and creates
@@ -207,22 +209,25 @@ See [`RELEASING.md`](RELEASING.md) for target artifacts and the tagged GitHub
 Release procedure.
 
 Real-server integration tests are a separate, explicit suite. Point
-`FERRETD_TEST_PATH` at the pinned executable and run:
+`FERRETD_TEST_PATH` at the pinned executable only when invoking the native npm
+helper directly:
 
 ```sh
-FERRETD_TEST_PATH=/absolute/path/to/ferretd npm run test:integration --workspace fql
+cd extensions/vscode
+FERRETD_TEST_PATH=/absolute/path/to/ferretd npm run test:integration
 ```
 
-The integration command fails when the override is missing or unusable. CI
-stages the daemon selected by `ferretd.json` and runs this suite in addition to
-the fast unit suite and installed-VSIX bundled-server smoke test. Both labels
-pin VS Code 1.95.0, the extension's compatibility baseline, so test-host
-behavior does not drift with the latest Stable release.
+Normal `make test vscode` stages the daemon and runs the complete unit, daemon
+transport, and real-ferretd integration suites. The native npm command is an
+extension implementation detail and fails when its override is missing or
+unusable. CI additionally runs the installed-VSIX bundled-server smoke test.
+Both test labels pin VS Code 1.95.0, the extension's compatibility baseline, so
+test-host behavior does not drift with the latest Stable release.
 
 ## Run and debug
 
 1. Open the repository root in Visual Studio Code.
-2. Either run `npm run vscode:prepare` to stage the pinned bundled daemon, or
+2. Either run `make prepare vscode` to stage the pinned bundled daemon, or
    configure `ferret.server.path` in the Extension Development Host to point
    to a locally built daemon.
 3. Press `F5` and select **Run Ferret Extension** if prompted.

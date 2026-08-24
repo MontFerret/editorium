@@ -166,6 +166,8 @@ async function waitForDiagnostics(
   }
 
   return new Promise((resolveDiagnostics, rejectDiagnostics) => {
+    // Assigned after listener creation because its callback closes over it.
+    // eslint-disable-next-line prefer-const
     let timer: NodeJS.Timeout | undefined;
     const listener = vscode.languages.onDidChangeDiagnostics((event) => {
       if (

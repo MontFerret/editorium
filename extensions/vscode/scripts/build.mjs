@@ -1,11 +1,24 @@
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 import * as esbuild from 'esbuild';
 
-import { readFerretdVersion } from '../../../scripts/ferretd.mjs';
-
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
-const ferretdVersion = await readFerretdVersion(repositoryRoot);
+const ferretdManifest = JSON.parse(
+  await readFile(new URL('../../../ferretd.json', import.meta.url), 'utf8'),
+);
+if (
+  ferretdManifest === null ||
+  typeof ferretdManifest !== 'object' ||
+  Array.isArray(ferretdManifest) ||
+  Object.keys(ferretdManifest).length !== 1 ||
+  typeof ferretdManifest.ferretd !== 'string'
+) {
+  throw new Error(
+    `${repositoryRoot}/ferretd.json must contain exactly one ferretd version`,
+  );
+}
+const ferretdVersion = ferretdManifest.ferretd;
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');

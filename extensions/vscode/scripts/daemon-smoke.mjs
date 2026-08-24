@@ -197,9 +197,9 @@ if (process.exitCode === undefined) {
 
 async function observeAfter(client, executionId, operation) {
   const abort = new AbortController();
-  const iterator = client
-    .watchExecution(executionId, abort.signal)
-    [Symbol.asyncIterator]();
+  const iterator = client.watchExecution(executionId, abort.signal)[
+    Symbol.asyncIterator
+  ]();
   const events = [];
 
   try {
