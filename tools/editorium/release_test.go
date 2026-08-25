@@ -260,7 +260,7 @@ func writeVSCodePackageManifest(t *testing.T, root, version string) {
 
 func writeVSCodePackageManifestWithPublisher(t *testing.T, root, version, publisher string) {
 	t.Helper()
-	writeTestFile(t, filepath.Join(root, "extensions", "vscode", "package.json"), []byte("{\"name\":\"fql\",\"version\":\""+version+"\",\"publisher\":\""+publisher+"\"}\n"), 0o644)
+	writeTestFile(t, filepath.Join(root, "extensions", "vscode", "package.json"), []byte("{\"name\":\""+vscodeMarketplaceName+"\",\"version\":\""+version+"\",\"publisher\":\""+publisher+"\"}\n"), 0o644)
 }
 
 type releaseGitFixture struct {

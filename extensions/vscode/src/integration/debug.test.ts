@@ -3,8 +3,8 @@ import * as assert from 'node:assert/strict';
 import * as vscode from 'vscode';
 
 import { debugFileCommand } from '../debug/commands';
+import { extensionId } from '../test/extension-identity';
 
-const extensionId = 'ferretlang.fql';
 const debugType = 'ferret';
 const explicitSessionName = 'Ferret DAP integration';
 const currentFileSessionName = 'Debug Current Ferret File';

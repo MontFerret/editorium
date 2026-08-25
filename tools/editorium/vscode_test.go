@@ -164,7 +164,7 @@ func TestValidateVSIXChecksExactContentsMetadataBytesAndMode(t *testing.T) {
 	writeTestFile(t, staged, binary, 0o755)
 	path := filepath.Join(root, vsixFilename("0.1.0", target))
 	writeVSIX(t, path, target, binary, nil)
-	manifest := vscodeManifest{Name: "fql", Version: "0.1.0", Publisher: vscodeMarketplacePublisher}
+	manifest := vscodeManifest{Name: vscodeMarketplaceName, Version: "0.1.0", Publisher: vscodeMarketplacePublisher}
 	if _, err := validateVSIX(context.Background(), path, target, staged, "2.0.0-alpha.2", manifest); err != nil {
 		t.Fatal(err)
 	}
@@ -181,10 +181,10 @@ func TestValidateVSIXChecksExactContentsMetadataBytesAndMode(t *testing.T) {
 			entries["extension.vsixmanifest"] = testZipEntry{[]byte(`<Identity TargetPlatform="wrong-target"/>`), 0o100644}
 		}, "target platform"},
 		{"wrong manifest", func(entries map[string]testZipEntry) {
-			entries["extension/package.json"] = testZipEntry{[]byte(`{"name":"fql","version":"9.9.9","publisher":"ferretlang"}`), 0o100644}
+			entries["extension/package.json"] = testZipEntry{[]byte(`{"name":"` + vscodeMarketplaceName + `","version":"9.9.9","publisher":"` + vscodeMarketplacePublisher + `"}`), 0o100644}
 		}, "manifest identity"},
 		{"wrong publisher", func(entries map[string]testZipEntry) {
-			entries["extension/package.json"] = testZipEntry{[]byte(`{"name":"fql","version":"0.1.0","publisher":"not-ferretlang"}`), 0o100644}
+			entries["extension/package.json"] = testZipEntry{[]byte(`{"name":"` + vscodeMarketplaceName + `","version":"0.1.0","publisher":"not-ferretlang"}`), 0o100644}
 		}, "manifest identity"},
 		{"missing icon", func(entries map[string]testZipEntry) {
 			delete(entries, "extension/media/icon.png")
@@ -293,7 +293,7 @@ func writeVSIX(t *testing.T, path string, target vscodeTarget, binary []byte, ch
 		"extension/language-configuration.json":     {[]byte("{}"), 0o100644},
 		"extension/media/icon.png":                  {[]byte("png"), 0o100644},
 		"extension/out/extension.js":                {[]byte("module.exports = {}"), 0o100644},
-		"extension/package.json":                    {[]byte(`{"name":"fql","version":"0.1.0","publisher":"ferretlang"}`), 0o100644},
+		"extension/package.json":                    {[]byte(`{"name":"` + vscodeMarketplaceName + `","version":"0.1.0","publisher":"` + vscodeMarketplacePublisher + `"}`), 0o100644},
 		"extension/readme.md":                       {[]byte("# Ferret"), 0o100644},
 		"extension/syntaxes/ferret.tmLanguage.json": {[]byte("{}"), 0o100644},
 		"extension/bin/" + target.BinaryName:        {binary, 0o100755},

@@ -51,8 +51,8 @@ import type {
   FerretExecutionEvent,
   FerretSession,
 } from '../execution/types';
+import { extensionId } from '../test/extension-identity';
 
-const extensionId = 'ferretlang.fql';
 const saveAndRunAction = 'Save and Run';
 const eventTimeout = 15_000;
 

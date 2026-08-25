@@ -1,7 +1,7 @@
 import * as assert from 'node:assert/strict';
 import * as vscode from 'vscode';
 
-const extensionId = 'ferretlang.fql';
+import { extensionId } from '../test/extension-identity';
 
 suite('installed Ferret VSIX', () => {
   test('starts its bundled daemon and publishes diagnostics', async () => {

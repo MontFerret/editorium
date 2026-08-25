@@ -8,8 +8,7 @@ import {
 } from '../execution/commands';
 import { showExecutionOutputCommand } from '../execution/feedback';
 import { restartForServerConfigurationChange } from '../extension';
-
-const extensionId = 'ferretlang.fql';
+import { extensionId } from './extension-identity';
 
 class FakeServerLifecycleController {
   public restarts = 0;

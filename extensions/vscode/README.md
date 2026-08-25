@@ -43,7 +43,7 @@ saved, add the standard language-specific editor settings:
 
 ```json
 "[ferret]": {
-  "editor.defaultFormatter": "ferretlang.fql",
+  "editor.defaultFormatter": "ferretlang.ferret",
   "editor.formatOnSave": true
 }
 ```

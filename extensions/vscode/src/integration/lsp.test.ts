@@ -5,7 +5,8 @@ import { join } from 'node:path';
 
 import * as vscode from 'vscode';
 
-const extensionId = 'ferretlang.fql';
+import { extensionId } from '../test/extension-identity';
+
 const restartCommand = 'ferret.restartLanguageServer';
 
 suite('ferretd LSP integration', () => {
