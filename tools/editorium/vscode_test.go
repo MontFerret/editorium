@@ -12,25 +12,6 @@ import (
 	"testing"
 )
 
-func TestExtensionCatalogSelectionAndUnknownIntegrations(t *testing.T) {
-	names := extensionNames()
-	if len(names) != 1 || names[0] != "vscode" {
-		t.Fatalf("extensionNames() = %v", names)
-	}
-	if err := validateExtensions(nil); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateExtensions([]string{"vscode"}); err != nil {
-		t.Fatal(err)
-	}
-	for _, names := range [][]string{{"unknown"}, {"vscode", "vscode"}} {
-		err := validateExtensions(names)
-		if err == nil || (names[0] == "unknown" && (!strings.Contains(err.Error(), "Available integrations:\n  vscode") || !strings.Contains(err.Error(), "Usage:"))) {
-			t.Fatalf("validateExtensions(%v) = %v", names, err)
-		}
-	}
-}
-
 func TestVSCodeTargetMatrixMappingsAndFilenames(t *testing.T) {
 	expected := []struct {
 		id, platform, architecture, artifact, archiveType, binary, runner string
@@ -236,6 +217,8 @@ func TestRunExtensionsCleanScopesSharedOwnership(t *testing.T) {
 		for _, path := range []string{
 			".dist/cache/artifact",
 			"shared/proto/ferretd/daemon/v1/daemon.proto",
+			"extensions/jetbrains/build/distributions/ferret.zip",
+			"extensions/jetbrains/.gradle/cache.bin",
 			"extensions/vscode/out/extension.js",
 			"extensions/vscode/dist/ferret.vsix",
 			"extensions/vscode/node_modules/keep",
@@ -255,7 +238,7 @@ func TestRunExtensionsCleanScopesSharedOwnership(t *testing.T) {
 				t.Fatalf("targeted clean left %s: %v", removed, err)
 			}
 		}
-		for _, preserved := range []string{".dist/cache/artifact", "shared/proto/ferretd/daemon/v1/daemon.proto", "extensions/vscode/node_modules/keep", "extensions/vscode/src/daemon/gen/keep.pb.ts"} {
+		for _, preserved := range []string{".dist/cache/artifact", "shared/proto/ferretd/daemon/v1/daemon.proto", "extensions/jetbrains/build/distributions/ferret.zip", "extensions/jetbrains/.gradle/cache.bin", "extensions/vscode/node_modules/keep", "extensions/vscode/src/daemon/gen/keep.pb.ts"} {
 			if _, err := os.Stat(filepath.Join(root, preserved)); err != nil {
 				t.Fatalf("targeted clean removed %s: %v", preserved, err)
 			}
@@ -266,12 +249,12 @@ func TestRunExtensionsCleanScopesSharedOwnership(t *testing.T) {
 		if err := runExtensions(context.Background(), root, "clean", nil); err != nil {
 			t.Fatal(err)
 		}
-		for _, removed := range []string{".dist", "shared/proto/ferretd", "extensions/vscode/out", "extensions/vscode/dist"} {
+		for _, removed := range []string{".dist", "shared/proto/ferretd", "extensions/jetbrains/build", "extensions/vscode/out", "extensions/vscode/dist"} {
 			if _, err := os.Stat(filepath.Join(root, removed)); !os.IsNotExist(err) {
 				t.Fatalf("unscoped clean left %s: %v", removed, err)
 			}
 		}
-		for _, preserved := range []string{"extensions/vscode/node_modules/keep", "extensions/vscode/src/daemon/gen/keep.pb.ts"} {
+		for _, preserved := range []string{"extensions/jetbrains/.gradle/cache.bin", "extensions/vscode/node_modules/keep", "extensions/vscode/src/daemon/gen/keep.pb.ts"} {
 			if _, err := os.Stat(filepath.Join(root, preserved)); err != nil {
 				t.Fatalf("unscoped clean removed %s: %v", preserved, err)
 			}

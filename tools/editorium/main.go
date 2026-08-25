@@ -76,7 +76,7 @@ func usageError(message string) error {
 	if message != "" {
 		parts = append(parts, message)
 	}
-	parts = append(parts, usage, "Available integrations:\n  "+strings.Join(extensionNames(), "\n  "))
+	parts = append(parts, usage, "Available integrations:\n  "+availableIntegrations())
 	return errors.New(strings.Join(parts, "\n"))
 }
 

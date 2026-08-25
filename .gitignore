@@ -4,6 +4,10 @@ out/
 .dist/
 extensions/vscode/bin/
 extensions/vscode/dist/
+extensions/jetbrains/.gradle/
+extensions/jetbrains/.intellijPlatform/
+extensions/jetbrains/build/
+extensions/jetbrains/sandbox/
 shared/proto/ferretd/
 .idea/
 .vscode/

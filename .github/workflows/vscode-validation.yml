@@ -41,6 +41,15 @@ jobs:
           cache: npm
           cache-dependency-path: extensions/vscode/package-lock.json
 
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:

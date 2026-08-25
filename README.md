@@ -8,6 +8,8 @@ Ferret and its language server.
 
 - [`extensions/vscode/`](extensions/vscode/README.md) — Visual Studio Code
   support for Ferret Query Language files.
+- [`extensions/jetbrains/`](extensions/jetbrains/README.md) — the Kotlin-based
+  JetBrains IDE plugin foundation and `.fql` file recognition.
 - `shared/` — editor-independent inputs. Protocol schemas live under
   `shared/proto/`; generated clients remain owned by each extension.
 - `tools/editorium/` — the Go implementation behind the repository Make
@@ -46,8 +48,24 @@ npm --prefix extensions/vscode ci
 
 Installing dependencies does not synchronize schemas, download `ferretd`, or
 run repository preparation. The VS Code manifest and lockfile own that Node
-toolchain locally; the repository root has no npm metadata. Use Make for normal
-repository operations.
+toolchain locally; the repository root has no npm metadata. JetBrains plugin
+development additionally requires a JDK 21 or newer to run Gradle. The isolated
+Gradle project automatically provisions the Java 25 toolchain required by
+IntelliJ Platform 2026.2. Use Make for normal repository operations.
+
+Target an individual integration with the same public commands:
+
+```sh
+make build jetbrains
+make lint jetbrains
+make test jetbrains
+make package jetbrains
+```
+
+The JetBrains package is created as
+`extensions/jetbrains/build/distributions/ferret-jetbrains-0.1.0.zip`. It
+contains only Ferret language and `.fql` file-type registration; LSP,
+`ferretd`, execution, and debugging are intentionally deferred.
 
 ## Protocol schemas
 
