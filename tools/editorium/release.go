@@ -342,11 +342,15 @@ func runReleaseCI(root string, args []string) error {
 		if *directory == "" {
 			return fmt.Errorf("missing required release option: --directory")
 		}
-		assets, err := validateReleaseAssets(*directory, metadata.Version)
+		assetDirectory := *directory
+		if !filepath.IsAbs(assetDirectory) {
+			assetDirectory = filepath.Join(root, assetDirectory)
+		}
+		assets, err := validateReleaseAssets(assetDirectory, metadata.Version)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Verified %d release assets in %s.\n", len(assets), *directory)
+		fmt.Printf("Verified %d release assets in %s.\n", len(assets), assetDirectory)
 	case "state":
 		var release *githubRelease
 		if *releaseJSON != "" {

@@ -118,6 +118,34 @@ func TestValidateReleaseAssetsRejectsIncompleteSets(t *testing.T) {
 	}
 }
 
+func TestReleaseCICheckAssetsResolvesDirectoriesFromRepositoryRoot(t *testing.T) {
+	root := t.TempDir()
+	writeVSCodePackageManifest(t, root, "0.1.0")
+	directory := filepath.Join(root, "release-assets")
+	for _, name := range expectedReleaseAssetNames("0.1.0") {
+		writeTestFile(t, filepath.Join(directory, name), []byte("vsix"), 0o644)
+	}
+
+	nested := filepath.Join(root, "tools", "editorium")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(nested); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) })
+
+	for _, candidate := range []string{"release-assets", directory} {
+		if err := runReleaseCI(root, []string{"check-assets", "--tag", "vscode/v0.1.0", "--directory", candidate}); err != nil {
+			t.Fatalf("check-assets directory %q: %v", candidate, err)
+		}
+	}
+}
+
 func TestReleaseRepositoryPreflightRejectsInvalidStatesAndExistingTags(t *testing.T) {
 	ctx := context.Background()
 	t.Run("dirty", func(t *testing.T) {
