@@ -1,6 +1,6 @@
 {
   "name": "ferret-lang",
-  "displayName": "Ferret",
+  "displayName": "Ferret Lang",
   "description": "Ferret Query Language support for Visual Studio Code.",
   "version": "0.1.0",
   "publisher": "ferretlang",
