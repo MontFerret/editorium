@@ -19,7 +19,7 @@ import (
 
 const (
 	maximumVSIXEntrySize       = 128 * 1024 * 1024
-	vscodeMarketplaceName      = "ferret"
+	vscodeMarketplaceName      = "ferret-lang"
 	vscodeMarketplacePublisher = "ferretlang"
 )
 

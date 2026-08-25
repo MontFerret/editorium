@@ -114,7 +114,7 @@ The source-controlled Marketplace identity is:
 
 ```text
 Publisher: ferretlang
-Extension: ferretlang.ferret
+Extension: ferretlang.ferret-lang
 ```
 
 Before pushing the first stable release tag:

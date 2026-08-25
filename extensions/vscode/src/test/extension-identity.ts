@@ -1,1 +1,1 @@
-export const extensionId = 'ferretlang.ferret';
+export const extensionId = 'ferretlang.ferret-lang';
