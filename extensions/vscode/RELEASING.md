@@ -108,51 +108,49 @@ Marketplace extension version must be exactly `major.minor.patch`. The
 Marketplace pre-release channel and its separate numeric version progression
 are not implemented; the workflow never passes `--pre-release`.
 
-## Configure Marketplace trusted publishing
+## Configure temporary Marketplace PAT publishing
 
 The source-controlled Marketplace identity is:
 
 ```text
 Publisher: ferretlang
-Extension: ferretlang.fql
+Extension: ferretlang.ferret
 ```
 
 Before pushing the first stable release tag:
 
 1. In GitHub, create an environment named `vscode-marketplace`. Leave it
-   without secrets or required reviewers by default. Protection rules can be
-   added later without changing the workflow.
-2. In the Visual Studio Marketplace publisher management UI for `ferretlang`,
-   create a GitHub trusted-publishing policy with these exact values:
+   without required reviewers by default. Protection rules can be added later
+   without changing the workflow.
+2. Add an environment secret named `VSCE_PAT`. Its Azure DevOps PAT must use
+   `All accessible organizations` and the `Marketplace (Manage)` scope. The
+   Microsoft account that created it must have publishing access to
+   `ferretlang`.
+3. Give the PAT the shortest practical expiration. Treat it as a password:
+   never pass it as a command argument, print it, or store it in the repository.
+   Replace the environment secret before it expires, verify the replacement,
+   and revoke the old PAT.
 
-   ```text
-   GitHub organization: MontFerret
-   Repository:          editorium
-   Workflow:            .github/workflows/release-vscode.yml
-   Publisher:           ferretlang
-   ```
+This PAT flow is temporary. Microsoft retires global Azure DevOps PATs on
+December 1, 2026; the workflow must return to trusted publishing before then.
+See the [official Marketplace publishing guidance](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#get-a-personal-access-token).
 
-   If the UI offers an environment restriction, set it to
-   `vscode-marketplace`; otherwise retain the workflow-file restriction above.
-3. Do not create `VSCE_PAT`, `AZURE_DEVOPS_EXT_PAT`, a client secret, or any
-   other Marketplace credential in GitHub. Trusted publishing requires none.
-
-The Marketplace job has only `contents: read` and `id-token: write`. It uses
-Node.js 22, installs the exact `@vscode/vsce` version from
-`extensions/vscode/package-lock.json`, downloads the six existing workflow
-artifacts, and verifies the complete canonical target set before the first
-remote operation. It then runs, in deterministic filename order:
+The Marketplace job has only `contents: read`. It exposes `VSCE_PAT` only to
+the publication step; the pinned `vsce` executable reads the token from that
+environment variable. The job uses Node.js 22, installs the exact
+`@vscode/vsce` version from `extensions/vscode/package-lock.json`, downloads
+the six existing workflow artifacts, and verifies the complete canonical
+target set before the first remote operation. It then runs, in deterministic
+filename order:
 
 ```sh
 LC_ALL=C node extensions/vscode/node_modules/@vscode/vsce/vsce publish \
-  --oidc \
   --skip-duplicate \
   --packagePath release-assets/*.vsix
 ```
 
-`--oidc` requests a GitHub token for the Marketplace audience and exchanges it
-for a short-lived publishing credential. It does not fall back to PAT
-authentication. Each VSIX retains the target metadata created by the
+The token is not passed with `--pat`, so it is absent from the command line and
+logs. Each VSIX retains the target metadata created by the
 `vsce package --target` build step; the publishing command does not pass a
 second target list.
 
@@ -171,15 +169,36 @@ not compare already-published remote bytes.
 
 Authentication failures are distinct from package failures:
 
-- An error about a missing GitHub OIDC request URL or token means the job did
-  not receive `id-token: write` permission.
-- `Marketplace OIDC token exchange failed` indicates a missing or mismatched
-  Marketplace trusted-publishing policy, including organization, repository,
-  workflow, publisher, or environment restrictions.
+- `Missing environment secret VSCE_PAT` means the secret is missing, misnamed,
+  or unavailable to the `vscode-marketplace` job.
+- `Unauthorized(401)` or an expired-token error means the PAT is invalid or has
+  expired; replace the secret and revoke the unusable token.
+- `Forbidden(403)` usually means the PAT was not created for
+  `All accessible organizations`, lacks `Marketplace (Manage)`, or belongs to
+  an account without publishing access to `ferretlang`.
 - VSIX manifest, publisher, target, version, or package-content errors are
-  package validation failures and must be fixed in source; they are not OIDC
+  package validation failures and must be fixed in source; they are not PAT
   configuration failures.
 
-Validate the workflow and package structure locally, configure trusted
-publishing, and use the first intended stable release as the end-to-end test.
-Do not publish a disposable production extension version merely to test OIDC.
+Validate the workflow and package structure locally, configure the environment
+secret, and use the first intended stable release as the end-to-end test. Do
+not publish a disposable production extension version merely to test the PAT.
+
+## Restore Marketplace trusted publishing
+
+When Visual Studio Marketplace exposes GitHub trusted-publisher policies,
+configure the policy with these exact values:
+
+```text
+GitHub organization: MontFerret
+Repository:          editorium
+Workflow:            .github/workflows/release-vscode.yml
+Publisher:           ferretlang
+```
+
+If the Marketplace UI offers an environment restriction, set it to
+`vscode-marketplace`; otherwise retain the narrow workflow-file restriction.
+Then remove the `VSCE_PAT` step environment and missing-secret check, restore
+`id-token: write`, and add `--oidc` to the same publication command. After a
+successful OIDC publication, revoke the PAT and delete the `VSCE_PAT` GitHub
+environment secret. Do not keep PAT fallback authentication alongside OIDC.

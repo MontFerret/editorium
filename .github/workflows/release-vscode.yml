@@ -136,7 +136,6 @@ jobs:
     environment: vscode-marketplace
     permissions:
       contents: read
-      id-token: write
 
     steps:
       - name: Check out repository
@@ -171,12 +170,16 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: go -C tools/editorium run . release-ci check-assets --tag "$RELEASE_TAG" --directory release-assets
 
-      - name: Publish platform packages to VS Code Marketplace
+      - name: Publish VSIXs with temporary Marketplace PAT
         env:
           LC_ALL: C
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
         shell: bash
         run: |
+          if [[ -z "${VSCE_PAT:-}" ]]; then
+            echo "::error::Missing environment secret VSCE_PAT."
+            exit 1
+          fi
           node extensions/vscode/node_modules/@vscode/vsce/vsce publish \
-            --oidc \
             --skip-duplicate \
             --packagePath release-assets/*.vsix
