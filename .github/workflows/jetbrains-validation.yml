@@ -1,0 +1,59 @@
+name: JetBrains validation
+
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - '.github/workflows/jetbrains-validation.yml'
+      - 'Makefile'
+      - 'extensions/jetbrains/**'
+      - 'tools/editorium/**'
+      - '!tools/editorium/vscode.go'
+      - '!tools/editorium/vscode_test.go'
+  pull_request:
+    paths:
+      - '.github/workflows/jetbrains-validation.yml'
+      - 'Makefile'
+      - 'extensions/jetbrains/**'
+      - 'tools/editorium/**'
+      - '!tools/editorium/vscode.go'
+      - '!tools/editorium/vscode_test.go'
+
+permissions:
+  contents: read
+
+jobs:
+  jetbrains:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: tools/editorium/go.mod
+          cache-dependency-path: tools/editorium/go.sum
+
+      - name: Build plugin
+        run: make build jetbrains
+
+      - name: Lint plugin
+        run: make lint jetbrains
+
+      - name: Test plugin
+        run: make test jetbrains
+
+      - name: Package plugin
+        run: make package jetbrains

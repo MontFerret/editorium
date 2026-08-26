@@ -1,0 +1,18 @@
+<idea-plugin>
+    <id>org.ferretlang.jetbrains</id>
+    <name>Ferret</name>
+    <vendor url="https://ferretlang.org">Ferret</vendor>
+    <description>Ferret Query Language support for JetBrains IDEs.</description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.lang</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <fileType
+            name="Ferret"
+            implementationClass="org.ferretlang.jetbrains.lang.FerretLanguageFileType"
+            fieldName="INSTANCE"
+            language="Ferret"
+            extensions="fql" />
+    </extensions>
+</idea-plugin>

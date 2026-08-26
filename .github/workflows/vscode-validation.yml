@@ -1,6 +1,28 @@
 name: VS Code validation
 
 on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - '.github/workflows/vscode-validation.yml'
+      - 'Makefile'
+      - 'ferretd.json'
+      - 'extensions/vscode/**'
+      - 'shared/**'
+      - 'tools/editorium/**'
+      - '!tools/editorium/jetbrains.go'
+      - '!tools/editorium/jetbrains_test.go'
+  pull_request:
+    paths:
+      - '.github/workflows/vscode-validation.yml'
+      - 'Makefile'
+      - 'ferretd.json'
+      - 'extensions/vscode/**'
+      - 'shared/**'
+      - 'tools/editorium/**'
+      - '!tools/editorium/jetbrains.go'
+      - '!tools/editorium/jetbrains_test.go'
   workflow_call:
 
 permissions:
@@ -52,13 +74,13 @@ jobs:
         run: npm ci
 
       - name: Build packages
-        run: make build
+        run: make build vscode
 
       - name: Lint packages
-        run: make lint
+        run: make lint vscode
 
       - name: Test packages
-        run: xvfb-run -a make test
+        run: xvfb-run -a make test vscode
 
   vscode-distributions:
     needs:
