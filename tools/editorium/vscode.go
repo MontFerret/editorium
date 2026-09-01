@@ -23,40 +23,39 @@ const (
 	vscodeMarketplacePublisher = "ferretlang"
 )
 
-type vscodeTarget struct {
-	ID           string `json:"target,omitempty"`
-	Platform     string `json:"-"`
-	Architecture string `json:"-"`
-	Artifact     string `json:"-"`
-	ArchiveType  string `json:"-"`
-	BinaryName   string `json:"-"`
-	Runner       string `json:"runner,omitempty"`
-	Unix         bool   `json:"-"`
-}
+type (
+	vscodeTarget struct {
+		ID              string `json:"target,omitempty"`
+		Platform        string `json:"-"`
+		Architecture    string `json:"-"`
+		FerretdTargetID string `json:"-"`
+		Runner          string `json:"runner,omitempty"`
+	}
+
+	vscodeManifest struct {
+		Name      string `json:"name"`
+		Version   string `json:"version"`
+		Publisher string `json:"publisher"`
+	}
+
+	preparedTarget struct {
+		Acquired     acquiredFerretd
+		StagedBinary string
+	}
+
+	packagedTarget struct {
+		Prepared preparedTarget
+		VSIXPath string
+	}
+)
 
 var vscodeTargets = []vscodeTarget{
-	{ID: "darwin-arm64", Platform: "darwin", Architecture: "arm64", Artifact: "ferretd_darwin_arm64.tar.gz", ArchiveType: "tar.gz", BinaryName: "ferretd", Runner: "macos-14", Unix: true},
-	{ID: "darwin-x64", Platform: "darwin", Architecture: "amd64", Artifact: "ferretd_darwin_x86_64.tar.gz", ArchiveType: "tar.gz", BinaryName: "ferretd", Runner: "macos-15-intel", Unix: true},
-	{ID: "linux-x64", Platform: "linux", Architecture: "amd64", Artifact: "ferretd_linux_x86_64.tar.gz", ArchiveType: "tar.gz", BinaryName: "ferretd", Runner: "ubuntu-24.04", Unix: true},
-	{ID: "linux-arm64", Platform: "linux", Architecture: "arm64", Artifact: "ferretd_linux_arm64.tar.gz", ArchiveType: "tar.gz", BinaryName: "ferretd", Runner: "ubuntu-24.04-arm", Unix: true},
-	{ID: "win32-x64", Platform: "windows", Architecture: "amd64", Artifact: "ferretd_windows_x86_64.zip", ArchiveType: "zip", BinaryName: "ferretd.exe", Runner: "windows-2025", Unix: false},
-	{ID: "win32-arm64", Platform: "windows", Architecture: "arm64", Artifact: "ferretd_windows_arm64.zip", ArchiveType: "zip", BinaryName: "ferretd.exe", Runner: "windows-11-arm", Unix: false},
-}
-
-type vscodeManifest struct {
-	Name      string `json:"name"`
-	Version   string `json:"version"`
-	Publisher string `json:"publisher"`
-}
-
-type preparedTarget struct {
-	Acquired     acquiredFerretd
-	StagedBinary string
-}
-
-type packagedTarget struct {
-	Prepared preparedTarget
-	VSIXPath string
+	{ID: "darwin-arm64", Platform: "darwin", Architecture: "arm64", FerretdTargetID: "darwin-arm64", Runner: "macos-14"},
+	{ID: "darwin-x64", Platform: "darwin", Architecture: "amd64", FerretdTargetID: "darwin-x64", Runner: "macos-15-intel"},
+	{ID: "linux-x64", Platform: "linux", Architecture: "amd64", FerretdTargetID: "linux-x64", Runner: "ubuntu-24.04"},
+	{ID: "linux-arm64", Platform: "linux", Architecture: "arm64", FerretdTargetID: "linux-arm64", Runner: "ubuntu-24.04-arm"},
+	{ID: "win32-x64", Platform: "windows", Architecture: "amd64", FerretdTargetID: "win32-x64", Runner: "windows-2025"},
+	{ID: "win32-arm64", Platform: "windows", Architecture: "arm64", FerretdTargetID: "win32-arm64", Runner: "windows-11-arm"},
 }
 
 func runVSCodeOperation(ctx context.Context, root, operation string) error {
@@ -66,14 +65,18 @@ func runVSCodeOperation(ctx context.Context, root, operation string) error {
 		if err != nil {
 			return err
 		}
+
 		if _, err := syncFerretdProto(ctx, root, force, nil); err != nil {
 			return err
 		}
+
 		target, err := selectedTarget()
 		if err != nil {
 			return err
 		}
+
 		_, err = prepareVSCodeTarget(ctx, root, target)
+
 		return err
 	case "build":
 		return runCommand(ctx, vscodePackageRoot(root), nil, executableName("npm"), "run", "build")
@@ -81,29 +84,36 @@ func runVSCodeOperation(ctx context.Context, root, operation string) error {
 		if _, err := syncFerretdProto(ctx, root, false, nil); err != nil {
 			return err
 		}
+
 		if err := generateVSCodeProto(ctx, root, true); err != nil {
 			return err
 		}
+
 		target, err := selectedTarget()
 		if err != nil {
 			return err
 		}
+
 		prepared, err := prepareVSCodeTarget(ctx, root, target)
 		if err != nil {
 			return err
 		}
+
 		packageRoot := vscodePackageRoot(root)
 		if err := runCommand(ctx, packageRoot, nil, executableName("npm"), "test"); err != nil {
 			return err
 		}
+
 		return runCommand(ctx, packageRoot, []string{"FERRETD_TEST_PATH=" + prepared.StagedBinary}, executableName("npm"), "run", "test:integration")
 	case "lint":
 		if _, err := syncFerretdProto(ctx, root, false, nil); err != nil {
 			return err
 		}
+
 		if err := generateVSCodeProto(ctx, root, true); err != nil {
 			return err
 		}
+
 		return runCommand(ctx, vscodePackageRoot(root), nil, executableName("npm"), "run", "lint")
 	case "clean":
 		return cleanVSCode(root)
@@ -117,6 +127,7 @@ func selectedTarget() (vscodeTarget, error) {
 	if requested == "" {
 		return detectHostTarget(runtime.GOOS, runtime.GOARCH)
 	}
+
 	return resolveTarget(requested)
 }
 
@@ -126,6 +137,7 @@ func detectHostTarget(goos, goarch string) (vscodeTarget, error) {
 			return target, nil
 		}
 	}
+
 	return vscodeTarget{}, fmt.Errorf("unsupported host platform %s-%s; supported targets: %s", goos, goarch, strings.Join(targetIDs(), ", "))
 }
 
@@ -135,47 +147,73 @@ func resolveTarget(id string) (vscodeTarget, error) {
 			return target, nil
 		}
 	}
+
 	return vscodeTarget{}, fmt.Errorf("unsupported VS Code target %s; supported targets: %s", id, strings.Join(targetIDs(), ", "))
 }
 
 func targetIDs() []string {
 	ids := make([]string, 0, len(vscodeTargets))
+
 	for _, target := range vscodeTargets {
 		ids = append(ids, target.ID)
 	}
+
 	return ids
 }
 
-func prepareVSCodeTarget(ctx context.Context, root string, target vscodeTarget) (preparedTarget, error) {
-	if runtime.GOOS == "windows" && target.Unix {
-		return preparedTarget{}, fmt.Errorf("cannot package Unix target %s on Windows because vsce does not preserve POSIX executable permissions", target.ID)
+func ferretdTargetForVSCode(target vscodeTarget) (ferretdTarget, error) {
+	releaseTarget, err := resolveFerretdTarget(target.FerretdTargetID)
+
+	if err != nil {
+		return ferretdTarget{}, fmt.Errorf("invalid ferretd mapping for VS Code target %s: %w", target.ID, err)
 	}
-	acquired, err := acquireFerretd(ctx, root, target, nil)
+
+	return releaseTarget, nil
+}
+
+func prepareVSCodeTarget(ctx context.Context, root string, target vscodeTarget) (preparedTarget, error) {
+	releaseTarget, err := ferretdTargetForVSCode(target)
 	if err != nil {
 		return preparedTarget{}, err
 	}
+
+	if runtime.GOOS == "windows" && releaseTarget.Unix {
+		return preparedTarget{}, fmt.Errorf("cannot package Unix target %s on Windows because vsce does not preserve POSIX executable permissions", target.ID)
+	}
+
+	acquired, err := acquireFerretd(ctx, root, releaseTarget, nil)
+	if err != nil {
+		return preparedTarget{}, err
+	}
+
 	stageRoot, err := os.MkdirTemp(filepath.Join(root, ".dist"), "staging-")
 	if err != nil {
 		return preparedTarget{}, err
 	}
+
 	defer os.RemoveAll(stageRoot)
+
 	temporaryBin := filepath.Join(stageRoot, "bin")
 	mode := os.FileMode(0o644)
-	if target.Unix {
+	if releaseTarget.Unix {
 		mode = 0o755
 	}
-	staged := filepath.Join(temporaryBin, target.BinaryName)
+
+	staged := filepath.Join(temporaryBin, releaseTarget.BinaryName)
 	if err := copyFileAtomic(acquired.BinaryPath, staged, mode); err != nil {
 		return preparedTarget{}, err
 	}
+
 	finalBin := filepath.Join(vscodePackageRoot(root), "bin")
 	if err := os.RemoveAll(finalBin); err != nil {
 		return preparedTarget{}, err
 	}
+
 	if err := os.Rename(temporaryBin, finalBin); err != nil {
 		return preparedTarget{}, err
 	}
-	finalBinary := filepath.Join(finalBin, target.BinaryName)
+
+	finalBinary := filepath.Join(finalBin, releaseTarget.BinaryName)
 	if isNativeTarget(target) {
 		if err := smokeFerretd(ctx, finalBinary, acquired.Version); err != nil {
 			return preparedTarget{}, err
@@ -183,7 +221,9 @@ func prepareVSCodeTarget(ctx context.Context, root string, target vscodeTarget) 
 	} else {
 		fmt.Printf("Skipped execution smoke test for foreign target %s.\n", target.ID)
 	}
+
 	fmt.Printf("Prepared ferretd %s for %s: %s\n", acquired.Version, target.ID, finalBinary)
+
 	return preparedTarget{Acquired: acquired, StagedBinary: finalBinary}, nil
 }
 
@@ -192,24 +232,31 @@ func packageVSCodeTarget(ctx context.Context, root string, target vscodeTarget) 
 	if err != nil {
 		return packagedTarget{}, err
 	}
+
 	manifest, err := readVSCodeManifest(root)
 	if err != nil {
 		return packagedTarget{}, err
 	}
+
 	packageRoot := vscodePackageRoot(root)
 	distributionRoot := vscodeDistributionRoot(root)
 	if err := os.MkdirAll(distributionRoot, 0o755); err != nil {
 		return packagedTarget{}, err
 	}
+
 	vsixPath := vscodeVSIXPath(root, manifest.Version, target)
 	vsce := filepath.Join(packageRoot, "node_modules", "@vscode", "vsce", "vsce")
+
 	if err := runCommand(ctx, packageRoot, nil, "node", vsce, "package", "--target", target.ID, "--no-dependencies", "--out", vsixPath); err != nil {
 		return packagedTarget{}, err
 	}
+
 	if _, err := validateVSIX(ctx, vsixPath, target, prepared.StagedBinary, prepared.Acquired.Version, manifest); err != nil {
 		return packagedTarget{}, err
 	}
+
 	fmt.Printf("Packaged and verified %s: %s\n", target.ID, vsixPath)
+
 	return packagedTarget{Prepared: prepared, VSIXPath: vsixPath}, nil
 }
 
@@ -218,101 +265,139 @@ func checkVSCodeTarget(ctx context.Context, root string, target vscodeTarget) er
 	if err != nil {
 		return err
 	}
+
 	manifest, err := readVSCodeManifest(root)
 	if err != nil {
 		return err
 	}
+
 	packageRoot := vscodePackageRoot(root)
 	path := vscodeVSIXPath(root, manifest.Version, target)
-	staged := filepath.Join(packageRoot, "bin", target.BinaryName)
+	releaseTarget, err := ferretdTargetForVSCode(target)
+	if err != nil {
+		return err
+	}
+
+	staged := filepath.Join(packageRoot, "bin", releaseTarget.BinaryName)
 	if _, err := validateVSIX(ctx, path, target, staged, version, manifest); err != nil {
 		return err
 	}
+
 	fmt.Printf("Verified %s\n", path)
+
 	return nil
 }
 
 func validateVSIX(ctx context.Context, path string, target vscodeTarget, stagedBinary, version string, manifest vscodeManifest) (string, error) {
+	releaseTarget, err := ferretdTargetForVSCode(target)
+	if err != nil {
+		return "", err
+	}
+
 	archive, err := zip.OpenReader(path)
 	if err != nil {
 		return "", err
 	}
+
 	defer archive.Close()
-	binaryEntry := "extension/bin/" + target.BinaryName
+
+	binaryEntry := "extension/bin/" + releaseTarget.BinaryName
 	expected := []string{
 		"[Content_Types].xml", "extension.vsixmanifest", "extension/LICENSE.txt", binaryEntry,
 		"extension/language-configuration.json", "extension/out/extension.js", "extension/package.json",
 		"extension/readme.md", "extension/media/icon.png", "extension/syntaxes/ferret.tmLanguage.json",
 	}
+
 	sort.Strings(expected)
+
 	entries := make(map[string]*zip.File)
 	for _, file := range archive.File {
 		if _, duplicate := entries[file.Name]; duplicate {
 			return "", fmt.Errorf("duplicate VSIX entry: %s", file.Name)
 		}
+
 		entries[file.Name] = file
 	}
+
 	actual := make([]string, 0, len(entries))
 	for name := range entries {
 		actual = append(actual, name)
 	}
+
 	sort.Strings(actual)
+
 	if strings.Join(actual, "\n") != strings.Join(expected, "\n") {
 		return "", fmt.Errorf("unexpected VSIX contents in %s: got %v, want %v", path, actual, expected)
 	}
+
 	manifestBytes, err := readZipEntry(entries["extension.vsixmanifest"])
 	if err != nil {
 		return "", err
 	}
+
 	targetPattern := regexp.MustCompile(`\bTargetPlatform="([^"]+)"`)
 	matches := targetPattern.FindSubmatch(manifestBytes)
 	if len(matches) != 2 || string(matches[1]) != target.ID {
 		return "", fmt.Errorf("VSIX target platform does not match requested target %s", target.ID)
 	}
+
 	packageBytes, err := readZipEntry(entries["extension/package.json"])
 	if err != nil {
 		return "", err
 	}
+
 	var packagedManifest vscodeManifest
 	if err := json.Unmarshal(packageBytes, &packagedManifest); err != nil {
 		return "", err
 	}
+
 	if packagedManifest.Name != manifest.Name || packagedManifest.Version != manifest.Version || packagedManifest.Publisher != manifest.Publisher {
 		return "", fmt.Errorf("packaged manifest identity does not match source manifest")
 	}
+
 	binaryBytes, err := readZipEntry(entries[binaryEntry])
 	if err != nil {
 		return "", err
 	}
+
 	stagedBytes, err := os.ReadFile(stagedBinary)
 	if err != nil {
 		return "", err
 	}
+
 	if !bytes.Equal(binaryBytes, stagedBytes) {
 		return "", fmt.Errorf("packaged daemon bytes differ from verified staged daemon")
 	}
-	if target.Unix && entries[binaryEntry].Mode().Perm() != 0o755 {
-		return "", fmt.Errorf("packaged %s mode is not 0755", target.BinaryName)
+
+	if releaseTarget.Unix && entries[binaryEntry].Mode().Perm() != 0o755 {
+		return "", fmt.Errorf("packaged %s mode is not 0755", releaseTarget.BinaryName)
 	}
+
 	if isNativeTarget(target) {
 		temporary, err := os.MkdirTemp("", "ferret-vsix-")
 		if err != nil {
 			return "", err
 		}
+
 		defer os.RemoveAll(temporary)
-		extracted := filepath.Join(temporary, target.BinaryName)
+
+		extracted := filepath.Join(temporary, releaseTarget.BinaryName)
 		mode := os.FileMode(0o644)
-		if target.Unix {
+		if releaseTarget.Unix {
 			mode = 0o755
 		}
+
 		if err := os.WriteFile(extracted, binaryBytes, mode); err != nil {
 			return "", err
 		}
+
 		if err := smokeFerretd(ctx, extracted, version); err != nil {
 			return "", err
 		}
 	}
+
 	digest := sha256.Sum256(binaryBytes)
+
 	return hex.EncodeToString(digest[:]), nil
 }
 
@@ -320,18 +405,23 @@ func readZipEntry(file *zip.File) ([]byte, error) {
 	if file == nil {
 		return nil, fmt.Errorf("missing VSIX entry")
 	}
+
 	if file.UncompressedSize64 > maximumVSIXEntrySize || !file.Mode().IsRegular() {
 		return nil, fmt.Errorf("VSIX entry is not a bounded regular file: %s", file.Name)
 	}
+
 	reader, err := file.Open()
 	if err != nil {
 		return nil, err
 	}
+
 	defer reader.Close()
+
 	var buffer bytes.Buffer
 	if err := copyLimited(&buffer, reader, maximumVSIXEntrySize, "VSIX entry"); err != nil {
 		return nil, err
 	}
+
 	return buffer.Bytes(), nil
 }
 
@@ -341,38 +431,49 @@ func smokeFerretd(ctx context.Context, path, version string) error {
 	var stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr
+
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("%s --version failed: %w", filepath.Base(path), err)
 	}
+
 	expected := "ferretd " + version
 	if strings.TrimSpace(stdout.String()) != expected || strings.TrimSpace(stderr.String()) != "" {
 		return fmt.Errorf("%s --version returned stdout %q and stderr %q; expected %q", filepath.Base(path), stdout.String(), stderr.String(), expected)
 	}
+
 	return nil
 }
 
 func installVSCodeTarget(ctx context.Context, root string, packaged packagedTarget) error {
 	command := strings.TrimSpace(os.Getenv("CODE"))
+
 	if command == "" {
 		command = "code"
 	}
+
 	if err := runCommand(ctx, vscodePackageRoot(root), nil, command, "--install-extension", packaged.VSIXPath, "--force"); err != nil {
 		if _, lookErr := exec.LookPath(command); lookErr != nil {
 			return fmt.Errorf("VS Code CLI %q was not found; install %s manually with: %s --install-extension %q --force", command, packaged.VSIXPath, command, packaged.VSIXPath)
 		}
+
 		return err
 	}
+
 	fmt.Printf("Installed %s\n", packaged.VSIXPath)
+
 	return nil
 }
 
 func testInstalledVSIX(ctx context.Context, root string, target vscodeTarget) error {
 	manifest, err := readVSCodeManifest(root)
+
 	if err != nil {
 		return err
 	}
+
 	packageRoot := vscodePackageRoot(root)
 	path := vscodeVSIXPath(root, manifest.Version, target)
+
 	return runCommand(ctx, packageRoot, []string{"FERRET_VSIX_PATH=" + path}, executableName("npm"), "run", "test:installed")
 }
 
@@ -382,16 +483,20 @@ func readVSCodeManifest(root string) (vscodeManifest, error) {
 	if err != nil {
 		return vscodeManifest{}, err
 	}
+
 	var manifest vscodeManifest
 	if err := json.Unmarshal(contents, &manifest); err != nil {
 		return vscodeManifest{}, err
 	}
+
 	if manifest.Name != vscodeMarketplaceName || !validVersion(manifest.Version) {
 		return vscodeManifest{}, fmt.Errorf("invalid VS Code package manifest: %s", path)
 	}
+
 	if manifest.Publisher != vscodeMarketplacePublisher {
 		return vscodeManifest{}, fmt.Errorf("VS Code package publisher %q does not match Marketplace publisher %q", manifest.Publisher, vscodeMarketplacePublisher)
 	}
+
 	return manifest, nil
 }
 
@@ -422,5 +527,6 @@ func cleanVSCode(root string) error {
 			return err
 		}
 	}
+
 	return nil
 }

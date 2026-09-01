@@ -9,7 +9,7 @@ Ferret and its language server.
 - [`extensions/vscode/`](extensions/vscode/README.md) — Visual Studio Code
   support for Ferret Query Language files.
 - [`extensions/jetbrains/`](extensions/jetbrains/README.md) — the Kotlin-based
-  JetBrains IDE plugin foundation and `.fql` file recognition.
+  JetBrains IDE plugin, `.fql` file recognition, and bundled daemon lifecycle.
 - `shared/` — editor-independent inputs. Protocol schemas live under
   `shared/proto/`; generated clients remain owned by each extension.
 - `tools/editorium/` — the Go implementation behind the repository Make
@@ -64,8 +64,10 @@ make package jetbrains
 
 The JetBrains package is created as
 `extensions/jetbrains/build/distributions/ferret-jetbrains-0.1.0.zip`. It
-contains only Ferret language and `.fql` file-type registration; LSP,
-`ferretd`, execution, and debugging are intentionally deferred.
+contains Ferret language and `.fql` file-type registration plus all supported
+native `ferretd` binaries. The lazy project-scoped daemon lifecycle is ready for
+the later LSP integration; language features, execution, and debugging remain
+deferred.
 
 ## Protocol schemas
 
@@ -111,11 +113,30 @@ output. Downloads live under `.dist/`; staged executables live under
 [`extensions/vscode/RELEASING.md`](extensions/vscode/RELEASING.md) for the
 target matrix and release contract.
 
+## JetBrains distribution
+
+The target-neutral JetBrains archive bundles the pinned daemon for macOS,
+Linux, and Windows on arm64 and x64. Gradle invokes the shared Editorium
+acquisition command before preparing the production plugin sandbox, stages the
+verified matrix under `extensions/jetbrains/build/generated/ferretd/`, and
+places it at `ferretd/<platform>/<architecture>/` beside the plugin JAR.
+
+```sh
+make prepare jetbrains
+make package jetbrains
+make package-check jetbrains
+```
+
+The package check verifies the complete matrix, version marker, staged bytes,
+Unix executable modes, and native `ferretd --version` output. Downloads remain
+cached under `.dist/`; no daemon binary is committed to Git.
+
 ## Update ferretd
 
 1. Change the single `ferretd` version in `ferretd.json`.
 2. Run `make proto-sync FORCE=1`.
 3. Run `make proto-generate vscode` and review generated client changes.
-4. Run `make lint`, `make test`, and `make package vscode`.
+4. Run `make lint`, `make test`, `make package vscode`, and
+   `make package jetbrains`.
 5. Commit the pin, generated clients, and any compatibility changes; do not
    commit `shared/proto/ferretd/`, `.dist/`, staged binaries, or VSIX files.

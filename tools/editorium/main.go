@@ -43,19 +43,23 @@ func execute(ctx context.Context, args []string) error {
 		if len(args) != 1 {
 			return usageError("extensions accepts no arguments")
 		}
+
 		for _, name := range extensionNames() {
 			fmt.Println(name)
 		}
+
 		return nil
 	case "run":
 		if len(args) < 2 {
 			return usageError("run requires an operation")
 		}
+
 		return runExtensions(ctx, root, args[1], args[2:])
 	case "package", "package-check", "install", "matrix", "test-installed":
 		if len(args) != 2 {
 			return usageError(fmt.Sprintf("%s requires exactly one extension", args[0]))
 		}
+
 		return runExplicitExtension(ctx, root, args[0], args[1])
 	case "proto":
 		return runProtoCommand(ctx, root, args[1:])
@@ -63,6 +67,7 @@ func execute(ctx context.Context, args []string) error {
 		if len(args) != 3 {
 			return usageError("release requires exactly one extension and one version")
 		}
+
 		return runRelease(ctx, root, args[1], args[2])
 	case "release-ci":
 		return runReleaseCI(root, args[1:])
@@ -73,10 +78,13 @@ func execute(ctx context.Context, args []string) error {
 
 func usageError(message string) error {
 	parts := make([]string, 0, 3)
+
 	if message != "" {
 		parts = append(parts, message)
 	}
+
 	parts = append(parts, usage, "Available integrations:\n  "+availableIntegrations())
+
 	return errors.New(strings.Join(parts, "\n"))
 }
 
@@ -92,6 +100,7 @@ func repositoryRoot() (string, error) {
 				return directory, nil
 			}
 		}
+
 		parent := filepath.Dir(directory)
 		if parent == directory {
 			break

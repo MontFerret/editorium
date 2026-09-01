@@ -1,4 +1,5 @@
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
+import org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask
 import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginStructureTask
 import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
@@ -52,9 +53,45 @@ java {
     targetCompatibility = JavaVersion.VERSION_25
 }
 
+val repositoryRoot = layout.projectDirectory.dir("../..")
+val generatedFerretdDirectory = layout.buildDirectory.dir("generated/ferretd")
+val prepareFerretd = tasks.register<Exec>("prepareFerretd") {
+    group = "build"
+    description = "Acquires and stages the pinned ferretd release for JetBrains packaging."
+
+    workingDir(repositoryRoot.dir("tools/editorium"))
+    commandLine("go", "run", ".", "run", "prepare", "jetbrains")
+
+    inputs.file(repositoryRoot.file("ferretd.json"))
+    inputs.files(
+        repositoryRoot.dir("tools/editorium").asFileTree.matching {
+            include("*.go", "go.mod", "go.sum")
+        },
+    )
+    outputs.dir(generatedFerretdDirectory)
+}
+
 tasks {
+    named<PrepareSandboxTask>("prepareSandbox") {
+        dependsOn(prepareFerretd)
+        from(generatedFerretdDirectory) {
+            into(pluginName.map { "$it/ferretd" })
+            filesMatching("darwin/**/ferretd") {
+                permissions { unix("rwxr-xr-x") }
+            }
+            filesMatching("linux/**/ferretd") {
+                permissions { unix("rwxr-xr-x") }
+            }
+        }
+    }
     buildPlugin {
         archiveFileName = "ferret-jetbrains-${project.version}.zip"
+        filesMatching("**/ferretd/darwin/**/ferretd") {
+            permissions { unix("rwxr-xr-x") }
+        }
+        filesMatching("**/ferretd/linux/**/ferretd") {
+            permissions { unix("rwxr-xr-x") }
+        }
     }
     withType<VerifyPluginStructureTask>().configureEach {
         ignoreWarnings = false

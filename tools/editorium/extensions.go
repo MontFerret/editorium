@@ -19,16 +19,20 @@ func validateExtensions(names []string) error {
 	for _, name := range available {
 		known[name] = struct{}{}
 	}
+
 	seen := make(map[string]struct{})
 	for _, name := range names {
 		if _, ok := known[name]; !ok {
 			return usageError(fmt.Sprintf("unknown extension: %s", name))
 		}
+
 		if _, duplicate := seen[name]; duplicate {
 			return usageError(fmt.Sprintf("extension may only be specified once: %s", name))
 		}
+
 		seen[name] = struct{}{}
 	}
+
 	return nil
 }
 
@@ -38,13 +42,16 @@ func runExtensions(ctx context.Context, root, operation string, names []string) 
 	default:
 		return fmt.Errorf("unknown integration operation %q", operation)
 	}
+
 	unscoped := len(names) == 0
 	if unscoped {
 		names = extensionNames()
 	}
+
 	if err := validateExtensions(names); err != nil {
 		return err
 	}
+
 	for _, name := range names {
 		fmt.Printf("Running %s for extension %q\n", operation, name)
 		switch name {
@@ -58,6 +65,7 @@ func runExtensions(ctx context.Context, root, operation string, names []string) 
 			}
 		}
 	}
+
 	if operation == "clean" && unscoped {
 		for _, path := range []string{
 			filepath.Join(root, ".dist"),
@@ -68,6 +76,7 @@ func runExtensions(ctx context.Context, root, operation string, names []string) 
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -78,10 +87,14 @@ func runExplicitExtension(ctx context.Context, root, operation, name string) err
 
 	switch name {
 	case "jetbrains":
-		if operation != "package" && operation != "package-check" {
+		switch operation {
+		case "package":
+			return packageJetBrains(ctx, root)
+		case "package-check":
+			return checkJetBrainsPackage(ctx, root)
+		default:
 			return fmt.Errorf("extension %q does not implement %s", name, operation)
 		}
-		return packageJetBrains(ctx, root)
 	case "vscode":
 		return runExplicitVSCodeOperation(ctx, root, operation)
 	default:
@@ -94,6 +107,7 @@ func runExplicitVSCodeOperation(ctx context.Context, root, operation string) err
 	if err != nil {
 		return err
 	}
+
 	switch operation {
 	case "package":
 		_, err = packageVSCodeTarget(ctx, root, target)
@@ -119,6 +133,7 @@ func runExplicitVSCodeOperation(ctx context.Context, root, operation string) err
 	default:
 		err = fmt.Errorf("unsupported explicit operation %q", operation)
 	}
+
 	return err
 }
 
