@@ -1,6 +1,7 @@
 package org.ferretlang.jetbrains.lsp
 
 import com.intellij.execution.ExecutionException
+import com.intellij.openapi.project.ProjectManager
 import com.intellij.testFramework.LightVirtualFile
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.ferretlang.jetbrains.daemon.FerretdBinary
@@ -9,6 +10,7 @@ import org.ferretlang.jetbrains.daemon.FerretdPlatform
 import org.ferretlang.jetbrains.lang.FerretLanguageFileType
 import org.junit.Assert
 import java.nio.file.Files
+import java.nio.file.Path
 
 class FerretLspClientDescriptorTest : BasePlatformTestCase() {
     fun testSupportedFilesMatchProviderActivation() {
@@ -33,6 +35,31 @@ class FerretLspClientDescriptorTest : BasePlatformTestCase() {
 
             val commandLine = FerretLspClientDescriptor(
                 project,
+                FerretdBinary(root, platform),
+            ).createCommandLine()
+
+            assertEquals(executable.toString(), commandLine.exePath)
+            assertEquals(listOf("lsp"), commandLine.parametersList.list)
+            assertEquals(Path.of(requireNotNull(project.basePath)), commandLine.workingDirectory)
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    fun testCommandLineLeavesWorkingDirectoryUnsetWithoutAProjectBasePath() {
+        val root = Files.createTempDirectory("ferret-lsp-no-base-path-")
+
+        try {
+            val platform = FerretdPlatform("win32", "x64", "ferretd.exe", false)
+            val executable = root.resolve("ferretd/win32/x64/ferretd.exe")
+            Files.createDirectories(executable.parent)
+            Files.writeString(executable, "test executable")
+            val projectWithoutBasePath = ProjectManager.getInstance().defaultProject
+
+            assertNull(projectWithoutBasePath.basePath)
+
+            val commandLine = FerretLspClientDescriptor(
+                projectWithoutBasePath,
                 FerretdBinary(root, platform),
             ).createCommandLine()
 

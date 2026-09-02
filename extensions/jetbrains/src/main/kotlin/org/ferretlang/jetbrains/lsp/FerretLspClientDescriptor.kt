@@ -25,7 +25,10 @@ internal class FerretLspClientDescriptor(
             throw startupException(error)
         }
 
-        return GeneralCommandLine(executable.toString(), "lsp")
+        val commandLine = GeneralCommandLine(executable.toString(), "lsp")
+        project.basePath?.let { commandLine.withWorkDirectory(it) }
+
+        return commandLine
     }
 
     private fun startupException(error: IllegalStateException): ExecutionException =
