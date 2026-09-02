@@ -1,10 +1,9 @@
 # Ferret for JetBrains IDEs
 
 This module is the JetBrains IDE integration for Ferret Query Language files.
-It registers the Ferret language and `.fql` file type and bundles the `ferretd`
-distribution and executable-resolution infrastructure required by the upcoming
-language-server integration. It does not yet start a daemon or implement LSP
-features.
+It registers the Ferret language and `.fql` file type, bundles `ferretd`, and
+connects file-backed Ferret documents to the daemon through the IntelliJ
+Platform's native Language Server Protocol support.
 
 ## Prerequisites
 
@@ -49,8 +48,25 @@ outputs and re-verify cached release archives whenever preparation runs.
 At runtime, a stateless resolver maps the JVM OS and architecture to this layout,
 validates the installed executable, and returns its path. It never searches
 `PATH`, starts `ferretd`, owns process state or streams, or registers an IntelliJ
-service. The future LSP descriptor will construct the `ferretd lsp` command line,
-and the JetBrains LSP subsystem will own that process lifecycle.
+service. The Ferret LSP descriptor constructs the `ferretd lsp` command line,
+and the JetBrains LSP subsystem owns the process and protocol lifecycle.
+
+## Language intelligence
+
+Ferret language intelligence is implemented by `ferretd` and exposed to the
+plugin over standard LSP input and output. The plugin identifies local `.fql`
+files, resolves the bundled daemon for the current host, and gives JetBrains the
+command line. It does not implement a separate parser, completion engine,
+formatter, or other Ferret semantics.
+
+The daemon starts lazily when an applicable file is opened. Starting the IDE or
+opening a project without a local `.fql` file does not start it. A project uses
+one project-wide LSP client for its Ferret files, and JetBrains stops the process
+with the project. The standard IDE language actions expose the capabilities
+advertised by the bundled daemon, including diagnostics, completion, hover,
+navigation, and document formatting.
+
+Execution and debugging are not yet supported by the JetBrains integration.
 
 ## Build and test
 
@@ -96,8 +112,21 @@ cd extensions/jetbrains
 ```
 
 In the sandbox IDE, create or open `test.fql` and confirm the Ferret file type
-and icon. Language intelligence remains unavailable until the later LSP task
-connects the bundled executable to the JetBrains LSP subsystem.
+and icon. Opening the file should lazily start the bundled `ferretd lsp` and
+enable the language features advertised by the daemon. Useful manual checks
+include:
+
+- enter invalid Ferret source and confirm diagnostics appear;
+- type `re` and invoke completion, then confirm `return` is offered;
+- hover over `abs` in `RETURN abs(-1)`;
+- navigate from a variable use to its declaration; and
+- run **Code | Reformat Code** on `LET value=1` and confirm the LSP formatter
+  applies the edits returned by `ferretd`.
+
+Open a non-Ferret file before `test.fql` to confirm lazy activation. Opening
+additional `.fql` files in the same project should reuse the project-wide
+language server. The launched executable should resolve beneath the sandbox
+plugin's `ferretd/` directory rather than from `PATH`.
 
 ## Troubleshooting
 
@@ -106,6 +135,10 @@ connects the bundled executable to the JetBrains LSP subsystem.
   `make package-check jetbrains` to inspect the distribution.
 - An unsupported-platform error includes the JVM `os.name` and `os.arch` values;
   only the six combinations listed above are packaged.
+- Use **Help | Show Log in Finder** on macOS or the corresponding **Show Log**
+  action on Linux and Windows to open the IDE log directory. Inspect `idea.log`
+  for `com.intellij.platform.lsp`, `Ferret`, and `ferretd` messages when language
+  support does not start or the server exits unexpectedly.
 - Delete `extensions/jetbrains/build/` to restage plugin output. Delete the
   matching `.dist/ferretd/<version>/` entry only when a cached release artifact
   itself must be reacquired; checksum mismatches already evict corrupt archives.
