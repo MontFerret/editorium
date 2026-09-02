@@ -6,6 +6,7 @@
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.lang</depends>
+    <depends>com.intellij.modules.lsp</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <fileType
@@ -14,5 +15,7 @@
             fieldName="INSTANCE"
             language="Ferret"
             extensions="fql" />
+        <platform.lsp.integrationProvider
+            implementation="org.ferretlang.jetbrains.lsp.FerretLspIntegrationProvider" />
     </extensions>
 </idea-plugin>
