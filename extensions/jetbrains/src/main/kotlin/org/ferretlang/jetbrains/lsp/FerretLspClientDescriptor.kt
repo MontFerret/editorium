@@ -5,6 +5,8 @@ import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.platform.lsp.api.ProjectWideLspClientDescriptor
+import com.intellij.platform.lsp.api.customization.LspCustomization
+import com.intellij.platform.lsp.api.customization.LspFormattingSupport
 import org.ferretlang.jetbrains.daemon.FerretdBinary
 import org.ferretlang.jetbrains.daemon.FerretdBinaryException
 import org.ferretlang.jetbrains.daemon.FerretdPlatformException
@@ -15,6 +17,16 @@ internal class FerretLspClientDescriptor(
     private val ferretdBinary: FerretdBinary? = null,
 ) : ProjectWideLspClientDescriptor(project, "Ferret") {
     override fun isSupportedFile(file: VirtualFile): Boolean = isSupportedFerretFile(file)
+
+    override val lspCustomization: LspCustomization = object : LspCustomization() {
+        override val formattingCustomizer = object : LspFormattingSupport() {
+            override fun shouldFormatThisFileExclusivelyByServer(
+                file: VirtualFile,
+                ideCanFormatThisFileItself: Boolean,
+                serverExplicitlyWantsToFormatThisFile: Boolean,
+            ): Boolean = isSupportedFerretFile(file)
+        }
+    }
 
     override fun createCommandLine(): GeneralCommandLine {
         val executable = try {
