@@ -62,10 +62,10 @@ The current integration state is intentionally asymmetric:
 * VS Code provides a TextMate fallback, standard LSP-backed language features
   and formatting, gRPC-backed execution, and direct per-session `ferretd dap`
   debugging.
-* JetBrains registers Ferret and `.fql` files and provides bundled-binary
-  distribution plus current-host executable resolution. It does not yet provide
-  an LSP client, language features, execution UI, debugging, settings, or a
-  running daemon.
+* JetBrains registers Ferret and `.fql` files, provides bundled-binary
+  distribution and current-host executable resolution, and connects local files
+  to a lazy project-wide JetBrains native LSP client running `ferretd lsp`. It
+  does not yet provide execution UI, debugging, or settings.
 * Both integrations consume the daemon version from `ferretd.json`; neither may
   introduce a separate editor-local pin.
 
@@ -217,8 +217,9 @@ compatibility-sensitive contracts.
 * Kotlin implementation;
 * Ferret file type and language registration;
 * JVM host mapping and installed bundled-binary resolution;
-* future JetBrains actions, settings, UI, LSP client, execution, and debugging
-  integration when explicitly implemented;
+* JetBrains native LSP provider and descriptor adaptation;
+* future JetBrains actions, settings, UI, execution, and debugging integration
+  when explicitly implemented;
 * generated protocol clients if the integration begins consuming schemas;
 * Gradle configuration and plugin packaging;
 * JetBrains-specific platform, binary-resolution, and integration tests.
@@ -231,8 +232,8 @@ offline.
 
 Runtime Kotlin owns only current-host mapping and installed binary resolution.
 It must not launch `ferretd`, own process state or streams, or introduce an
-IntelliJ service solely for executable lookup. A future JetBrains LSP descriptor
-must construct the `ferretd lsp` command line and let the JetBrains LSP subsystem
+IntelliJ service solely for executable lookup. The JetBrains LSP descriptor
+constructs the `ferretd lsp` command line and lets the JetBrains LSP subsystem
 own the process lifecycle. Do not search `PATH` or add fallback binaries.
 
 Do not assume feature parity with VS Code. Implement only the capabilities

@@ -62,9 +62,13 @@ formatter, or other Ferret semantics.
 The daemon starts lazily when an applicable file is opened. Starting the IDE or
 opening a project without a local `.fql` file does not start it. A project uses
 one project-wide LSP client for its Ferret files, and JetBrains stops the process
-with the project. The standard IDE language actions expose the capabilities
-advertised by the bundled daemon, including diagnostics, completion, hover,
-navigation, and document formatting.
+with the project. The pinned daemon advertises diagnostics, completion, hover,
+same-document definition navigation, and full-document formatting to the
+standard JetBrains language actions.
+
+Definition lookup is currently document-local. `ferretd` 1.0.0-alpha.4 does not
+advertise project or module resolution, so a symbol declared in another `.fql`
+file is not a supported navigation target.
 
 Execution and debugging are not yet supported by the JetBrains integration.
 
@@ -139,6 +143,13 @@ plugin's `ferretd/` directory rather than from `PATH`.
   action on Linux and Windows to open the IDE log directory. Inspect `idea.log`
   for `com.intellij.platform.lsp`, `Ferret`, and `ferretd` messages when language
   support does not start or the server exits unexpectedly.
+- Use the Ferret language-server widget in the editor status area to inspect a
+  failed server and request a restart after repairing the installation. JetBrains
+  owns restart behavior; the plugin does not supervise or replace the native LSP
+  process.
+- An immediate or unexpected daemon exit is reported by JetBrains as a stopped
+  Ferret LSP server. If it repeats after a widget restart, run the installed
+  binary with `--version` and reinstall the plugin when that check fails.
 - Delete `extensions/jetbrains/build/` to restage plugin output. Delete the
   matching `.dist/ferretd/<version>/` entry only when a cached release artifact
   itself must be reacquired; checksum mismatches already evict corrupt archives.

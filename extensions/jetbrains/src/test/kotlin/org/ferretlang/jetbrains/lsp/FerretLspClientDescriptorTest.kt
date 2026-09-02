@@ -2,6 +2,7 @@ package org.ferretlang.jetbrains.lsp
 
 import com.intellij.execution.ExecutionException
 import com.intellij.openapi.project.ProjectManager
+import com.intellij.platform.lsp.api.customization.LspFormattingSupport
 import com.intellij.testFramework.LightVirtualFile
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.ferretlang.jetbrains.daemon.FerretdBinary
@@ -22,6 +23,21 @@ class FerretLspClientDescriptorTest : BasePlatformTestCase() {
         assertTrue(descriptor.isSupportedFile(ferretFile))
         assertFalse(descriptor.isSupportedFile(unrelatedFile))
         assertFalse(descriptor.isSupportedFile(nonLocalFerretFile))
+    }
+
+    fun testFormattingUsesFerretdExclusivelyForSupportedFiles() {
+        val descriptor = FerretLspClientDescriptor(project)
+        val ferretFile = myFixture.tempDirFixture.createFile("query.fql", "RETURN 1")
+        val unrelatedFile = myFixture.tempDirFixture.createFile("query.txt", "RETURN 1")
+        val nonLocalFerretFile = LightVirtualFile("scratch.fql", FerretLanguageFileType, "RETURN 1")
+        val formattingSupport = descriptor.lspCustomization.formattingCustomizer
+
+        assertTrue(formattingSupport is LspFormattingSupport)
+        formattingSupport as LspFormattingSupport
+        assertTrue(formattingSupport.shouldFormatThisFileExclusivelyByServer(ferretFile, true, false))
+        assertTrue(formattingSupport.shouldFormatThisFileExclusivelyByServer(ferretFile, false, true))
+        assertFalse(formattingSupport.shouldFormatThisFileExclusivelyByServer(unrelatedFile, false, false))
+        assertFalse(formattingSupport.shouldFormatThisFileExclusivelyByServer(nonLocalFerretFile, false, false))
     }
 
     fun testCommandLineUsesOnlyThePackagedBinaryAndLspArgument() {
