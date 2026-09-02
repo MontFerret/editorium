@@ -22,6 +22,40 @@ func (function doerFunc) Do(request *http.Request) (*http.Response, error) {
 	return function(request)
 }
 
+func TestFerretdTargetMappings(t *testing.T) {
+	expected := []ferretdTarget{
+		{ID: "darwin-arm64", Platform: "darwin", Architecture: "arm64", GoOS: "darwin", GoArch: "arm64", Artifact: "ferretd_darwin_arm64.tar.gz", ArchiveType: "tar.gz", BinaryName: "ferretd", Unix: true},
+		{ID: "darwin-x64", Platform: "darwin", Architecture: "x64", GoOS: "darwin", GoArch: "amd64", Artifact: "ferretd_darwin_x86_64.tar.gz", ArchiveType: "tar.gz", BinaryName: "ferretd", Unix: true},
+		{ID: "linux-arm64", Platform: "linux", Architecture: "arm64", GoOS: "linux", GoArch: "arm64", Artifact: "ferretd_linux_arm64.tar.gz", ArchiveType: "tar.gz", BinaryName: "ferretd", Unix: true},
+		{ID: "linux-x64", Platform: "linux", Architecture: "x64", GoOS: "linux", GoArch: "amd64", Artifact: "ferretd_linux_x86_64.tar.gz", ArchiveType: "tar.gz", BinaryName: "ferretd", Unix: true},
+		{ID: "win32-arm64", Platform: "win32", Architecture: "arm64", GoOS: "windows", GoArch: "arm64", Artifact: "ferretd_windows_arm64.zip", ArchiveType: "zip", BinaryName: "ferretd.exe", Unix: false},
+		{ID: "win32-x64", Platform: "win32", Architecture: "x64", GoOS: "windows", GoArch: "amd64", Artifact: "ferretd_windows_x86_64.zip", ArchiveType: "zip", BinaryName: "ferretd.exe", Unix: false},
+	}
+	if len(ferretdTargets) != len(expected) {
+		t.Fatalf("ferretd target count = %d, want %d", len(ferretdTargets), len(expected))
+	}
+	for index, want := range expected {
+		got := ferretdTargets[index]
+		if got != want {
+			t.Fatalf("ferretd target %d = %#v, want %#v", index, got, want)
+		}
+		resolved, err := resolveFerretdTarget(want.ID)
+		if err != nil || resolved != want {
+			t.Fatalf("resolveFerretdTarget(%s) = %#v, %v", want.ID, resolved, err)
+		}
+		detected, err := detectHostFerretdTarget(want.GoOS, want.GoArch)
+		if err != nil || detected != want {
+			t.Fatalf("detectHostFerretdTarget(%s, %s) = %#v, %v", want.GoOS, want.GoArch, detected, err)
+		}
+	}
+	if _, err := resolveFerretdTarget("linux-armhf"); err == nil || !strings.Contains(err.Error(), strings.Join(ferretdTargetIDs(), ", ")) {
+		t.Fatalf("resolveFerretdTarget unknown error = %v", err)
+	}
+	if _, err := detectHostFerretdTarget("freebsd", "amd64"); err == nil {
+		t.Fatal("detectHostFerretdTarget accepted unsupported host")
+	}
+}
+
 func TestReadFerretdVersionRequiresExactManifest(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "ferretd.json"), []byte(`{"ferretd":"2.0.0-alpha.2"}`), 0o644)
@@ -85,7 +119,7 @@ func TestAcquireFerretdVerifiesExtractsCachesAndEvictsCorruption(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			root := pinnedTestRoot(t)
-			target, err := resolveTarget(test.target)
+			target, err := resolveFerretdTarget(test.target)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -143,7 +177,7 @@ func TestAcquireFerretdVerifiesExtractsCachesAndEvictsCorruption(t *testing.T) {
 }
 
 func TestArchiveExtractionRequiresExactUniqueRootBinary(t *testing.T) {
-	target, _ := resolveTarget("linux-x64")
+	target, _ := resolveFerretdTarget("linux-x64")
 	for _, entries := range []map[string][]byte{
 		{"nested/ferretd": []byte("wrong")},
 		{"ferretd/child": []byte("wrong")},

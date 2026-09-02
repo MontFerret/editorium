@@ -29,7 +29,11 @@ func TestVSCodeTargetMatrixMappingsAndFilenames(t *testing.T) {
 	}
 	for index, want := range expected {
 		got := vscodeTargets[index]
-		if got.ID != want.id || got.Platform != want.platform || got.Architecture != want.architecture || got.Artifact != want.artifact || got.ArchiveType != want.archiveType || got.BinaryName != want.binary || got.Runner != want.runner || got.Unix != want.unix {
+		releaseTarget, err := ferretdTargetForVSCode(got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.ID != want.id || got.Platform != want.platform || got.Architecture != want.architecture || releaseTarget.Artifact != want.artifact || releaseTarget.ArchiveType != want.archiveType || releaseTarget.BinaryName != want.binary || got.Runner != want.runner || releaseTarget.Unix != want.unix {
 			t.Fatalf("target %d = %#v, want %#v", index, got, want)
 		}
 		if filename := vsixFilename("0.2.0-beta.1", got); filename != "ferret-vscode-0.2.0-beta.1-"+want.id+".vsix" {
@@ -129,7 +133,11 @@ func TestValidateVSIXChecksExactContentsMetadataBytesAndMode(t *testing.T) {
 	root := t.TempDir()
 	var target vscodeTarget
 	for _, candidate := range vscodeTargets {
-		if candidate.Unix && !isNativeTarget(candidate) {
+		releaseTarget, err := ferretdTargetForVSCode(candidate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if releaseTarget.Unix && !isNativeTarget(candidate) {
 			target = candidate
 			break
 		}
@@ -269,6 +277,10 @@ type testZipEntry struct {
 
 func writeVSIX(t *testing.T, path string, target vscodeTarget, binary []byte, change func(map[string]testZipEntry)) {
 	t.Helper()
+	releaseTarget, err := ferretdTargetForVSCode(target)
+	if err != nil {
+		t.Fatal(err)
+	}
 	entries := map[string]testZipEntry{
 		"[Content_Types].xml":                       {[]byte("<Types/>"), 0o100644},
 		"extension.vsixmanifest":                    {[]byte(`<Identity TargetPlatform="` + target.ID + `"/>`), 0o100644},
@@ -279,7 +291,7 @@ func writeVSIX(t *testing.T, path string, target vscodeTarget, binary []byte, ch
 		"extension/package.json":                    {[]byte(`{"name":"` + vscodeMarketplaceName + `","version":"0.1.0","publisher":"` + vscodeMarketplacePublisher + `"}`), 0o100644},
 		"extension/readme.md":                       {[]byte("# Ferret"), 0o100644},
 		"extension/syntaxes/ferret.tmLanguage.json": {[]byte("{}"), 0o100644},
-		"extension/bin/" + target.BinaryName:        {binary, 0o100755},
+		"extension/bin/" + releaseTarget.BinaryName: {binary, 0o100755},
 	}
 	if change != nil {
 		change(entries)
