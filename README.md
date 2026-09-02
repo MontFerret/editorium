@@ -9,7 +9,7 @@ Ferret and its language server.
 - [`extensions/vscode/`](extensions/vscode/README.md) — Visual Studio Code
   support for Ferret Query Language files.
 - [`extensions/jetbrains/`](extensions/jetbrains/README.md) — the Kotlin-based
-  JetBrains IDE plugin, `.fql` file recognition, and bundled daemon lifecycle.
+  JetBrains IDE plugin, `.fql` file recognition, and bundled daemon distribution.
 - `shared/` — editor-independent inputs. Protocol schemas live under
   `shared/proto/`; generated clients remain owned by each extension.
 - `tools/editorium/` — the Go implementation behind the repository Make
@@ -65,9 +65,9 @@ make package jetbrains
 The JetBrains package is created as
 `extensions/jetbrains/build/distributions/ferret-jetbrains-0.1.0.zip`. It
 contains Ferret language and `.fql` file-type registration plus all supported
-native `ferretd` binaries. The lazy project-scoped daemon lifecycle is ready for
-the later LSP integration; language features, execution, and debugging remain
-deferred.
+native `ferretd` binaries. A stateless installed-binary resolver is ready for the
+later JetBrains LSP integration; no language-server process is currently owned
+by the plugin. Language features, execution, and debugging remain deferred.
 
 ## Protocol schemas
 

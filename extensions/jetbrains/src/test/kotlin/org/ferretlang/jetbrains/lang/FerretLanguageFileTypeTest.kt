@@ -4,7 +4,6 @@ import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
-import org.ferretlang.jetbrains.daemon.FerretdProcess
 
 class FerretLanguageFileTypeTest : BasePlatformTestCase() {
     fun testFileTypeMetadata() {
@@ -26,12 +25,5 @@ class FerretLanguageFileTypeTest : BasePlatformTestCase() {
         val pluginId = PluginId.getId("org.ferretlang.jetbrains")
         assertNotNull(PluginManagerCore.getPlugin(pluginId))
         assertTrue(PluginManagerCore.isLoaded(pluginId))
-    }
-
-    fun testFerretdProjectServiceIsLazy() {
-        val process = project.getService(FerretdProcess::class.java)
-
-        assertNotNull(process)
-        assertFalse(process.isRunning())
     }
 }

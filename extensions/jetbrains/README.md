@@ -2,8 +2,9 @@
 
 This module is the JetBrains IDE integration for Ferret Query Language files.
 It registers the Ferret language and `.fql` file type and bundles the `ferretd`
-process infrastructure required by the upcoming language-server integration.
-It does not yet start the daemon automatically or implement LSP features.
+distribution and executable-resolution infrastructure required by the upcoming
+language-server integration. It does not yet start a daemon or implement LSP
+features.
 
 ## Prerequisites
 
@@ -45,10 +46,11 @@ to the installed plugin's `lib/` directory, and are ignored by Git. Gradle marks
 the macOS and Linux entries executable. Repeated builds reuse unchanged Gradle
 outputs and re-verify cached release archives whenever preparation runs.
 
-At runtime, a lazy project service maps the JVM OS and architecture to this
-layout. It never searches `PATH`. A started `ferretd lsp` process belongs to its
-project and is stopped when the service, project, plugin, or IDE is disposed.
-No process is started merely because the plugin loads.
+At runtime, a stateless resolver maps the JVM OS and architecture to this layout,
+validates the installed executable, and returns its path. It never searches
+`PATH`, starts `ferretd`, owns process state or streams, or registers an IntelliJ
+service. The future LSP descriptor will construct the `ferretd lsp` command line,
+and the JetBrains LSP subsystem will own that process lifecycle.
 
 ## Build and test
 
@@ -95,7 +97,7 @@ cd extensions/jetbrains
 
 In the sandbox IDE, create or open `test.fql` and confirm the Ferret file type
 and icon. Language intelligence remains unavailable until the later LSP task
-requests the lazy daemon service.
+connects the bundled executable to the JetBrains LSP subsystem.
 
 ## Troubleshooting
 
@@ -104,8 +106,6 @@ requests the lazy daemon service.
   `make package-check jetbrains` to inspect the distribution.
 - An unsupported-platform error includes the JVM `os.name` and `os.arch` values;
   only the six combinations listed above are packaged.
-- An immediate startup failure is recorded in the IDE log with the exit code
-  and bounded `ferretd` stderr. Protocol stdout is intentionally not logged.
 - Delete `extensions/jetbrains/build/` to restage plugin output. Delete the
   matching `.dist/ferretd/<version>/` entry only when a cached release artifact
   itself must be reacquired; checksum mismatches already evict corrupt archives.

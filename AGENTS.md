@@ -63,9 +63,9 @@ The current integration state is intentionally asymmetric:
   and formatting, gRPC-backed execution, and direct per-session `ferretd dap`
   debugging.
 * JetBrains registers Ferret and `.fql` files and provides bundled-binary
-  resolution plus a lazy project-scoped `ferretd lsp` process service. It does
-  not yet provide an LSP client, language features, execution UI, debugging,
-  settings, or automatic daemon startup.
+  distribution plus current-host executable resolution. It does not yet provide
+  an LSP client, language features, execution UI, debugging, settings, or a
+  running daemon.
 * Both integrations consume the daemon version from `ferretd.json`; neither may
   introduce a separate editor-local pin.
 
@@ -217,12 +217,11 @@ compatibility-sensitive contracts.
 * Kotlin implementation;
 * Ferret file type and language registration;
 * JVM host mapping and installed bundled-binary resolution;
-* the lazy project-scoped `FerretdProcess` lifecycle;
 * future JetBrains actions, settings, UI, LSP client, execution, and debugging
   integration when explicitly implemented;
 * generated protocol clients if the integration begins consuming schemas;
 * Gradle configuration and plugin packaging;
-* JetBrains-specific platform, binary-resolution, and lifecycle tests.
+* JetBrains-specific platform, binary-resolution, and integration tests.
 
 JetBrains packages one universal ZIP containing `ferretd` for macOS, Linux, and
 Windows on arm64 and x64. Production sandbox preparation acquires and copies
@@ -230,10 +229,11 @@ that complete matrix beside the plugin's `lib/` directory. Unit-test sandbox
 preparation stays independent of artifact acquisition so tests can remain
 offline.
 
-Requesting the project service must not start `ferretd`. An explicit `start()`
-launches the bundled binary with the required `lsp` subcommand; project/plugin
-disposal owns shutdown. Do not search `PATH`, add fallback binaries, consume
-stdout outside a future LSP client, or add automatic startup.
+Runtime Kotlin owns only current-host mapping and installed binary resolution.
+It must not launch `ferretd`, own process state or streams, or introduce an
+IntelliJ service solely for executable lookup. A future JetBrains LSP descriptor
+must construct the `ferretd lsp` command line and let the JetBrains LSP subsystem
+own the process lifecycle. Do not search `PATH` or add fallback binaries.
 
 Do not assume feature parity with VS Code. Implement only the capabilities
 actually supported by the current JetBrains integration or required by the task.
