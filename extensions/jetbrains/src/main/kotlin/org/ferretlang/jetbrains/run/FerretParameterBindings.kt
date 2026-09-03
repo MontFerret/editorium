@@ -1,48 +1,75 @@
 package org.ferretlang.jetbrains.run
 
-import com.google.gson.JsonElement
-import com.google.gson.JsonParser
-import com.google.gson.Strictness
-import com.google.gson.stream.JsonReader
-import com.google.gson.stream.JsonToken
-import java.io.StringReader
+import java.util.Collections
 
-object FerretParameterBindings {
-    fun normalize(parameters: String): String = if (parameters.isBlank()) "{}" else parameters
+/** Transport-independent named values bound to FQL parameters. */
+class FerretParameterBindings private constructor(
+    entries: Map<String, FerretParameterValue>,
+) {
+    val entries: Map<String, FerretParameterValue> =
+        Collections.unmodifiableMap(LinkedHashMap(entries))
 
-    fun validate(parameters: String) {
-        val normalized = normalize(parameters)
-        val parsed = try {
-            JsonReader(StringReader(normalized)).use { reader ->
-                reader.strictness = Strictness.STRICT
-                val value = JsonParser.parseReader(reader)
-                if (reader.peek() != JsonToken.END_DOCUMENT) {
-                    throw IllegalArgumentException("Parameters must contain exactly one JSON value.")
-                }
-                value
+    override fun equals(other: Any?): Boolean =
+        this === other || other is FerretParameterBindings && entries == other.entries
+
+    override fun hashCode(): Int = entries.hashCode()
+
+    override fun toString(): String = entries.toString()
+
+    companion object {
+        val EMPTY = FerretParameterBindings(emptyMap())
+
+        fun of(entries: Map<String, FerretParameterValue>): FerretParameterBindings =
+            if (entries.isEmpty()) EMPTY else FerretParameterBindings(entries)
+    }
+}
+
+sealed interface FerretParameterValue {
+    data object NullValue : FerretParameterValue
+
+    data class BooleanValue(
+        val value: Boolean,
+    ) : FerretParameterValue
+
+    data class NumberValue(
+        val value: Double,
+    ) : FerretParameterValue {
+        init {
+            require(value.isFinite()) {
+                "Parameters must contain only finite JSON numbers."
             }
-        } catch (error: IllegalArgumentException) {
-            throw error
-        } catch (error: Exception) {
-            throw IllegalArgumentException("Parameters must be valid JSON: ${error.message}", error)
         }
-
-        if (!parsed.isJsonObject) {
-            throw IllegalArgumentException("Parameters must be a JSON object.")
-        }
-
-        validateFiniteNumbers(parsed)
     }
 
-    private fun validateFiniteNumbers(value: JsonElement) {
-        when {
-            value.isJsonArray -> value.asJsonArray.forEach(::validateFiniteNumbers)
-            value.isJsonObject -> value.asJsonObject.entrySet().forEach { validateFiniteNumbers(it.value) }
-            value.isJsonPrimitive && value.asJsonPrimitive.isNumber -> {
-                if (!value.asJsonPrimitive.asDouble.isFinite()) {
-                    throw IllegalArgumentException("Parameters must contain only finite JSON numbers.")
-                }
-            }
-        }
+    data class StringValue(
+        val value: String,
+    ) : FerretParameterValue
+
+    class ArrayValue(
+        values: List<FerretParameterValue>,
+    ) : FerretParameterValue {
+        val values: List<FerretParameterValue> =
+            Collections.unmodifiableList(ArrayList(values))
+
+        override fun equals(other: Any?): Boolean =
+            this === other || other is ArrayValue && values == other.values
+
+        override fun hashCode(): Int = values.hashCode()
+
+        override fun toString(): String = values.toString()
+    }
+
+    class ObjectValue(
+        entries: Map<String, FerretParameterValue>,
+    ) : FerretParameterValue {
+        val entries: Map<String, FerretParameterValue> =
+            Collections.unmodifiableMap(LinkedHashMap(entries))
+
+        override fun equals(other: Any?): Boolean =
+            this === other || other is ObjectValue && entries == other.entries
+
+        override fun hashCode(): Int = entries.hashCode()
+
+        override fun toString(): String = entries.toString()
     }
 }

@@ -37,7 +37,7 @@ class FerretRunConfigurationProducerTest : BasePlatformTestCase() {
 
         assertEquals(file.toNioPath().toAbsolutePath().normalize().toString(), configuration.sourcePath)
         assertEquals(project.basePath.orEmpty(), configuration.workingDirectory)
-        assertEquals("{}", configuration.parameters)
+        assertSame(FerretParameterBindings.EMPTY, configuration.parameters)
         assertEquals("query.fql", configuration.name)
         assertTrue(configuration.isGeneratedName)
         assertTrue(producer.isConfigurationFromContext(configuration, context))

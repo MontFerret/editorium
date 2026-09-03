@@ -28,10 +28,15 @@ class FerretRunConfigurationValidationTest : BasePlatformTestCase() {
         val configuration = createConfiguration().apply {
             sourcePath = source.toString()
             workingDirectory = source.parent.toString()
-            parameters = """{"limit":10,"nested":{"values":[true,null,1.5]}}"""
+            parametersJson = """{"limit":10,"nested":{"values":[true,null,1.5]}}"""
         }
 
         configuration.checkConfiguration()
+
+        assertEquals(
+            FerretParameterValue.NumberValue(10.0),
+            configuration.parameters.entries["limit"],
+        )
     }
 
     fun testResolvesProjectRelativePathsAgainstTheProjectBaseDirectory() {
@@ -51,12 +56,12 @@ class FerretRunConfigurationValidationTest : BasePlatformTestCase() {
         val configuration = createConfiguration().apply {
             sourcePath = source.toString()
             workingDirectory = ""
-            parameters = ""
+            parametersJson = ""
         }
 
         configuration.checkConfiguration()
 
-        assertEquals("{}", configuration.parameters)
+        assertSame(FerretParameterBindings.EMPTY, configuration.parameters)
     }
 
     fun testRejectsMissingSourcePath() {
@@ -103,7 +108,7 @@ class FerretRunConfigurationValidationTest : BasePlatformTestCase() {
 
         val error = configurationError(configuration)
 
-        assertTrue(error.localizedMessage.orEmpty().contains("must use the .fql extension"))
+        assertTrue(error.localizedMessage.orEmpty().contains("must be a local .fql file recognized by the IDE"))
     }
 
     fun testRejectsNonexistentWorkingDirectory() {
@@ -168,7 +173,7 @@ class FerretRunConfigurationValidationTest : BasePlatformTestCase() {
         }
 
         for (parameters in listOf("{", "[]", "null", "true", "\"value\"")) {
-            configuration.parameters = parameters
+            configuration.parametersJson = parameters
             val error = configurationError(configuration)
             assertTrue(error.localizedMessage.orEmpty().contains("Parameters must"))
         }
@@ -179,7 +184,7 @@ class FerretRunConfigurationValidationTest : BasePlatformTestCase() {
         val configuration = createConfiguration().apply {
             sourcePath = source.toString()
             workingDirectory = ""
-            parameters = """{"value":1e400}"""
+            parametersJson = """{"value":1e400}"""
         }
 
         val error = configurationError(configuration)

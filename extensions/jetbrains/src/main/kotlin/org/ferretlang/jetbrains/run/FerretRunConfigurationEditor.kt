@@ -1,6 +1,7 @@
 package org.ferretlang.jetbrains.run
 
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
+import com.intellij.openapi.options.ConfigurationException
 import com.intellij.openapi.options.SettingsEditor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
@@ -36,13 +37,19 @@ class FerretRunConfigurationEditor(
     override fun resetEditorFrom(configuration: FerretRunConfiguration) {
         sourcePathField.text = configuration.sourcePath
         workingDirectoryField.text = configuration.workingDirectory
-        parametersField.text = configuration.parameters
+        parametersField.text = configuration.parametersJson
     }
 
     override fun applyEditorTo(configuration: FerretRunConfiguration) {
+        try {
+            FerretParameterBindingsJson.parse(parametersField.text)
+        } catch (error: IllegalArgumentException) {
+            throw ConfigurationException(error.message ?: "The Ferret parameters are invalid.")
+        }
+
         configuration.sourcePath = sourcePathField.text
         configuration.workingDirectory = workingDirectoryField.text
-        configuration.parameters = parametersField.text
+        configuration.parametersJson = parametersField.text
     }
 
     override fun createEditor(): JComponent =

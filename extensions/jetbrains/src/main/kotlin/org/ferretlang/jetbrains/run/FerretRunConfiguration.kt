@@ -8,7 +8,7 @@ import com.intellij.execution.configurations.RuntimeConfigurationError
 import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.openapi.options.SettingsEditor
 import com.intellij.openapi.project.Project
-import org.ferretlang.jetbrains.lang.FerretLanguageFileType
+import com.intellij.openapi.vfs.LocalFileSystem
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
@@ -33,10 +33,16 @@ class FerretRunConfiguration(
             options.workingDirectory = value
         }
 
-    var parameters: String
-        get() = options.parameters ?: "{}"
+    var parameters: FerretParameterBindings
+        get() = FerretParameterBindingsJson.parse(parametersJson)
         set(value) {
-            options.parameters = FerretParameterBindings.normalize(value)
+            options.parametersJson = FerretParameterBindingsJson.render(value)
+        }
+
+    internal var parametersJson: String
+        get() = options.parametersJson ?: "{}"
+        set(value) {
+            options.parametersJson = FerretParameterBindingsJson.normalize(value)
         }
 
     override fun suggestedName(): String? = resolvedSourcePathOrNull()?.fileName?.toString()
@@ -52,8 +58,11 @@ class FerretRunConfiguration(
         if (!Files.isRegularFile(source)) {
             throw RuntimeConfigurationError("The Ferret source path is not a file: $source")
         }
-        if (!source.fileName.toString().endsWith(".${FerretLanguageFileType.defaultExtension}")) {
-            throw RuntimeConfigurationError("The Ferret source file must use the .fql extension: $source")
+        val sourceFile = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(source)
+        if (sourceFile == null || !FerretRunSourceFile.isEligible(sourceFile)) {
+            throw RuntimeConfigurationError(
+                "The Ferret source file must be a local .fql file recognized by the IDE: $source",
+            )
         }
 
         resolveOptionalPath(workingDirectory, "working directory")?.let { directory ->
@@ -66,7 +75,7 @@ class FerretRunConfiguration(
         }
 
         try {
-            FerretParameterBindings.validate(parameters)
+            FerretParameterBindingsJson.parse(parametersJson)
         } catch (error: IllegalArgumentException) {
             throw RuntimeConfigurationError(error.message ?: "The Ferret parameters are invalid.")
         }

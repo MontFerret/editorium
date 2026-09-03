@@ -8,7 +8,6 @@ import com.intellij.openapi.util.Ref
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
-import org.ferretlang.jetbrains.lang.FerretLanguageFileType
 
 class FerretRunConfigurationProducer : LazyRunConfigurationProducer<FerretRunConfiguration>(), DumbAware {
     override fun getConfigurationFactory(): ConfigurationFactory =
@@ -42,11 +41,7 @@ class FerretRunConfigurationProducer : LazyRunConfigurationProducer<FerretRunCon
     private fun contextFile(context: ConfigurationContext): Pair<PsiFile, VirtualFile>? {
         val psiFile = context.psiLocation?.containingFile ?: return null
         val virtualFile = psiFile.virtualFile ?: return null
-        if (
-            !virtualFile.isInLocalFileSystem ||
-            virtualFile.fileType !== FerretLanguageFileType ||
-            virtualFile.extension != FerretLanguageFileType.defaultExtension
-        ) {
+        if (!FerretRunSourceFile.isEligible(virtualFile)) {
             return null
         }
 

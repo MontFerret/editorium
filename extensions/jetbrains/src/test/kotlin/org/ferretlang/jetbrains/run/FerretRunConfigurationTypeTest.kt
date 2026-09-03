@@ -34,7 +34,8 @@ class FerretRunConfigurationTypeTest : BasePlatformTestCase() {
         assertEquals("Ferret", configuration.name)
         assertEquals("", configuration.sourcePath)
         assertEquals(project.basePath.orEmpty(), configuration.workingDirectory)
-        assertEquals("{}", configuration.parameters)
+        assertSame(FerretParameterBindings.EMPTY, configuration.parameters)
+        assertEquals("{}", configuration.parametersJson)
     }
 
     private fun createConfiguration(): FerretRunConfiguration =
