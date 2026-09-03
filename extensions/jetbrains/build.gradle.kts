@@ -3,6 +3,8 @@ import org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask
 import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginStructureTask
 import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.nio.file.Files
+import java.nio.file.Path
 
 plugins {
     kotlin("jvm")
@@ -13,6 +15,12 @@ group = "org.ferretlang.jetbrains"
 version = "0.1.0"
 
 dependencies {
+    implementation(platform("io.grpc:grpc-bom:1.84.0"))
+    implementation("io.grpc:grpc-netty-shaded")
+    implementation("io.grpc:grpc-protobuf")
+    implementation("io.grpc:grpc-stub")
+    implementation("com.google.protobuf:protobuf-java:4.36.1")
+
     testImplementation("junit:junit:4.13.2")
 
     intellijPlatform {
@@ -53,6 +61,12 @@ java {
     targetCompatibility = JavaVersion.VERSION_25
 }
 
+sourceSets {
+    main {
+        java.srcDir("src/main/generated")
+    }
+}
+
 val repositoryRoot = layout.projectDirectory.dir("../..")
 val generatedFerretdDirectory = layout.buildDirectory.dir("generated/ferretd")
 val prepareFerretd = tasks.register<Exec>("prepareFerretd") {
@@ -72,6 +86,11 @@ val prepareFerretd = tasks.register<Exec>("prepareFerretd") {
 }
 
 tasks {
+    test {
+        useJUnit {
+            excludeCategories("org.ferretlang.jetbrains.integration.FerretdIntegrationTest")
+        }
+    }
     named<PrepareSandboxTask>("prepareSandbox") {
         dependsOn(prepareFerretd)
         from(generatedFerretdDirectory) {
@@ -95,5 +114,24 @@ tasks {
     }
     withType<VerifyPluginStructureTask>().configureEach {
         ignoreWarnings = false
+    }
+}
+
+intellijPlatformTesting.testIde.register("ferretdIntegrationTest") {
+    testFramework(TestFrameworkType.Platform)
+    task {
+        group = "verification"
+        description = "Runs JetBrains execution tests against the pinned current-host ferretd binary."
+        useJUnit {
+            includeCategories("org.ferretlang.jetbrains.integration.FerretdIntegrationTest")
+        }
+        doFirst {
+            val configured = System.getenv("FERRETD_TEST_PATH")
+                ?: throw GradleException("FERRETD_TEST_PATH is required for ferretdIntegrationTest.")
+            val path = Path.of(configured)
+            if (!Files.isRegularFile(path) || !Files.isExecutable(path)) {
+                throw GradleException("FERRETD_TEST_PATH is not an executable file: $path")
+            }
+        }
     }
 }

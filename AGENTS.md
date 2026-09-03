@@ -64,8 +64,10 @@ The current integration state is intentionally asymmetric:
   debugging.
 * JetBrains registers Ferret and `.fql` files, provides bundled-binary
   distribution and current-host executable resolution, and connects local files
-  to a lazy project-wide JetBrains native LSP client running `ferretd lsp`. It
-  does not yet provide execution UI, debugging, or settings.
+  to a lazy project-wide JetBrains native LSP client running `ferretd lsp`.
+  Native Run configurations use an independent authenticated project-scoped
+  execution daemon and the JetBrains Run console. JetBrains does not yet provide
+  debugging or settings beyond the existing persisted Run configuration fields.
 * Both integrations consume the daemon version from `ferretd.json`; neither may
   introduce a separate editor-local pin.
 
@@ -129,6 +131,8 @@ make release vscode <version>
 make proto-sync
 make proto-generate vscode
 make proto-check vscode
+make proto-generate jetbrains
+make proto-check jetbrains
 ```
 
 Rules:
@@ -154,10 +158,10 @@ Command support is not identical across integrations:
 * Unscoped `make test` runs the Go tooling tests before both integration suites;
   unscoped `make lint` checks Go formatting and vet before both integration
   linters. Selecting an integration runs only that integration's operation.
-* `prepare`, `build`, `test`, `lint`, `clean`, `package`, and `package-check`
-  support both VS Code and JetBrains.
-* `install`, `test-installed`, target-matrix generation, protobuf client
-  generation/checking, and releases currently support VS Code only.
+* `prepare`, `build`, `test`, `lint`, `clean`, `package`, `package-check`, and
+  protobuf client generation/checking support both VS Code and JetBrains.
+* `install`, `test-installed`, target-matrix generation, and releases currently
+  support VS Code only.
 * `make ci-matrix vscode` and the Go tool's `release-ci` commands are internal CI
   entrypoints. They must remain implementations behind Make/workflows, not a
   second contributor-facing command surface.
@@ -218,9 +222,11 @@ compatibility-sensitive contracts.
 * Ferret file type and language registration;
 * JVM host mapping and installed bundled-binary resolution;
 * JetBrains native LSP provider and descriptor adaptation;
-* future JetBrains actions, settings, UI, execution, and debugging integration
-  when explicitly implemented;
-* generated protocol clients if the integration begins consuming schemas;
+* native Run configuration, Run-console, execution, and cancellation adaptation;
+* project-scoped authenticated execution-daemon connection lifecycle;
+* generated Java protobuf and gRPC clients;
+* future JetBrains settings, UI, and debugging integration when explicitly
+  implemented;
 * Gradle configuration and plugin packaging;
 * JetBrains-specific platform, binary-resolution, and integration tests.
 
@@ -230,11 +236,12 @@ that complete matrix beside the plugin's `lib/` directory. Unit-test sandbox
 preparation stays independent of artifact acquisition so tests can remain
 offline.
 
-Runtime Kotlin owns only current-host mapping and installed binary resolution.
-It must not launch `ferretd`, own process state or streams, or introduce an
-IntelliJ service solely for executable lookup. The JetBrains LSP descriptor
-constructs the `ferretd lsp` command line and lets the JetBrains LSP subsystem
-own the process lifecycle. Do not search `PATH` or add fallback binaries.
+Installed binary resolution remains passive and must not search `PATH` or add
+fallback binaries. The JetBrains LSP descriptor constructs the `ferretd lsp`
+command line and lets the JetBrains LSP subsystem own that process lifecycle.
+Separately, the project-scoped execution connection owns lazy authenticated
+`ferretd serve` startup, its channel, workspace cache, restart generation, and
+shutdown. These LSP and execution processes must not be coupled.
 
 Do not assume feature parity with VS Code. Implement only the capabilities
 actually supported by the current JetBrains integration or required by the task.
@@ -249,9 +256,9 @@ protocol and behavioral contract, not the other editor's UI architecture.
 Appropriate shared content includes protocol schemas and other immutable or
 generated inputs that must be consumed consistently by multiple integrations.
 
-`shared/proto/ferretd` is a synchronized, ignored schema cache. VS Code currently
-generates and commits TypeScript clients from it; JetBrains does not currently
-generate or consume protocol clients.
+`shared/proto/ferretd` is a synchronized, ignored schema cache. VS Code generates
+and commits TypeScript clients from it; JetBrains generates and commits Java
+protobuf/gRPC clients under `extensions/jetbrains/src/main/generated`.
 
 Do not move editor API wrappers, lifecycle code, UI models, or convenience
 helpers into `shared` merely to reduce duplication. Similar-looking editor code
@@ -282,7 +289,7 @@ Rules:
 * Never hand-edit generated protocol clients.
 * Change the source schema or generator inputs and regenerate.
 * `proto-check` must detect drift between generated output and committed clients;
-  currently only `make proto-check vscode` is implemented.
+  both `make proto-check vscode` and `make proto-check jetbrains` are implemented.
 * A daemon-version update is incomplete until protocol compatibility,
   generation, packaging, and relevant integration tests have been evaluated.
 
@@ -305,8 +312,9 @@ Current generated/untracked boundaries include `.dist/`,
 `shared/proto/ferretd/`, `extensions/vscode/bin/`,
 `extensions/vscode/dist/`, `extensions/vscode/out/`, and JetBrains Gradle
 `build/` output, including staged daemon binaries and plugin ZIPs. Generated VS
-Code protocol clients are the exception: they are integration-owned committed
-artifacts and must be changed only through the supported generator.
+Code and JetBrains protocol clients are the exceptions: they are
+integration-owned committed artifacts and must be changed only through their
+supported generators.
 
 Edit the owning source and use the repository-supported generator or build
 command.

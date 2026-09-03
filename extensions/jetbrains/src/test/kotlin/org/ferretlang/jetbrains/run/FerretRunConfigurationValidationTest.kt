@@ -53,7 +53,11 @@ class FerretRunConfigurationValidationTest : BasePlatformTestCase() {
 
     fun testAcceptsAnEmptyWorkingDirectoryAndBlankBindings() {
         val source = createSource()
-        val configuration = createConfiguration().apply {
+        val configuration = FerretRunConfiguration(
+            ProjectManager.getInstance().defaultProject,
+            FerretRunConfigurationType.getInstance().configurationFactories.single(),
+            "Ferret",
+        ).apply {
             sourcePath = source.toString()
             workingDirectory = ""
             parametersJson = ""

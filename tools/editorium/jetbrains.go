@@ -32,14 +32,58 @@ func runJetBrainsOperation(ctx context.Context, root, operation string) error {
 	case "build":
 		return runJetBrainsGradle(ctx, root, "buildPlugin", "verifyPluginProjectConfiguration", "verifyPluginStructure")
 	case "test":
-		return runJetBrainsGradle(ctx, root, "test")
+		if _, err := syncFerretdProto(ctx, root, false, nil); err != nil {
+			return err
+		}
+
+		if err := generateJetBrainsProto(ctx, root, true); err != nil {
+			return err
+		}
+
+		prepared, err := prepareJetBrainsTestFerretd(ctx, root, nil)
+		if err != nil {
+			return err
+		}
+
+		if err := runJetBrainsGradle(ctx, root, "test"); err != nil {
+			return err
+		}
+
+		return runJetBrainsGradleEnvironment(
+			ctx,
+			root,
+			[]string{"FERRETD_TEST_PATH=" + prepared.BinaryPath},
+			"ferretdIntegrationTest",
+		)
 	case "lint":
+		if _, err := syncFerretdProto(ctx, root, false, nil); err != nil {
+			return err
+		}
+
+		if err := generateJetBrainsProto(ctx, root, true); err != nil {
+			return err
+		}
+
 		return runJetBrainsGradle(ctx, root, "compileKotlin", "compileTestKotlin", "verifyPluginProjectConfiguration", "verifyPluginStructure", "verifyPlugin")
 	case "clean":
 		return cleanJetBrains(root)
 	default:
 		return fmt.Errorf("unknown JetBrains operation %q", operation)
 	}
+}
+
+func prepareJetBrainsTestFerretd(ctx context.Context, root string, client httpDoer) (acquiredFerretd, error) {
+	target, err := detectHostFerretdTarget(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return acquiredFerretd{}, err
+	}
+
+	result, err := acquireFerretd(ctx, root, target, client)
+	if err != nil {
+		return acquiredFerretd{}, fmt.Errorf("prepare JetBrains integration-test daemon %s: %w", target.ID, err)
+	}
+
+	return result, nil
 }
 
 func packageJetBrains(ctx context.Context, root string) error {
@@ -259,6 +303,10 @@ func smokePackagedJetBrainsFerretd(ctx context.Context, contents []byte, target 
 }
 
 func runJetBrainsGradle(ctx context.Context, root string, args ...string) error {
+	return runJetBrainsGradleEnvironment(ctx, root, nil, args...)
+}
+
+func runJetBrainsGradleEnvironment(ctx context.Context, root string, environment []string, args ...string) error {
 	packageRoot := jetbrainsPackageRoot(root)
 	wrapper := "gradlew"
 
@@ -266,7 +314,7 @@ func runJetBrainsGradle(ctx context.Context, root string, args ...string) error 
 		wrapper += ".bat"
 	}
 
-	return runCommand(ctx, packageRoot, nil, filepath.Join(packageRoot, wrapper), args...)
+	return runCommand(ctx, packageRoot, environment, filepath.Join(packageRoot, wrapper), args...)
 }
 
 func jetbrainsPackageRoot(root string) string {

@@ -9,6 +9,9 @@ import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.openapi.options.SettingsEditor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import org.ferretlang.jetbrains.execution.FerretExecutionInput
+import org.ferretlang.jetbrains.execution.FerretExecutionRequest
+import org.ferretlang.jetbrains.execution.FerretExecutionRequestException
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
@@ -79,12 +82,25 @@ class FerretRunConfiguration(
         } catch (error: IllegalArgumentException) {
             throw RuntimeConfigurationError(error.message ?: "The Ferret parameters are invalid.")
         }
+
+        try {
+            FerretExecutionRequest.resolve(executionInput())
+        } catch (error: FerretExecutionRequestException) {
+            throw RuntimeConfigurationError(error.message ?: "The Ferret execution paths are invalid.")
+        }
     }
 
     override fun getState(
         executor: Executor,
         environment: ExecutionEnvironment,
-    ): RunProfileState = FerretRunProfileState()
+    ): RunProfileState = FerretRunProfileState(project, executionInput())
+
+    private fun executionInput(): FerretExecutionInput = FerretExecutionInput(
+        sourcePath = sourcePath,
+        workingDirectory = workingDirectory,
+        projectBasePath = project.basePath,
+        bindings = parameters,
+    )
 
     internal fun resolvedSourcePathOrNull(): Path? = resolvePathOrNull(sourcePath)
 
