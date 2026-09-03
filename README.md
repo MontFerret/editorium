@@ -9,8 +9,8 @@ Ferret and its language server.
 - [`extensions/vscode/`](extensions/vscode/README.md) — Visual Studio Code
   support for Ferret Query Language files.
 - [`extensions/jetbrains/`](extensions/jetbrains/README.md) — the Kotlin-based
-  JetBrains IDE plugin, `.fql` file recognition, native LSP integration, and
-  bundled daemon distribution.
+  JetBrains IDE plugin, `.fql` file recognition, native LSP integration,
+  Run-console execution, and bundled daemon distribution.
 - `shared/` — editor-independent inputs. Protocol schemas live under
   `shared/proto/`; generated clients remain owned by each extension.
 - `tools/editorium/` — the Go implementation behind the repository Make
@@ -69,7 +69,9 @@ contains Ferret language and `.fql` file-type registration plus all supported
 native `ferretd` binaries. Local `.fql` files lazily activate a project-wide
 JetBrains native LSP client that runs the matching bundled `ferretd lsp` process.
 JetBrains owns the process and protocol lifecycle, while `ferretd` owns the
-language behavior. Execution and debugging remain deferred.
+language behavior. Ferret Run configurations use a separate authenticated,
+project-scoped execution daemon and display terminal JSON results and failures
+in the Run console. JetBrains debugging remains deferred.
 
 ## Protocol schemas
 
@@ -85,13 +87,17 @@ make proto-sync
 make proto-sync FORCE=1
 make proto-generate vscode
 make proto-check vscode
+make proto-generate jetbrains
+make proto-check jetbrains
 ```
 
 Synchronization is a no-op when the marker and required schemas match the pin.
 A forced sync atomically replaces the entire managed tree. Failed downloads,
 validation, or extraction preserve the prior cache. Generation writes the
-committed extension client; checking generates into a temporary tree and
-requires byte-for-byte equality.
+committed client owned by the selected extension; checking generates into a
+temporary tree and reports drift without modifying the checkout. JetBrains Java
+output lives under `extensions/jetbrains/src/main/generated/` and must not be
+edited by hand.
 
 ## VS Code distributions
 
@@ -137,7 +143,8 @@ cached under `.dist/`; no daemon binary is committed to Git.
 
 1. Change the single `ferretd` version in `ferretd.json`.
 2. Run `make proto-sync FORCE=1`.
-3. Run `make proto-generate vscode` and review generated client changes.
+3. Run `make proto-generate vscode` and `make proto-generate jetbrains`, then
+   review both generated-client changes.
 4. Run `make lint`, `make test`, `make package vscode`, and
    `make package jetbrains`.
 5. Commit the pin, generated clients, and any compatibility changes; do not

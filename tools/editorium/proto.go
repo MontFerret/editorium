@@ -34,6 +34,8 @@ type protoSyncResult struct {
 	Version string
 }
 
+type protoGenerator func(context.Context, string, bool) error
+
 func runProtoCommand(ctx context.Context, root string, args []string) error {
 	if len(args) == 0 {
 		return usageError("proto requires sync, generate, or check")
@@ -71,18 +73,30 @@ func runProtoCommand(ctx context.Context, root string, args []string) error {
 			return err
 		}
 
-		if args[1] != "vscode" {
-			return fmt.Errorf("extension %q does not implement protobuf generation", args[1])
-		}
-
-		_, err := syncFerretdProto(ctx, root, false, http.DefaultClient)
+		generator, err := protoGeneratorForExtension(args[1])
 		if err != nil {
 			return err
 		}
 
-		return generateVSCodeProto(ctx, root, args[0] == "check")
+		_, err = syncFerretdProto(ctx, root, false, http.DefaultClient)
+		if err != nil {
+			return err
+		}
+
+		return generator(ctx, root, args[0] == "check")
 	default:
 		return usageError(fmt.Sprintf("unknown proto operation %q", args[0]))
+	}
+}
+
+func protoGeneratorForExtension(extension string) (protoGenerator, error) {
+	switch extension {
+	case "vscode":
+		return generateVSCodeProto, nil
+	case "jetbrains":
+		return generateJetBrainsProto, nil
+	default:
+		return nil, fmt.Errorf("extension %q does not implement protobuf generation", extension)
 	}
 }
 

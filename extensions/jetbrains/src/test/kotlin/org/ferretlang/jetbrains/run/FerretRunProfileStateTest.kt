@@ -1,6 +1,5 @@
 package org.ferretlang.jetbrains.run
 
-import com.intellij.execution.ExecutionException
 import com.intellij.execution.configurations.ConfigurationInfoProvider
 import com.intellij.execution.configurations.RunProfile
 import com.intellij.execution.configurations.RunnerSettings
@@ -8,21 +7,21 @@ import com.intellij.execution.executors.DefaultRunExecutor
 import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.execution.runners.ProgramRunner
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
-import org.junit.Assert
+import org.ferretlang.jetbrains.execution.FerretExecutionProcessHandler
 import java.nio.file.Files
 
 class FerretRunProfileStateTest : BasePlatformTestCase() {
-    fun testConfigurationReturnsAStateThatStopsAtTheExplicitExecutionBoundary() {
+    fun testConfigurationReturnsAnAttachedSyntheticExecutionResultImmediately() {
         val source = Files.createTempFile("ferret-run-state-", ".fql")
-
         try {
+            Files.writeString(source, "RETURN 1")
             val configuration = FerretRunConfigurationType
                 .getInstance()
                 .configurationFactories
                 .single()
                 .createTemplateConfiguration(project) as FerretRunConfiguration
             configuration.sourcePath = source.toString()
-            configuration.workingDirectory = ""
+            configuration.workingDirectory = source.parent.toString()
             configuration.checkConfiguration()
 
             val state = configuration.getState(
@@ -30,12 +29,10 @@ class FerretRunProfileStateTest : BasePlatformTestCase() {
                 ExecutionEnvironment(),
             )
             assertTrue(state is FerretRunProfileState)
-
-            val error = Assert.assertThrows(ExecutionException::class.java) {
-                state.execute(DefaultRunExecutor.getRunExecutorInstance(), TestProgramRunner)
-            }
-
-            assertEquals("Ferret execution is not implemented yet.", error.message)
+            val result = state.execute(DefaultRunExecutor.getRunExecutorInstance(), TestProgramRunner)!!
+            assertTrue(result.processHandler is FerretExecutionProcessHandler)
+            assertNotNull(result.executionConsole)
+            result.processHandler.destroyProcess()
         } finally {
             Files.deleteIfExists(source)
         }
