@@ -15,6 +15,10 @@
             fieldName="INSTANCE"
             language="Ferret"
             extensions="fql" />
+        <configurationType
+            implementation="org.ferretlang.jetbrains.run.FerretRunConfigurationType" />
+        <runConfigurationProducer
+            implementation="org.ferretlang.jetbrains.run.FerretRunConfigurationProducer" />
         <platform.lsp.integrationProvider
             implementation="org.ferretlang.jetbrains.lsp.FerretLspIntegrationProvider" />
     </extensions>

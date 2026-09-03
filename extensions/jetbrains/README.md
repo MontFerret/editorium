@@ -70,7 +70,51 @@ Definition lookup is currently document-local. `ferretd` 1.0.0-alpha.4 does not
 advertise project or module resolution, so a symbol declared in another `.fql`
 file is not a supported navigation target.
 
-Execution and debugging are not yet supported by the JetBrains integration.
+## Run configurations
+
+The plugin provides a native **Ferret** Run Configuration for describing a
+Ferret Query Language execution. Open **Run | Edit Configurations**, select
+**Add New Configuration**, and choose **Ferret**. Each configuration contains:
+
+- **Source file**: the `.fql` file to execute. The chooser filters for Ferret
+  files, while a path entered by hand may be absolute or relative to the
+  project base directory.
+- **Working directory**: the execution directory, defaulting to the project
+  base directory when one exists. It may be overridden with an absolute path
+  or a project-relative path, and may be left empty for projects without a base
+  directory.
+- **Parameters (JSON object)**: FQL bind parameter values using the same JSON
+  object shape as the Ferret execution protocol. For example:
+
+  ```json
+  {
+    "baseUrl": "https://example.com",
+    "limit": 10,
+    "options": {
+      "enabled": true
+    }
+  }
+  ```
+
+  An empty field is treated as `{}`. The top level must be an object; nested
+  arrays and scalar values are supported. Malformed JSON and non-finite numbers
+  are rejected.
+
+The source file is required; the working directory is optional. Relative paths
+require a project base directory and resolve against it. Absolute paths are
+used independently of the project base directory.
+
+Run configurations use JetBrains' normal project persistence and survive IDE
+restart, project reopen, and configuration duplication. Opening a local `.fql`
+file also enables the standard Run context action, which creates or reuses a
+Ferret configuration named after that file. Other file types do not offer a
+Ferret configuration.
+
+This milestone establishes configuration and validation only. Invoking a valid
+configuration currently reports **Ferret execution is not implemented yet.**
+The next milestone task will connect this state to the `ferretd` execution API.
+No query process, execution session, output console, or cancellation lifecycle
+is implemented here. JetBrains debugging is also not yet supported.
 
 ## Build and test
 
@@ -126,6 +170,14 @@ include:
 - navigate from a variable use to its declaration; and
 - run **Code | Reformat Code** on `LET value=1` and confirm the LSP formatter
   applies the edits returned by `ferretd`.
+
+Open **Run | Edit Configurations** and confirm **Ferret** is available. Create a
+configuration, select `test.fql`, choose a working directory, enter a JSON
+parameter object, apply the changes, and reopen the dialog to confirm they were
+preserved. From the open `test.fql` editor, invoke the native Run context action
+and confirm it creates or reuses a configuration for that file. Invoking the
+configuration should report that execution is not implemented yet; a non-Ferret
+file must not offer a Ferret run context.
 
 Open a non-Ferret file before `test.fql` to confirm lazy activation. Opening
 additional `.fql` files in the same project should reuse the project-wide
