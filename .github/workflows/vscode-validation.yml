@@ -5,6 +5,7 @@ on:
     branches:
       - '**'
     paths:
+      - '.gitattributes'
       - '.github/workflows/vscode-validation.yml'
       - 'Makefile'
       - 'ferretd.json'
@@ -15,6 +16,7 @@ on:
       - '!tools/editorium/jetbrains_test.go'
   pull_request:
     paths:
+      - '.gitattributes'
       - '.github/workflows/vscode-validation.yml'
       - 'Makefile'
       - 'ferretd.json'
