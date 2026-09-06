@@ -30,5 +30,7 @@ root. Source identity continues to be derived only from the workspace.
 The JetBrains generator invokes Buf 1.72.0 with pinned Java 36.1 and gRPC Java
 1.84.0 remote plugins. It writes a sibling staging directory before an atomic
 replacement; its check command uses a temporary tree and leaves the checkout
-untouched. Generated Java sources are owned exclusively by this workflow and
-must not be hand-edited.
+untouched. Git enforces LF line endings for generated Java sources on every
+platform so byte-for-byte protocol checks are independent of checkout settings.
+Generated Java sources are owned exclusively by this workflow and must not be
+hand-edited.

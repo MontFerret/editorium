@@ -220,8 +220,8 @@ class FerretExecutionClientTest {
         val root = Files.createTempDirectory("ferret-client-test-")
         val version = "1.0.0-alpha.6"
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        val rpc = FakeFerretdRpc(version, root, outcomes.toList())
         val process = FakeDaemonProcess.ready(version)
+        val rpc = FakeFerretdRpc(version, root, outcomes.toList(), onShutdown = process::destroy)
         val launcher = FerretdDaemonLauncher.testing(
             scope,
             { FerretdInstallation(Path.of("/installed/ferretd"), version) },

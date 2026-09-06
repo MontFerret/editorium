@@ -12,6 +12,7 @@ internal class FakeFerretdRpc(
     private val version: String,
     private val root: Path,
     outcomes: List<Outcome>,
+    private val onShutdown: () -> Unit = {},
 ) : FerretdRpc {
     enum class Outcome {
         COMPLETED,
@@ -41,6 +42,7 @@ internal class FakeFerretdRpc(
 
     override suspend fun shutdown() {
         calls += "shutdown"
+        onShutdown()
     }
 
     override suspend fun openWorkspace(root: Path): FerretdWorkspace {

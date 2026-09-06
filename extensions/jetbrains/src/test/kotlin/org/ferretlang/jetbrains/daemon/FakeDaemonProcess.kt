@@ -13,6 +13,7 @@ internal class FakeDaemonProcess(stderrText: String) : Process() {
     private val stopped = CountDownLatch(1)
     private val exit = AtomicInteger()
     private val stderr = ByteArrayInputStream(stderrText.toByteArray(StandardCharsets.UTF_8))
+    val destroyCalls = AtomicInteger()
 
     override fun getOutputStream(): OutputStream = ByteArrayOutputStream()
 
@@ -25,10 +26,7 @@ internal class FakeDaemonProcess(stderrText: String) : Process() {
         return exit.get()
     }
 
-    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean {
-        stopped.countDown()
-        return true
-    }
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean = stopped.await(timeout, unit)
 
     override fun exitValue(): Int {
         if (stopped.count != 0L) throw IllegalThreadStateException()
@@ -36,6 +34,7 @@ internal class FakeDaemonProcess(stderrText: String) : Process() {
     }
 
     override fun destroy() {
+        destroyCalls.incrementAndGet()
         stopped.countDown()
     }
 
