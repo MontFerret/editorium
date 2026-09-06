@@ -99,6 +99,69 @@ class FerretExecutionIntegrationTest {
     }
 
     @Test
+    fun separatesWorkspaceFromProjectAndExternalRuntimeDirectories() = runBlocking {
+        val query = write("queries/query.fql", "RETURN TO_STRING(IO::FS::READ(\"value.txt\"))")
+        val projectRuntime = Files.createDirectories(root.resolve("runtime"))
+        Files.writeString(projectRuntime.resolve("value.txt"), "project runtime")
+
+        val projectExecution = execute(query, workingDirectory = projectRuntime)
+        assertEquals(0, projectExecution.exit.awaitResult().also { if (it != 0) error(projectExecution.debug()) })
+        assertTrue(projectExecution.stdout.joinToString("\n").contains("project runtime"))
+        assertTrue(projectExecution.system.any { it == "Workspace root: ${root.toRealPath()}" })
+        assertTrue(projectExecution.system.any { it == "Working directory: ${projectRuntime.toRealPath()}" })
+
+        val writer = write(
+            "queries/write.fql",
+            "RETURN IO::FS::WRITE(\"created.txt\", TO_BINARY(\"runtime write\"))",
+        )
+        val written = execute(writer, workingDirectory = projectRuntime)
+        assertEquals(0, written.exit.awaitResult().also { if (it != 0) error(written.debug()) })
+        assertEquals("runtime write", Files.readString(projectRuntime.resolve("created.txt")))
+        assertTrue(Files.notExists(root.resolve("created.txt")))
+
+        val externalRuntime = Files.createTempDirectory("ferret-jetbrains-external-runtime-")
+        try {
+            Files.writeString(externalRuntime.resolve("value.txt"), "external runtime")
+            val externalExecution = execute(query, workingDirectory = externalRuntime)
+            assertEquals(0, externalExecution.exit.awaitResult().also { if (it != 0) error(externalExecution.debug()) })
+            assertTrue(externalExecution.stdout.joinToString("\n").contains("external runtime"))
+        } finally {
+            externalRuntime.toFile().deleteRecursively()
+        }
+
+        Files.writeString(root.resolve("value.txt"), "workspace default")
+        val inherited = execute(query, workingDirectory = null)
+        assertEquals(0, inherited.exit.awaitResult().also { if (it != 0) error(inherited.debug()) })
+        assertTrue(inherited.stdout.joinToString("\n").contains("workspace default"))
+        assertTrue(
+            inherited.system.any {
+                it == "Working directory: ${root.toRealPath()} (daemon default)"
+            },
+        )
+    }
+
+    @Test
+    fun concurrentRunsUseIndependentRuntimeDirectories() = runBlocking {
+        val query = write("concurrent.fql", "RETURN TO_STRING(IO::FS::READ(\"value.txt\"))")
+        val firstRoot = Files.createTempDirectory("ferret-jetbrains-runtime-first-")
+        val secondRoot = Files.createTempDirectory("ferret-jetbrains-runtime-second-")
+        try {
+            Files.writeString(firstRoot.resolve("value.txt"), "first root")
+            Files.writeString(secondRoot.resolve("value.txt"), "second root")
+            val first = execute(query, workingDirectory = firstRoot)
+            val second = execute(query, workingDirectory = secondRoot)
+
+            assertEquals(0, first.exit.awaitResult().also { if (it != 0) error(first.debug()) })
+            assertEquals(0, second.exit.awaitResult().also { if (it != 0) error(second.debug()) })
+            assertTrue(first.stdout.joinToString("\n").contains("first root"))
+            assertTrue(second.stdout.joinToString("\n").contains("second root"))
+        } finally {
+            firstRoot.toFile().deleteRecursively()
+            secondRoot.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun daemonCrashFailsCurrentRunAndRestartsOnlyOnLaterRun() = runBlocking {
         val running = execute(write("long.fql", "WAIT(10s)\nRETURN 1"))
         running.awaitStarted()
@@ -115,10 +178,16 @@ class FerretExecutionIntegrationTest {
     private fun execute(
         source: Path,
         parameters: FerretParameterBindings = FerretParameterBindings.EMPTY,
+        workingDirectory: Path? = root,
     ): RecordingExecution {
         val sink = RecordingExecution()
         sink.handle = FerretExecutionClient(connection).start(
-            FerretExecutionInput(source.toString(), root.toString(), null, parameters),
+            FerretExecutionInput(
+                source.toString(),
+                workingDirectory?.toString().orEmpty(),
+                root.toString(),
+                parameters,
+            ),
             sink,
         )
         return sink

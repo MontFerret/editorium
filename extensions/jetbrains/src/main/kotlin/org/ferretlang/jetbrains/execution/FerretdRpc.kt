@@ -12,7 +12,11 @@ internal interface FerretdRpc {
 
     suspend fun createSession(workspaceId: String, relativePath: String): FerretdSession
 
-    suspend fun createExecution(sessionId: String, parameters: Struct): FerretdExecutionSnapshot
+    suspend fun createExecution(
+        sessionId: String,
+        parameters: Struct,
+        options: FerretdExecutionOptions,
+    ): FerretdExecutionSnapshot
 
     fun watchExecution(executionId: String): FerretdExecutionWatch
 
@@ -61,6 +65,11 @@ internal enum class FerretdExecutionState {
     CANCELLED,
 }
 
+internal data class FerretdExecutionOptions(
+    val outputContentType: String,
+    val workingDirectory: Path?,
+)
+
 internal data class FerretdExecutionOutput(
     val contentType: String,
     val data: ByteArray,
@@ -107,7 +116,7 @@ internal data class FerretdExecutionSnapshot(
     val id: String,
     val sessionId: String,
     val state: FerretdExecutionState,
-    val outputContentType: String,
+    val options: FerretdExecutionOptions,
     val output: FerretdExecutionOutput?,
     val failure: FerretdFailure?,
 )

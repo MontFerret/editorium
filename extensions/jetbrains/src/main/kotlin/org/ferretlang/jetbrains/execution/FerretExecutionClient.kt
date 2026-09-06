@@ -25,7 +25,11 @@ internal class FerretExecutionClient(
                     FerretExecutionRequest.resolve(input)
                 }
                 sink.system("Source: ${request.source}")
-                sink.system("Working directory: ${request.workspaceRoot}")
+                sink.system("Workspace root: ${request.workspaceRoot}")
+                sink.system(
+                    request.workingDirectory?.let { "Working directory: $it" }
+                        ?: "Working directory: ${request.workspaceRoot} (daemon default)",
+                )
                 if (handle.isCancellationRequested()) {
                     handle.commit(FerretExecutionHandle.CANCELLED_EXIT_CODE)
                 } else {
@@ -71,9 +75,14 @@ internal class FerretExecutionClient(
             if (handle.isCancellationRequested()) {
                 return handle.commit(FerretExecutionHandle.CANCELLED_EXIT_CODE)
             }
-            val created = generation.rpc.createExecution(session.id, FerretStructMapper.map(request.bindings))
+            val options = FerretdExecutionOptions(JSON_CONTENT_TYPE, request.workingDirectory)
+            val created = generation.rpc.createExecution(
+                session.id,
+                FerretStructMapper.map(request.bindings),
+                options,
+            )
             executionId = created.id
-            validateExecution(created, created.id, session.id, FerretdExecutionState.CREATED)
+            validateExecution(created, created.id, session.id, FerretdExecutionState.CREATED, options)
             if (handle.isCancellationRequested()) {
                 return handle.commit(FerretExecutionHandle.CANCELLED_EXIT_CODE)
             }
@@ -83,13 +92,19 @@ internal class FerretExecutionClient(
                     "watch-execution",
                     "The Ferret execution watch ended before its created event.",
                 )
-            validateEvent(initial, created.id, session.id, 1L, FerretdExecutionState.CREATED)
+            validateEvent(initial, created.id, session.id, 1L, options, FerretdExecutionState.CREATED)
             cancellationJob = CoroutineScope(currentCoroutineContext()).launch {
                 handle.cancellation.await()
                 if (handle.claimCancelRpc()) {
                     try {
                         val cancelled = generation.rpc.cancelExecution(created.id)
-                        validateExecution(cancelled, created.id, session.id, FerretdExecutionState.CANCELLED)
+                        validateExecution(
+                            cancelled,
+                            created.id,
+                            session.id,
+                            FerretdExecutionState.CANCELLED,
+                            options,
+                        )
                     } catch (error: Throwable) {
                         sink.internal("Cancelling Ferret execution ${created.id} failed", error)
                     }
@@ -108,9 +123,9 @@ internal class FerretExecutionClient(
                 null
             }
             if (started != null) {
-                validateExecution(started, created.id, session.id, FerretdExecutionState.RUNNING)
+                validateExecution(started, created.id, session.id, FerretdExecutionState.RUNNING, options)
             }
-            observe(created.id, session.id, watch, generation.lost, handle, sink)
+            observe(created.id, session.id, options, watch, generation.lost, handle, sink)
         } catch (error: Throwable) {
             val code = handle.commit(1)
             if (code != FerretExecutionHandle.CANCELLED_EXIT_CODE) {
@@ -148,6 +163,7 @@ internal class FerretExecutionClient(
     private suspend fun observe(
         executionId: String,
         sessionId: String,
+        options: FerretdExecutionOptions,
         watch: FerretdExecutionWatch,
         lost: Deferred<Throwable>,
         handle: FerretExecutionHandle,
@@ -158,7 +174,7 @@ internal class FerretExecutionClient(
         while (true) {
             val event = nextEvent(watch, lost)
                 ?: throw FerretdRpcException("watch-execution", "The Ferret execution watch ended before a terminal event.")
-            validateEvent(event, executionId, sessionId, sequence + 1L)
+            validateEvent(event, executionId, sessionId, sequence + 1L, options)
             sequence = event.sequence
             if (!started) {
                 if (event.kind != FerretdExecutionState.RUNNING) {
@@ -224,6 +240,7 @@ internal class FerretExecutionClient(
         executionId: String,
         sessionId: String,
         expectedSequence: Long,
+        options: FerretdExecutionOptions,
         expectedState: FerretdExecutionState? = null,
     ) {
         if (event.executionId != executionId || event.execution.id != executionId) {
@@ -235,7 +252,7 @@ internal class FerretExecutionClient(
         if (expectedState != null && event.kind != expectedState) {
             throw FerretdRpcException("watch-execution", "The Ferret daemon returned an invalid execution lifecycle order.")
         }
-        validateExecution(event.execution, executionId, sessionId, event.kind)
+        validateExecution(event.execution, executionId, sessionId, event.kind, options)
     }
 
     private suspend fun nextEvent(
@@ -258,12 +275,13 @@ internal class FerretExecutionClient(
         executionId: String,
         sessionId: String,
         state: FerretdExecutionState,
+        options: FerretdExecutionOptions,
     ) {
         if (
             value.id != executionId ||
             value.sessionId != sessionId ||
             value.state != state ||
-            value.outputContentType != "application/json"
+            value.options != options
         ) {
             throw FerretdRpcException("execution", "The Ferret daemon returned a contradictory execution snapshot.")
         }
@@ -324,6 +342,7 @@ internal class FerretExecutionClient(
     }
 
     companion object {
+        private const val JSON_CONTENT_TYPE = "application/json"
         private val TERMINAL_STATES = setOf(
             FerretdExecutionState.COMPLETED,
             FerretdExecutionState.FAILED,

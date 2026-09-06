@@ -71,7 +71,10 @@ JetBrains native LSP client that runs the matching bundled `ferretd lsp` process
 JetBrains owns the process and protocol lifecycle, while `ferretd` owns the
 language behavior. Ferret Run configurations use a separate authenticated,
 project-scoped execution daemon and display terminal JSON results and failures
-in the Run console. JetBrains debugging remains deferred.
+in the Run console. The project base, or source parent when no base exists, is
+the compilation workspace. The optional Run working directory separately roots
+runtime filesystem access and may be outside that workspace. JetBrains
+debugging remains deferred.
 
 ## Protocol schemas
 

@@ -29,6 +29,7 @@ private static final long serialVersionUID = 0L;
   }
   private ExecutionOptions() {
     outputContentType_ = "";
+    workingDirectory_ = "";
   }
 
   public static final com.google.protobuf.Descriptors.Descriptor
@@ -49,6 +50,7 @@ private static final long serialVersionUID = 0L;
             org.ferretlang.jetbrains.protocol.ferretd.execution.v1.ExecutionOptions.class, org.ferretlang.jetbrains.protocol.ferretd.execution.v1.ExecutionOptions.Builder.class);
   }
 
+  private int bitField0_;
   public static final int OUTPUT_CONTENT_TYPE_FIELD_NUMBER = 1;
   @SuppressWarnings("serial")
   private volatile java.lang.Object outputContentType_ = "";
@@ -88,6 +90,53 @@ private static final long serialVersionUID = 0L;
     }
   }
 
+  public static final int WORKING_DIRECTORY_FIELD_NUMBER = 2;
+  @SuppressWarnings("serial")
+  private volatile java.lang.Object workingDirectory_ = "";
+  /**
+   * <code>optional string working_directory = 2 [json_name = "workingDirectory"];</code>
+   * @return Whether the workingDirectory field is set.
+   */
+  @java.lang.Override
+  public boolean hasWorkingDirectory() {
+    return ((bitField0_ & 0x00000001) != 0);
+  }
+  /**
+   * <code>optional string working_directory = 2 [json_name = "workingDirectory"];</code>
+   * @return The workingDirectory.
+   */
+  @java.lang.Override
+  public java.lang.String getWorkingDirectory() {
+    java.lang.Object ref = workingDirectory_;
+    if (ref instanceof java.lang.String) {
+      return (java.lang.String) ref;
+    } else {
+      com.google.protobuf.ByteString bs = 
+          (com.google.protobuf.ByteString) ref;
+      java.lang.String s = bs.toStringUtf8();
+      workingDirectory_ = s;
+      return s;
+    }
+  }
+  /**
+   * <code>optional string working_directory = 2 [json_name = "workingDirectory"];</code>
+   * @return The bytes for workingDirectory.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getWorkingDirectoryBytes() {
+    java.lang.Object ref = workingDirectory_;
+    if (ref instanceof java.lang.String) {
+      com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString.copyFromUtf8(
+              (java.lang.String) ref);
+      workingDirectory_ = b;
+      return b;
+    } else {
+      return (com.google.protobuf.ByteString) ref;
+    }
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -105,12 +154,18 @@ private static final long serialVersionUID = 0L;
     if (!com.google.protobuf.GeneratedMessage.isStringEmpty(outputContentType_)) {
       com.google.protobuf.GeneratedMessage.writeString(output, 1, outputContentType_);
     }
+    if (((bitField0_ & 0x00000001) != 0)) {
+      com.google.protobuf.GeneratedMessage.writeString(output, 2, workingDirectory_);
+    }
     getUnknownFields().writeTo(output);
   }
   private int computeSerializedSize_0() {
     int size = 0;
     if (!com.google.protobuf.GeneratedMessage.isStringEmpty(outputContentType_)) {
       size += com.google.protobuf.GeneratedMessage.computeStringSize(1, outputContentType_);
+    }
+    if (((bitField0_ & 0x00000001) != 0)) {
+      size += com.google.protobuf.GeneratedMessage.computeStringSize(2, workingDirectory_);
     }
     return size;
   }
@@ -138,6 +193,11 @@ private static final long serialVersionUID = 0L;
 
     if (!getOutputContentType()
         .equals(other.getOutputContentType())) return false;
+    if (hasWorkingDirectory() != other.hasWorkingDirectory()) return false;
+    if (hasWorkingDirectory()) {
+      if (!getWorkingDirectory()
+          .equals(other.getWorkingDirectory())) return false;
+    }
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -151,6 +211,10 @@ private static final long serialVersionUID = 0L;
     hash = (19 * hash) + getDescriptor().hashCode();
     hash = (37 * hash) + OUTPUT_CONTENT_TYPE_FIELD_NUMBER;
     hash = (53 * hash) + getOutputContentType().hashCode();
+    if (hasWorkingDirectory()) {
+      hash = (37 * hash) + WORKING_DIRECTORY_FIELD_NUMBER;
+      hash = (53 * hash) + getWorkingDirectory().hashCode();
+    }
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -283,6 +347,7 @@ private static final long serialVersionUID = 0L;
       super.clear();
       bitField0_ = 0;
       outputContentType_ = "";
+      workingDirectory_ = "";
       return this;
     }
 
@@ -319,6 +384,12 @@ private static final long serialVersionUID = 0L;
       if (((from_bitField0_ & 0x00000001) != 0)) {
         result.outputContentType_ = outputContentType_;
       }
+      int to_bitField0_ = 0;
+      if (((from_bitField0_ & 0x00000002) != 0)) {
+        result.workingDirectory_ = workingDirectory_;
+        to_bitField0_ |= 0x00000001;
+      }
+      result.bitField0_ |= to_bitField0_;
     }
 
     @java.lang.Override
@@ -336,6 +407,11 @@ private static final long serialVersionUID = 0L;
       if (!other.getOutputContentType().isEmpty()) {
         outputContentType_ = other.outputContentType_;
         bitField0_ |= 0x00000001;
+        onChanged();
+      }
+      if (other.hasWorkingDirectory()) {
+        workingDirectory_ = other.workingDirectory_;
+        bitField0_ |= 0x00000002;
         onChanged();
       }
       this.mergeUnknownFields(other.getUnknownFields());
@@ -367,6 +443,11 @@ private static final long serialVersionUID = 0L;
               bitField0_ |= 0x00000001;
               break;
             } // case 10
+            case 18: {
+              workingDirectory_ = input.readStringRequireUtf8();
+              bitField0_ |= 0x00000002;
+              break;
+            } // case 18
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -452,6 +533,85 @@ private static final long serialVersionUID = 0L;
       checkByteStringIsUtf8(value);
       outputContentType_ = value;
       bitField0_ |= 0x00000001;
+      onChanged();
+      return this;
+    }
+
+    private java.lang.Object workingDirectory_ = "";
+    /**
+     * <code>optional string working_directory = 2 [json_name = "workingDirectory"];</code>
+     * @return Whether the workingDirectory field is set.
+     */
+    public boolean hasWorkingDirectory() {
+      return ((bitField0_ & 0x00000002) != 0);
+    }
+    /**
+     * <code>optional string working_directory = 2 [json_name = "workingDirectory"];</code>
+     * @return The workingDirectory.
+     */
+    public java.lang.String getWorkingDirectory() {
+      java.lang.Object ref = workingDirectory_;
+      if (!(ref instanceof java.lang.String)) {
+        com.google.protobuf.ByteString bs =
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        workingDirectory_ = s;
+        return s;
+      } else {
+        return (java.lang.String) ref;
+      }
+    }
+    /**
+     * <code>optional string working_directory = 2 [json_name = "workingDirectory"];</code>
+     * @return The bytes for workingDirectory.
+     */
+    public com.google.protobuf.ByteString
+        getWorkingDirectoryBytes() {
+      java.lang.Object ref = workingDirectory_;
+      if (ref instanceof String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        workingDirectory_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+    /**
+     * <code>optional string working_directory = 2 [json_name = "workingDirectory"];</code>
+     * @param value The workingDirectory to set.
+     * @return This builder for chaining.
+     */
+    public Builder setWorkingDirectory(
+        java.lang.String value) {
+      java.util.Objects.requireNonNull(value);
+      workingDirectory_ = value;
+      bitField0_ |= 0x00000002;
+      onChanged();
+      return this;
+    }
+    /**
+     * <code>optional string working_directory = 2 [json_name = "workingDirectory"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearWorkingDirectory() {
+      workingDirectory_ = getDefaultInstance().getWorkingDirectory();
+      bitField0_ = (bitField0_ & ~0x00000002);
+      onChanged();
+      return this;
+    }
+    /**
+     * <code>optional string working_directory = 2 [json_name = "workingDirectory"];</code>
+     * @param value The bytes for workingDirectory to set.
+     * @return This builder for chaining.
+     */
+    public Builder setWorkingDirectoryBytes(
+        com.google.protobuf.ByteString value) {
+      java.util.Objects.requireNonNull(value);
+      checkByteStringIsUtf8(value);
+      workingDirectory_ = value;
+      bitField0_ |= 0x00000002;
       onChanged();
       return this;
     }

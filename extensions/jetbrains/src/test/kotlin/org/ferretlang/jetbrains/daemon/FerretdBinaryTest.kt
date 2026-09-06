@@ -34,10 +34,10 @@ class FerretdBinaryTest {
             val executable = root.resolve("ferretd/win32/x64/ferretd.exe")
             Files.createDirectories(executable.parent)
             Files.writeString(executable, "test executable")
-            Files.writeString(root.resolve("ferretd/version"), "1.0.0-alpha.5\n")
+            Files.writeString(root.resolve("ferretd/version"), "1.0.0-alpha.6\n")
 
             assertEquals(
-                FerretdInstallation(executable, "1.0.0-alpha.5"),
+                FerretdInstallation(executable, "1.0.0-alpha.6"),
                 FerretdBinary(root, platform).resolveInstallation(),
             )
         } finally {

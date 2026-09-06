@@ -26,6 +26,8 @@ internal class FakeFerretdRpc(
     var getInfoFailure: Throwable? = null
     var closeExecutionFailure: Throwable? = null
     var closeSessionFailure: Throwable? = null
+    var executionOptionsOverride: FerretdExecutionOptions? = null
+    val requestedExecutionOptions = Collections.synchronizedList(mutableListOf<FerretdExecutionOptions>())
     private val nextSession = AtomicInteger()
     private val nextExecution = AtomicInteger()
     private val pendingOutcomes = ArrayDeque(outcomes)
@@ -53,10 +55,20 @@ internal class FakeFerretdRpc(
         return FerretdSession(id, workspaceId, relativePath, root.resolve(relativePath).toUri().toString(), 1)
     }
 
-    override suspend fun createExecution(sessionId: String, parameters: Struct): FerretdExecutionSnapshot {
+    override suspend fun createExecution(
+        sessionId: String,
+        parameters: Struct,
+        options: FerretdExecutionOptions,
+    ): FerretdExecutionSnapshot {
         val id = "execution-${nextExecution.incrementAndGet()}"
         calls += "createExecution:$id"
-        val record = ExecutionRecord(id, sessionId, synchronized(pendingOutcomes) { pendingOutcomes.removeFirst() })
+        requestedExecutionOptions += options
+        val record = ExecutionRecord(
+            id,
+            sessionId,
+            synchronized(pendingOutcomes) { pendingOutcomes.removeFirst() },
+            executionOptionsOverride ?: options,
+        )
         executions[id] = record
         return record.snapshot(FerretdExecutionState.CREATED)
     }
@@ -124,6 +136,7 @@ internal class FakeFerretdRpc(
         val id: String,
         val sessionId: String,
         val outcome: Outcome,
+        val options: FerretdExecutionOptions,
     ) {
         val events = Channel<FerretdExecutionEvent>(Channel.UNLIMITED)
 
@@ -131,7 +144,7 @@ internal class FakeFerretdRpc(
             id,
             sessionId,
             state,
-            "application/json",
+            options,
             if (state == FerretdExecutionState.COMPLETED) {
                 FerretdExecutionOutput("application/json", "{\"id\":\"$id\"}".toByteArray(StandardCharsets.UTF_8))
             } else {

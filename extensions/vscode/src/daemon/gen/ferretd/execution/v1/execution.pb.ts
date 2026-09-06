@@ -53,6 +53,7 @@ export enum ResourceCondition {
   RESOURCE_CONDITION_INVALID_STATE = 3,
   RESOURCE_CONDITION_INVALID_PARAMETERS = 4,
   RESOURCE_CONDITION_LAGGED = 5,
+  RESOURCE_CONDITION_INVALID_OPTIONS = 6,
   UNRECOGNIZED = -1,
 }
 
@@ -79,6 +80,7 @@ export interface Session {
 
 export interface ExecutionOptions {
   outputContentType: string;
+  workingDirectory?: string | undefined;
 }
 
 export interface Output {
@@ -488,13 +490,16 @@ export const Session: MessageFns<Session> = {
 };
 
 function createBaseExecutionOptions(): ExecutionOptions {
-  return { outputContentType: "" };
+  return { outputContentType: "", workingDirectory: undefined };
 }
 
 export const ExecutionOptions: MessageFns<ExecutionOptions> = {
   encode(message: ExecutionOptions, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
     if (message.outputContentType !== "") {
       writer.uint32(10).string(message.outputContentType);
+    }
+    if (message.workingDirectory !== undefined) {
+      writer.uint32(18).string(message.workingDirectory);
     }
     return writer;
   },
@@ -514,6 +519,14 @@ export const ExecutionOptions: MessageFns<ExecutionOptions> = {
           message.outputContentType = reader.string();
           continue;
         }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.workingDirectory = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -529,6 +542,7 @@ export const ExecutionOptions: MessageFns<ExecutionOptions> = {
   fromPartial(object: DeepPartial<ExecutionOptions>): ExecutionOptions {
     const message = createBaseExecutionOptions();
     message.outputContentType = object.outputContentType ?? "";
+    message.workingDirectory = object.workingDirectory ?? undefined;
     return message;
   },
 };

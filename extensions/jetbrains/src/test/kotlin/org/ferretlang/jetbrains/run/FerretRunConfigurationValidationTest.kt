@@ -12,6 +12,7 @@ class FerretRunConfigurationValidationTest : BasePlatformTestCase() {
 
     override fun setUp() {
         super.setUp()
+        Files.createDirectories(Path.of(requireNotNull(project.basePath)))
         temporaryRoot = Files.createTempDirectory("ferret-run-configuration-")
     }
 
@@ -91,7 +92,7 @@ class FerretRunConfigurationValidationTest : BasePlatformTestCase() {
 
         val error = configurationError(configuration)
 
-        assertTrue(error.localizedMessage.orEmpty().contains("source file does not exist"))
+        assertTrue(error.localizedMessage.orEmpty().contains("Cannot resolve the Ferret source file"))
     }
 
     fun testRejectsSourceDirectory() {
@@ -101,7 +102,10 @@ class FerretRunConfigurationValidationTest : BasePlatformTestCase() {
 
         val error = configurationError(configuration)
 
-        assertTrue(error.localizedMessage.orEmpty().contains("source path is not a file"))
+        assertTrue(
+            error.localizedMessage,
+            error.localizedMessage.orEmpty().contains("source path is not a file"),
+        )
     }
 
     fun testRejectsUnsupportedSourceFileType() {
@@ -124,7 +128,7 @@ class FerretRunConfigurationValidationTest : BasePlatformTestCase() {
 
         val error = configurationError(configuration)
 
-        assertTrue(error.localizedMessage.orEmpty().contains("working directory does not exist"))
+        assertTrue(error.localizedMessage.orEmpty().contains("Cannot resolve the Ferret working directory"))
     }
 
     fun testRejectsWorkingDirectoryFile() {
@@ -150,6 +154,29 @@ class FerretRunConfigurationValidationTest : BasePlatformTestCase() {
         val error = configurationError(configuration)
 
         assertTrue(error.localizedMessage.orEmpty().contains("working directory path is invalid"))
+    }
+
+    fun testAcceptsSourceOutsideTheConfiguredWorkingDirectory() {
+        val source = createSource("queries/query.fql")
+        val runtime = Files.createDirectories(temporaryRoot.resolve("external-runtime"))
+        val configuration = createConfiguration().apply {
+            sourcePath = source.toString()
+            workingDirectory = runtime.toString()
+        }
+
+        configuration.checkConfiguration()
+    }
+
+    fun testRejectsSourceOutsideTheProjectWorkspace() {
+        val source = Files.writeString(temporaryRoot.resolve("outside.fql"), "RETURN 1")
+        val configuration = createConfiguration().apply {
+            sourcePath = source.toString()
+            workingDirectory = ""
+        }
+
+        val error = configurationError(configuration)
+
+        assertTrue(error.localizedMessage.orEmpty().contains("must be inside the project workspace"))
     }
 
     fun testRejectsRelativePathsWithoutAProjectBaseDirectory() {
@@ -204,7 +231,7 @@ class FerretRunConfigurationValidationTest : BasePlatformTestCase() {
             .createTemplateConfiguration(project) as FerretRunConfiguration
 
     private fun createSource(relativePath: String = "query.fql"): Path {
-        val source = temporaryRoot.resolve(relativePath)
+        val source = Path.of(requireNotNull(project.basePath)).resolve(relativePath)
         Files.createDirectories(source.parent)
         return Files.writeString(source, "RETURN 1")
     }

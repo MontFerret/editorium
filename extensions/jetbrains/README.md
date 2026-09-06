@@ -67,7 +67,7 @@ with the project. The pinned daemon advertises diagnostics, completion, hover,
 same-document definition navigation, and full-document formatting to the
 standard JetBrains language actions.
 
-Definition lookup is currently document-local. `ferretd` 1.0.0-alpha.5 does not
+Definition lookup is currently document-local. `ferretd` 1.0.0-alpha.6 does not
 advertise project or module resolution, so a symbol declared in another `.fql`
 file is not a supported navigation target.
 
@@ -80,10 +80,10 @@ Ferret Query Language execution. Open **Run | Edit Configurations**, select
 - **Source file**: the `.fql` file to execute. The chooser filters for Ferret
   files, while a path entered by hand may be absolute or relative to the
   project base directory.
-- **Working directory**: the execution directory, defaulting to the project
-  base directory when one exists. It may be overridden with an absolute path
-  or a project-relative path, and may be left empty for projects without a base
-  directory.
+- **Working directory**: the root used by Ferret runtime filesystem operations.
+  It defaults to the project base directory when one exists, may be overridden
+  with an absolute or project-relative path anywhere on the local filesystem,
+  and may be left empty to use the daemon's workspace-root default.
 - **Parameters (JSON object)**: FQL bind parameter values using the same JSON
   object shape as the Ferret execution protocol. For example:
 
@@ -103,12 +103,16 @@ Ferret Query Language execution. Open **Run | Edit Configurations**, select
 
 The source file is required; the working directory is optional. At every Run,
 the plugin snapshots the configuration and resolves existing paths to their
-canonical locations. The effective working directory is the configured value,
-then the project base directory, then the canonical source parent. Relative
-configured paths require a project base directory. The source must be a
-readable regular file inside the readable effective directory; symlink escapes
-and sources outside that directory are rejected without rewriting the saved
-configuration.
+canonical locations. The compilation workspace is the project base directory
+when one exists, otherwise the canonical source parent. A present project base
+must be a readable directory containing the source; the plugin does not fall
+back when it is invalid. Relative configured paths require a project base.
+
+The runtime working directory is resolved and validated independently. It may
+be outside the workspace and does not participate in source containment or
+relative source identity. Leaving it blank omits the execution option, causing
+the daemon to use the workspace root. These execution-time checks do not
+rewrite the saved configuration.
 
 Run configurations use JetBrains' normal project persistence and survive IDE
 restart, project reopen, and configuration duplication. Opening a local `.fql`
@@ -119,18 +123,21 @@ Ferret configuration.
 Running a configuration immediately opens the normal JetBrains Run console.
 Filesystem and daemon work continues off the UI thread. Parameter nulls,
 booleans, finite numbers, strings, arrays, and objects retain their protocol
-types. The console shows the canonical source and effective directory, status,
-formatted `application/json` terminal output, and actionable compile/runtime
-diagnostics. Protocol v1 exposes only terminal output, so the plugin does not
-present fabricated incremental stdout.
+types. The console shows the canonical source, compilation workspace, effective
+runtime working directory, status, formatted `application/json` terminal
+output, and actionable compile/runtime diagnostics. Protocol v1 exposes only
+terminal output, so the plugin does not present fabricated incremental stdout.
 
 The first Run in a project lazily starts the bundled daemon as an authenticated
-IPv4-loopback service on an operating-system-assigned port. The plugin validates
-the ready event, packaged version, nonempty instance ID, and API 1.1 before use.
-Workspaces are cached by canonical root within that daemon generation, while
-every invocation gets a fresh Session, Execution, watch, output sink, and
-cancellation state. This refreshes saved edits and new files and permits
-unrestricted concurrent runs.
+IPv4-loopback service on an operating-system-assigned port. A dedicated launcher
+owns binary resolution, authentication, readiness, and failed-start cleanup;
+the project connection owns the accepted daemon generation, channel, workspace
+cache, crash invalidation, and shutdown. The plugin validates the ready event,
+packaged version, nonempty instance ID, and API 1.1 before use. Workspaces are
+cached by canonical root within that daemon generation, while every invocation
+gets a fresh Session, Execution, watch, output sink, cancellation state, and
+optional runtime working directory. This refreshes saved edits and new files
+and permits unrestricted concurrent runs.
 
 **Stop**, detach, and Run-tab closure cancel only that invocation. Successful
 runs exit 0, failures exit 1, and a locally requested cancellation exits 130. A

@@ -18,13 +18,16 @@ import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.FailureCategory
 import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.Output
 import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.Position
 import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.Range
+import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.ResourceCondition
 import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.ResourceErrorDetail
+import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.ResourceKind
 import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.SessionId
 import org.ferretlang.jetbrains.protocol.google.rpc.Status
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.nio.file.Files
 
 class GrpcFerretdMapperTest {
     @Test
@@ -78,6 +81,60 @@ class GrpcFerretdMapperTest {
             statusError(Any.pack(ResourceErrorDetail.getDefaultInstance())),
         )
         assertTrue(mapped.message.orEmpty().contains("malformed error details"))
+    }
+
+    @Test
+    fun preservesWorkingDirectoryPresenceWithoutTouchingTheFilesystem() {
+        val absent = GrpcFerretdMapper.execution(
+            execution(ExecutionState.EXECUTION_STATE_CREATED).build(),
+            "create-execution",
+        )
+        assertEquals(null, absent.options.workingDirectory)
+
+        val runtime = Files.createTempDirectory("ferret-mapper-runtime-").toRealPath().resolve("not-created")
+        val present = GrpcFerretdMapper.execution(
+            execution(ExecutionState.EXECUTION_STATE_CREATED)
+                .setOptions(
+                    ExecutionOptions.newBuilder()
+                        .setOutputContentType("application/json")
+                        .setWorkingDirectory(runtime.toString()),
+                )
+                .build(),
+            "create-execution",
+        )
+        assertEquals(runtime, present.options.workingDirectory)
+    }
+
+    @Test
+    fun rejectsBlankRelativeAndNonNormalizedSnapshotDirectories() {
+        val root = Files.createTempDirectory("ferret-mapper-root-").toRealPath()
+        val invalid = listOf("", "relative", root.resolve("child").resolve("..").toString())
+        invalid.forEach { workingDirectory ->
+            assertThrows(FerretdRpcException::class.java) {
+                GrpcFerretdMapper.execution(
+                    execution(ExecutionState.EXECUTION_STATE_CREATED)
+                        .setOptions(
+                            ExecutionOptions.newBuilder()
+                                .setOutputContentType("application/json")
+                                .setWorkingDirectory(workingDirectory),
+                        )
+                        .build(),
+                    "create-execution",
+                )
+            }
+        }
+    }
+
+    @Test
+    fun mapsInvalidExecutionOptionsDetails() {
+        val detail = ResourceErrorDetail.newBuilder()
+            .setResource(ResourceKind.RESOURCE_KIND_EXECUTION)
+            .setCondition(ResourceCondition.RESOURCE_CONDITION_INVALID_OPTIONS)
+            .build()
+
+        val mapped = GrpcFerretdMapper.error("create-execution", statusError(Any.pack(detail)))
+
+        assertEquals("Ferret execution has invalid execution options.", mapped.message)
     }
 
     private fun execution(state: ExecutionState): Execution.Builder = Execution.newBuilder()

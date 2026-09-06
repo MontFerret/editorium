@@ -10,6 +10,7 @@ import io.grpc.stub.StreamObserver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import org.ferretlang.jetbrains.execution.FerretdExecutionOptions
 import org.ferretlang.jetbrains.execution.FerretdExecutionSnapshot
 import org.ferretlang.jetbrains.execution.FerretdExecutionWatch
 import org.ferretlang.jetbrains.execution.FerretdRpc
@@ -31,7 +32,6 @@ import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CreateExecutionRes
 import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CreateSessionRequest
 import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CreateSessionResponse
 import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.ExecutionId
-import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.ExecutionOptions
 import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.ExecutionServiceGrpc
 import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.RunExecutionRequest
 import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.RunExecutionResponse
@@ -41,6 +41,7 @@ import org.ferretlang.jetbrains.protocol.ferretd.workspace.v1.OpenRequest
 import org.ferretlang.jetbrains.protocol.ferretd.workspace.v1.OpenResponse
 import org.ferretlang.jetbrains.protocol.ferretd.workspace.v1.WorkspaceId
 import org.ferretlang.jetbrains.protocol.ferretd.workspace.v1.WorkspaceServiceGrpc
+import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.ExecutionOptions as ProtocolExecutionOptions
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -106,13 +107,18 @@ internal class GrpcFerretdRpc private constructor(
         return GrpcFerretdMapper.session(response.session)
     }
 
-    override suspend fun createExecution(sessionId: String, parameters: Struct): FerretdExecutionSnapshot {
+    override suspend fun createExecution(
+        sessionId: String,
+        parameters: Struct,
+        options: FerretdExecutionOptions,
+    ): FerretdExecutionSnapshot {
+        val protocolOptions = toProtocolExecutionOptions(options)
         val response = unary<CreateExecutionResponse>("create-execution") { observer ->
             executions.withDeadlineAfter(CONTROL_TIMEOUT_SECONDS, TimeUnit.SECONDS).createExecution(
                 CreateExecutionRequest.newBuilder()
                     .setSessionId(SessionId.newBuilder().setValue(sessionId))
                     .setParameters(parameters)
-                    .setOptions(ExecutionOptions.newBuilder().setOutputContentType(JSON_CONTENT_TYPE))
+                    .setOptions(protocolOptions)
                     .build(),
                 observer,
             )
@@ -120,7 +126,14 @@ internal class GrpcFerretdRpc private constructor(
         if (!response.hasExecution()) {
             throw FerretdRpcException("create-execution", "The Ferret daemon returned no execution.")
         }
-        return GrpcFerretdMapper.execution(response.execution, "create-execution")
+        val execution = GrpcFerretdMapper.execution(response.execution, "create-execution")
+        if (execution.options != options) {
+            throw FerretdRpcException(
+                "create-execution",
+                "The Ferret daemon returned different execution options than requested.",
+            )
+        }
+        return execution
     }
 
     override fun watchExecution(executionId: String): FerretdExecutionWatch {
@@ -235,5 +248,13 @@ internal class GrpcFerretdRpc private constructor(
             NettyChannelBuilder.forAddress("127.0.0.1", port).usePlaintext().build(),
             token,
         )
+
+        internal fun toProtocolExecutionOptions(options: FerretdExecutionOptions): ProtocolExecutionOptions =
+            ProtocolExecutionOptions.newBuilder()
+                .setOutputContentType(options.outputContentType)
+                .apply {
+                    options.workingDirectory?.let { setWorkingDirectory(it.toString()) }
+                }
+                .build()
     }
 }

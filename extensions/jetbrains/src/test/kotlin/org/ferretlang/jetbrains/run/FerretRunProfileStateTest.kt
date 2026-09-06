@@ -9,10 +9,11 @@ import com.intellij.execution.runners.ProgramRunner
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.ferretlang.jetbrains.execution.FerretExecutionProcessHandler
 import java.nio.file.Files
+import java.nio.file.Path
 
 class FerretRunProfileStateTest : BasePlatformTestCase() {
     fun testConfigurationReturnsAnAttachedSyntheticExecutionResultImmediately() {
-        val source = Files.createTempFile("ferret-run-state-", ".fql")
+        val source = Path.of(requireNotNull(project.basePath)).resolve("ferret-run-state.fql")
         try {
             Files.writeString(source, "RETURN 1")
             val configuration = FerretRunConfigurationType

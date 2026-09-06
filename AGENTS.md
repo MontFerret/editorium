@@ -29,9 +29,8 @@ Use the most direct repository authority for facts that can change:
 * The JetBrains Gradle configuration owns the IntelliJ Platform and bytecode
   targets, currently IntelliJ Platform 2026.2 and Java 25; JetBrains CI runs on
   JDK 25.
-* `shared/proto` owns editor-independent protocol inputs. VS Code currently owns
-  the only generated protocol-client implementation; future consumers must own
-  their output.
+* `shared/proto` owns editor-independent protocol inputs. VS Code and JetBrains
+  each own their generated protocol-client output.
 * Current code and tests own architecture and behavior. Historical notes, stale
   comments, old branches, and superseded scripts are not authoritative.
 * `README.md` and extension-local documentation describe supported product
@@ -80,8 +79,8 @@ The following invariants apply across the repository:
 * Normal Ferret execution semantics belong to Ferret/`ferretd`, not editor code.
 * Ferret formatting semantics belong to Ferret/`ferretd`; integrations request
   formatting rather than maintaining a competing formatter.
-* Shared protocol schemas are inputs. An integration that consumes them owns its
-  generated client artifacts and protocol adaptation; currently that is VS Code.
+* Shared protocol schemas are inputs. Each integration that consumes them owns
+  its generated client artifacts and protocol adaptation.
 * `ferretd.json` must remain the single version pin for bundled daemon binaries
   and matching daemon schemas.
 * Repository-wide build, test, package, and release behavior belongs behind the
@@ -224,6 +223,7 @@ compatibility-sensitive contracts.
 * JetBrains native LSP provider and descriptor adaptation;
 * native Run configuration, Run-console, execution, and cancellation adaptation;
 * project-scoped authenticated execution-daemon connection lifecycle;
+* separate compilation-workspace and runtime-working-directory resolution;
 * generated Java protobuf and gRPC clients;
 * future JetBrains settings, UI, and debugging integration when explicitly
   implemented;
@@ -242,6 +242,13 @@ command line and lets the JetBrains LSP subsystem own that process lifecycle.
 Separately, the project-scoped execution connection owns lazy authenticated
 `ferretd serve` startup, its channel, workspace cache, restart generation, and
 shutdown. These LSP and execution processes must not be coupled.
+
+For execution, the canonical project base is the compilation workspace when it
+exists; otherwise the canonical source parent is used. The source must remain
+inside that workspace. The optional configured working directory is a separate
+runtime filesystem root, may be outside the workspace, and is omitted from the
+daemon request when blank. Launcher mechanics are isolated from generation and
+workspace-cache ownership.
 
 Do not assume feature parity with VS Code. Implement only the capabilities
 actually supported by the current JetBrains integration or required by the task.

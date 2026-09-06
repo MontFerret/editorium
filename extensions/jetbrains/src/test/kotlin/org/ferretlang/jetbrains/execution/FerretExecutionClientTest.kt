@@ -9,6 +9,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
+import org.ferretlang.jetbrains.daemon.FerretdDaemonLauncher
 import org.ferretlang.jetbrains.daemon.FerretdInstallation
 import org.ferretlang.jetbrains.daemon.FakeDaemonProcess
 import org.ferretlang.jetbrains.run.FerretParameterBindings
@@ -28,6 +29,12 @@ class FerretExecutionClientTest {
             val execution = fixture.execute()
             assertEquals(0, execution.exit.awaitResult())
             assertTrue(execution.stdout.single().contains("\"id\": \"execution-1\""))
+            assertEquals(
+                FerretdExecutionOptions("application/json", fixture.root.toRealPath()),
+                fixture.rpc.requestedExecutionOptions.single(),
+            )
+            assertTrue(execution.system.any { it == "Workspace root: ${fixture.root.toRealPath()}" })
+            assertTrue(execution.system.any { it == "Working directory: ${fixture.root.toRealPath()}" })
             assertEquals(
                 listOf(
                     "getInfo",
@@ -158,13 +165,64 @@ class FerretExecutionClientTest {
         }
     }
 
+    @Test
+    fun omitsBlankWorkingDirectoryAndShowsTheWorkspaceDefault() = runBlocking {
+        val fixture = fixture(FakeFerretdRpc.Outcome.COMPLETED)
+        try {
+            val execution = fixture.execute(workingDirectory = "")
+            assertEquals(0, execution.exit.awaitResult())
+            assertEquals(null, fixture.rpc.requestedExecutionOptions.single().workingDirectory)
+            assertTrue(
+                execution.system.any {
+                    it == "Working directory: ${fixture.root.toRealPath()} (daemon default)"
+                },
+            )
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun rejectsMismatchedSnapshotOptions() = runBlocking {
+        val fixture = fixture(FakeFerretdRpc.Outcome.COMPLETED)
+        fixture.rpc.executionOptionsOverride = FerretdExecutionOptions("application/json", null)
+        try {
+            val execution = fixture.execute()
+            assertEquals(1, execution.exit.awaitResult())
+            assertTrue(execution.stderr.any { it.contains("contradictory execution snapshot") })
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun concurrentRunsKeepDistinctWorkingDirectories() = runBlocking {
+        val fixture = fixture(FakeFerretdRpc.Outcome.COMPLETED, FakeFerretdRpc.Outcome.COMPLETED)
+        val firstRoot = Files.createTempDirectory("ferret-runtime-first-")
+        val secondRoot = Files.createTempDirectory("ferret-runtime-second-")
+        try {
+            val first = fixture.execute("first.fql", firstRoot.toString())
+            val second = fixture.execute("second.fql", secondRoot.toString())
+            assertEquals(0, first.exit.awaitResult())
+            assertEquals(0, second.exit.awaitResult())
+            assertEquals(
+                setOf(firstRoot.toRealPath(), secondRoot.toRealPath()),
+                fixture.rpc.requestedExecutionOptions.mapNotNull { it.workingDirectory }.toSet(),
+            )
+        } finally {
+            fixture.close()
+            firstRoot.toFile().deleteRecursively()
+            secondRoot.toFile().deleteRecursively()
+        }
+    }
+
     private fun fixture(vararg outcomes: FakeFerretdRpc.Outcome): Fixture {
         val root = Files.createTempDirectory("ferret-client-test-")
-        val version = "1.0.0-alpha.5"
+        val version = "1.0.0-alpha.6"
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val rpc = FakeFerretdRpc(version, root, outcomes.toList())
         val process = FakeDaemonProcess.ready(version)
-        val connection = FerretdDaemonConnection.testing(
+        val launcher = FerretdDaemonLauncher.testing(
             scope,
             { FerretdInstallation(Path.of("/installed/ferretd"), version) },
             { _, token ->
@@ -178,6 +236,7 @@ class FerretExecutionClientTest {
                 rpc
             },
         )
+        val connection = FerretdDaemonConnection.testing(scope, launcher)
         return Fixture(root, scope, rpc, connection)
     }
 
@@ -187,13 +246,16 @@ class FerretExecutionClientTest {
         val rpc: FakeFerretdRpc,
         val connection: FerretdDaemonConnection,
     ) {
-        fun execute(relativePath: String = "main.fql"): RecordingSink {
+        fun execute(
+            relativePath: String = "main.fql",
+            workingDirectory: String = root.toString(),
+        ): RecordingSink {
             val source = Files.writeString(root.resolve(relativePath), "RETURN 1")
             val sink = RecordingSink()
             sink.handle = FerretExecutionClient(connection).start(
                 FerretExecutionInput(
                     source.toString(),
-                    root.toString(),
+                    workingDirectory,
                     null,
                     FerretParameterBindings.EMPTY,
                 ),

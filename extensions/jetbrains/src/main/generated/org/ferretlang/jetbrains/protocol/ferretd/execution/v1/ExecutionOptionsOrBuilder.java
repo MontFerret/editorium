@@ -21,4 +21,21 @@ public interface ExecutionOptionsOrBuilder extends
    */
   com.google.protobuf.ByteString
       getOutputContentTypeBytes();
+
+  /**
+   * <code>optional string working_directory = 2 [json_name = "workingDirectory"];</code>
+   * @return Whether the workingDirectory field is set.
+   */
+  boolean hasWorkingDirectory();
+  /**
+   * <code>optional string working_directory = 2 [json_name = "workingDirectory"];</code>
+   * @return The workingDirectory.
+   */
+  java.lang.String getWorkingDirectory();
+  /**
+   * <code>optional string working_directory = 2 [json_name = "workingDirectory"];</code>
+   * @return The bytes for workingDirectory.
+   */
+  com.google.protobuf.ByteString
+      getWorkingDirectoryBytes();
 }

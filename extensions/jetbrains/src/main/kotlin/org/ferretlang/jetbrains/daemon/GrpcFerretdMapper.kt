@@ -4,6 +4,7 @@ import io.grpc.Metadata
 import io.grpc.StatusRuntimeException
 import org.ferretlang.jetbrains.execution.FerretdDiagnostic
 import org.ferretlang.jetbrains.execution.FerretdExecutionEvent
+import org.ferretlang.jetbrains.execution.FerretdExecutionOptions
 import org.ferretlang.jetbrains.execution.FerretdExecutionOutput
 import org.ferretlang.jetbrains.execution.FerretdExecutionSnapshot
 import org.ferretlang.jetbrains.execution.FerretdExecutionState
@@ -117,10 +118,37 @@ internal object GrpcFerretdMapper {
             value.id.value,
             value.sessionId.value,
             state,
-            value.options.outputContentType,
+            executionOptions(value.options, operation),
             if (value.hasOutput()) FerretdExecutionOutput(value.output.contentType, value.output.data.toByteArray()) else null,
             if (value.hasFailure()) failure(value.failure, operation) else null,
         )
+    }
+
+    private fun executionOptions(
+        value: org.ferretlang.jetbrains.protocol.ferretd.execution.v1.ExecutionOptions,
+        operation: String,
+    ): FerretdExecutionOptions {
+        val workingDirectory = if (value.hasWorkingDirectory()) {
+            if (value.workingDirectory.isBlank()) {
+                protocol(operation, "The Ferret daemon returned a blank execution working directory.")
+            }
+            val path = try {
+                Path.of(value.workingDirectory)
+            } catch (error: Exception) {
+                throw FerretdRpcException(
+                    operation,
+                    "The Ferret daemon returned an invalid execution working directory.",
+                    cause = error,
+                )
+            }
+            if (!path.isAbsolute || path.normalize() != path) {
+                protocol(operation, "The Ferret daemon returned a non-canonical execution working directory.")
+            }
+            path
+        } else {
+            null
+        }
+        return FerretdExecutionOptions(value.outputContentType, workingDirectory)
     }
 
     fun event(value: WatchExecutionResponse): FerretdExecutionEvent {
@@ -261,6 +289,7 @@ internal object GrpcFerretdMapper {
             ResourceCondition.RESOURCE_CONDITION_INVALID_STATE -> "is in an invalid state"
             ResourceCondition.RESOURCE_CONDITION_INVALID_PARAMETERS -> "has invalid parameters"
             ResourceCondition.RESOURCE_CONDITION_LAGGED -> "watch lagged"
+            ResourceCondition.RESOURCE_CONDITION_INVALID_OPTIONS -> "has invalid execution options"
             ResourceCondition.RESOURCE_CONDITION_UNSPECIFIED, ResourceCondition.UNRECOGNIZED -> error("unreachable")
         }
         return "Ferret $resource $condition."
