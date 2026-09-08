@@ -55,8 +55,9 @@ class FerretdBinaryTest {
                     FerretdPlatform("linux", "arm64", "ferretd", true),
                 ).resolve()
             }
+            val expectedPath = root.resolve("ferretd/linux/arm64/ferretd").normalize().toString()
             assertTrue(error.message.orEmpty().contains("linux-arm64"))
-            assertTrue(error.message.orEmpty().contains("ferretd/linux/arm64/ferretd"))
+            assertTrue(error.message, error.message.orEmpty().contains(expectedPath))
         } finally {
             root.toFile().deleteRecursively()
         }

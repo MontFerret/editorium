@@ -103,8 +103,9 @@ class FerretLspClientDescriptorTest : BasePlatformTestCase() {
                 descriptor.createCommandLine()
             }
 
+            val expectedPath = root.resolve("ferretd/linux/arm64/ferretd").normalize().toString()
             assertTrue(error.message.orEmpty().contains("Cannot start Ferret language server"))
-            assertTrue(error.message.orEmpty().contains("ferretd/linux/arm64/ferretd"))
+            assertTrue(error.message, error.message.orEmpty().contains(expectedPath))
             assertTrue(error.cause is FerretdBinaryException)
         } finally {
             root.toFile().deleteRecursively()
