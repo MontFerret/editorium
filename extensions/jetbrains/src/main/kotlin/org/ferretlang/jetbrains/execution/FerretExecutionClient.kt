@@ -38,7 +38,7 @@ internal class FerretExecutionClient(
                     run(request, handle, sink)
                 }
             } catch (error: Throwable) {
-                if (error is CancellationException) handle.cancel()
+                if (error is CancellationException || !connection.isProjectActive) handle.cancel()
                 val code = handle.commit(1)
                 if (code != FerretExecutionHandle.CANCELLED_EXIT_CODE) {
                     reportError(error, sink)
@@ -46,7 +46,7 @@ internal class FerretExecutionClient(
             }
         }
         job.invokeOnCompletion { error ->
-            if (error is CancellationException) handle.cancel()
+            if (error is CancellationException || !connection.isProjectActive) handle.cancel()
             val code = handle.commit(1)
             when (code) {
                 0 -> sink.system("Ferret execution completed.")
@@ -145,7 +145,9 @@ internal class FerretExecutionClient(
             }
             observe(created.id, session.id, options, watch, generation.lost, handle, sink)
         } catch (error: Throwable) {
-            if (error is CancellationException) handle.cancel()
+            // Project cancellation can stop the daemon before cancellation has
+            // propagated to this child coroutine. Treat that failure as cancellation.
+            if (error is CancellationException || !connection.isProjectActive) handle.cancel()
             val code = handle.commit(1)
             if (code != FerretExecutionHandle.CANCELLED_EXIT_CODE) {
                 reportError(error, sink)

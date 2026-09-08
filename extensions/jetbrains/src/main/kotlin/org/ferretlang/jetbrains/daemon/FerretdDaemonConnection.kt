@@ -55,6 +55,9 @@ internal class FerretdDaemonConnection private constructor(
 
     internal fun launchRun(block: suspend CoroutineScope.() -> Unit): Job = coroutineScope.launch(block = block)
 
+    internal val isProjectActive: Boolean
+        get() = coroutineScope.isActive
+
     internal suspend fun generation(): Generation {
         val pending = mutex.withLock {
             checkOpen()

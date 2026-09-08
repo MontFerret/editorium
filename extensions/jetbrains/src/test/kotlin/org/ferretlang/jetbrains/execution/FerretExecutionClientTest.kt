@@ -2,12 +2,18 @@ package org.ferretlang.jetbrains.execution
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
+import org.ferretlang.jetbrains.daemon.FerretdConnectionException
 import org.ferretlang.jetbrains.daemon.FerretdDaemonLauncher
 import org.ferretlang.jetbrains.daemon.FerretdInstallation
 import org.ferretlang.jetbrains.daemon.FakeDaemonProcess
@@ -19,6 +25,8 @@ import org.junit.Test
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class FerretExecutionClientTest {
     @Test
@@ -302,6 +310,46 @@ class FerretExecutionClientTest {
     }
 
     @Test
+    fun projectCancellationWinsDaemonLossBeforeCancellationReachesTheRun() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val cancellationEntered = CountDownLatch(1)
+        val cancellationGate = CountDownLatch(1)
+        // Hold cancellation propagation at the first child. The project is
+        // already cancelled while the connection and run can still observe loss.
+        scope.launch(Dispatchers.Unconfined, start = CoroutineStart.UNDISPATCHED) {
+            try {
+                awaitCancellation()
+            } finally {
+                cancellationEntered.countDown()
+                check(cancellationGate.await(5, TimeUnit.SECONDS))
+            }
+        }
+        val fixture = fixture(FakeFerretdRpc.Outcome.WAIT_FOR_CANCELLATION, scope = scope)
+        try {
+            val execution = fixture.execute()
+            execution.awaitStarted()
+            val generation = fixture.connection.generation()
+            val cancelling = async(Dispatchers.IO) { scope.cancel() }
+            try {
+                assertTrue(withContext(Dispatchers.IO) { cancellationEntered.await(5, TimeUnit.SECONDS) })
+                generation.lost.complete(FerretdConnectionException("The daemon stopped during project disposal."))
+                assertEquals(130, execution.exit.awaitResult())
+                assertFalse("Cancellation must still be held before reaching the run", cancelling.isCompleted)
+                assertEquals(listOf("terminated:130"), execution.events.toList())
+                assertTrue(execution.stderr.toList().isEmpty())
+            } finally {
+                cancellationGate.countDown()
+                cancelling.await()
+            }
+            withTimeout(5_000L) { scope.coroutineContext[kotlinx.coroutines.Job]!!.join() }
+            assertFalse(generation.process.isAlive)
+        } finally {
+            cancellationGate.countDown()
+            fixture.close()
+        }
+    }
+
+    @Test
     fun completionAndImmediateStopTerminateExactlyOnce() = runBlocking {
         val fixture = fixture(*Array(20) { FakeFerretdRpc.Outcome.COMPLETED })
         try {
@@ -319,10 +367,12 @@ class FerretExecutionClientTest {
         }
     }
 
-    private fun fixture(vararg outcomes: FakeFerretdRpc.Outcome): Fixture {
+    private fun fixture(
+        vararg outcomes: FakeFerretdRpc.Outcome,
+        scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    ): Fixture {
         val root = Files.createTempDirectory("ferret-client-test-")
         val version = "1.0.0-alpha.6"
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val process = FakeDaemonProcess.ready(version)
         val rpc = FakeFerretdRpc(version, root, outcomes.toList(), onShutdown = process::destroy)
         val launcher = FerretdDaemonLauncher.testing(

@@ -153,8 +153,8 @@ Different projects own separate execution daemons.
 **Stop**, detach, and Run-tab closure cancel only that invocation. Successful
 runs exit 0, failures exit 1, and a locally requested cancellation exits 130. A
 daemon crash fails current runs and clears its workspace cache; only a later Run
-starts a new daemon. The project service shuts its execution daemon down with
-the project.
+starts a new daemon. Closing a project cancels its active runs and shuts down its
+execution daemon.
 
 ## Build and test
 
