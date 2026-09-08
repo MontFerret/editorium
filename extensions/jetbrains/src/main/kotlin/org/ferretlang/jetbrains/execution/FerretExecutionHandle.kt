@@ -22,7 +22,7 @@ internal class FerretExecutionHandle {
     fun isCancellationRequested(): Boolean = synchronized(lock) { cancellationRequested }
 
     fun claimCancelRpc(): Boolean = synchronized(lock) {
-        if (!cancellationRequested || cancelRpcSent || exitCode != null) {
+        if (!cancellationRequested || cancelRpcSent || (exitCode != null && exitCode != CANCELLED_EXIT_CODE)) {
             false
         } else {
             cancelRpcSent = true

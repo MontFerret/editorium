@@ -9,11 +9,16 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
-internal class FakeDaemonProcess(stderrText: String) : Process() {
+internal class FakeDaemonProcess(
+    stderrText: String,
+    private val exitObservationGate: CountDownLatch? = null,
+    private val requiresForcedTermination: Boolean = false,
+) : Process() {
     private val stopped = CountDownLatch(1)
     private val exit = AtomicInteger()
     private val stderr = ByteArrayInputStream(stderrText.toByteArray(StandardCharsets.UTF_8))
     val destroyCalls = AtomicInteger()
+    val forcedDestroyCalls = AtomicInteger()
 
     override fun getOutputStream(): OutputStream = ByteArrayOutputStream()
 
@@ -23,10 +28,12 @@ internal class FakeDaemonProcess(stderrText: String) : Process() {
 
     override fun waitFor(): Int {
         stopped.await()
+        exitObservationGate?.await()
         return exit.get()
     }
 
-    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean = stopped.await(timeout, unit)
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean =
+        if (requiresForcedTermination && isAlive) false else stopped.await(timeout, unit)
 
     override fun exitValue(): Int {
         if (stopped.count != 0L) throw IllegalThreadStateException()
@@ -35,10 +42,11 @@ internal class FakeDaemonProcess(stderrText: String) : Process() {
 
     override fun destroy() {
         destroyCalls.incrementAndGet()
-        stopped.countDown()
+        if (!requiresForcedTermination) stopped.countDown()
     }
 
     override fun destroyForcibly(): Process {
+        forcedDestroyCalls.incrementAndGet()
         exit.set(137)
         stopped.countDown()
         return this
@@ -52,9 +60,16 @@ internal class FakeDaemonProcess(stderrText: String) : Process() {
     }
 
     companion object {
-        fun ready(version: String, port: Int = 43123): FakeDaemonProcess = FakeDaemonProcess(
+        fun ready(
+            version: String,
+            port: Int = 43123,
+            exitObservationGate: CountDownLatch? = null,
+            requiresForcedTermination: Boolean = false,
+        ): FakeDaemonProcess = FakeDaemonProcess(
             "{\"event\":\"ferretd.ready\",\"endpoint\":\"tcp://127.0.0.1:$port\"," +
                 "\"version\":\"$version\",\"message\":\"ferretd started\"}\n",
+            exitObservationGate,
+            requiresForcedTermination,
         )
     }
 }

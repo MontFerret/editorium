@@ -7,6 +7,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
+import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.FormBuilder
 import org.ferretlang.jetbrains.lang.FerretLanguageFileType
 import javax.swing.JComponent
@@ -57,6 +58,8 @@ class FerretRunConfigurationEditor(
             .createFormBuilder()
             .addLabeledComponent("Source file:", sourcePathField)
             .addLabeledComponent("Working directory:", workingDirectoryField)
+            .addComponent(JBLabel("Leave blank to use the compilation workspace."))
+            .addComponent(JBLabel("Parameters: {\"limit\": 10} binds @limit. Keys omit @; blank means {}."))
             .addLabeledComponentFillVertically("Parameters (JSON object):", JBScrollPane(parametersField))
             .panel
 }

@@ -32,6 +32,8 @@ internal class FerretExecutionProcessHandler : ProcessHandler(), FerretExecution
 
     override fun system(message: String) = write(message, ProcessOutputTypes.SYSTEM)
 
+    override fun debug(message: String) = LOG.debug(message)
+
     override fun stdout(message: String) = write(message, ProcessOutputTypes.STDOUT)
 
     override fun stderr(message: String) = write(message, ProcessOutputTypes.STDERR)
@@ -51,6 +53,9 @@ internal class FerretExecutionProcessHandler : ProcessHandler(), FerretExecution
     }
 
     private fun cancelRun() {
+        if (terminated.get()) return
+        val handle = cancellation.get()
+        if (handle != null && !handle.cancel()) return
         if (cancellationRequested.compareAndSet(false, true)) {
             system("Cancelling Ferret execution...")
         }

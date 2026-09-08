@@ -1,9 +1,9 @@
 # Ferret for JetBrains IDEs
 
 This module is the JetBrains IDE integration for Ferret Query Language files.
-It registers the Ferret language and `.fql` file type, bundles `ferretd`, and
-connects file-backed Ferret documents to the daemon through the IntelliJ
-Platform's native Language Server Protocol support.
+It registers `.fql` files, provides language intelligence through JetBrains'
+native LSP support, and executes queries through native Ferret Run configurations.
+The plugin bundles the required `ferretd` executable.
 
 ## Prerequisites
 
@@ -73,8 +73,14 @@ file is not a supported navigation target.
 
 ## Run configurations
 
-The plugin provides a native **Ferret** Run Configuration for describing a
-Ferret Query Language execution. Open **Run | Edit Configurations**, select
+Open a local `.fql` file and use its native **Run** context action or the
+toolbar's **Current File** selection. JetBrains creates or reuses a Ferret Run
+configuration for that source. Generated names use the project-relative path,
+such as `queries/users.fql`, so files with the same filename remain recognizable.
+Switching files selects the corresponding current-file configuration; a saved
+configuration in the selector continues to run its configured source.
+
+To create a configuration manually, open **Run | Edit Configurations**, select
 **Add New Configuration**, and choose **Ferret**. Each configuration contains:
 
 - **Source file**: the `.fql` file to execute. The chooser filters for Ferret
@@ -84,8 +90,8 @@ Ferret Query Language execution. Open **Run | Edit Configurations**, select
   It defaults to the project base directory when one exists, may be overridden
   with an absolute or project-relative path anywhere on the local filesystem,
   and may be left empty to use the daemon's workspace-root default.
-- **Parameters (JSON object)**: FQL bind parameter values using the same JSON
-  object shape as the Ferret execution protocol. For example:
+- **Parameters (JSON object)**: named FQL bind parameter values. Keys omit the
+  `@` prefix: `"limit": 10` binds `@limit` in the query. For example:
 
   ```json
   {
@@ -99,7 +105,8 @@ Ferret Query Language execution. Open **Run | Edit Configurations**, select
 
   An empty field is treated as `{}`. The top level must be an object; nested
   arrays and scalar values are supported. Malformed JSON and non-finite numbers
-  are rejected.
+  are rejected. Configurations produced from the current file start with empty
+  parameters, including when the Run configuration template contains values.
 
 The source file is required; the working directory is optional. At every Run,
 the plugin snapshots the configuration and resolves existing paths to their
@@ -115,35 +122,39 @@ the daemon to use the workspace root. These execution-time checks do not
 rewrite the saved configuration.
 
 Run configurations use JetBrains' normal project persistence and survive IDE
-restart, project reopen, and configuration duplication. Opening a local `.fql`
-file also enables the standard Run context action, which creates or reuses a
-Ferret configuration named after that file. Other file types do not offer a
-Ferret configuration.
+restart, project reopen, and configuration duplication. IDE rename/move
+refactorings of the source or its parent directories update the stored source
+path and generated name, including undo. Custom names, working directories,
+parameters, and relative versus absolute path choices are preserved. External
+filesystem moves cannot repair an old stored path; select the new source or
+use Run Current File. Other file types do not offer a Ferret configuration.
+
+JetBrains saves documents before Run and flushes pending filesystem updates.
+Ferret executes the saved source through a fresh compilation session on each
+invocation, so saved edits, renamed sources, and newly created files take effect
+without restarting the IDE. If the source document remains unsaved, execution
+fails with a request to save it rather than using older disk contents. A source
+saved during an active run takes effect on the next invocation.
 
 Running a configuration immediately opens the normal JetBrains Run console.
 Filesystem and daemon work continues off the UI thread. Parameter nulls,
-booleans, finite numbers, strings, arrays, and objects retain their protocol
-types. The console shows the canonical source, compilation workspace, effective
-runtime working directory, status, formatted `application/json` terminal
-output, and actionable compile/runtime diagnostics. Protocol v1 exposes only
-terminal output, so the plugin does not present fabricated incremental stdout.
+booleans, finite numbers, strings, arrays, and objects retain their types. The
+console shows formatted JSON results, actionable compile/runtime diagnostics,
+and concise completion or cancellation feedback. Results arrive when the query
+finishes; there is no incremental program output. Startup details and transport
+diagnostics stay in the IDE log.
 
-The first Run in a project lazily starts the bundled daemon as an authenticated
-IPv4-loopback service on an operating-system-assigned port. A dedicated launcher
-owns binary resolution, authentication, readiness, and failed-start cleanup;
-the project connection owns the accepted daemon generation, channel, workspace
-cache, crash invalidation, and shutdown. The plugin validates the ready event,
-packaged version, nonempty instance ID, and API 1.1 before use. Workspaces are
-cached by canonical root within that daemon generation, while every invocation
-gets a fresh Session, Execution, watch, output sink, cancellation state, and
-optional runtime working directory. This refreshes saved edits and new files
-and permits unrestricted concurrent runs.
+The first Run lazily starts a dedicated execution daemon for that project.
+Opening a Ferret file may start language support but does not start execution
+infrastructure. Subsequent runs reuse the execution daemon; concurrent runs
+have independent parameters, results, working directories, and cancellation.
+Different projects own separate execution daemons.
 
 **Stop**, detach, and Run-tab closure cancel only that invocation. Successful
 runs exit 0, failures exit 1, and a locally requested cancellation exits 130. A
 daemon crash fails current runs and clears its workspace cache; only a later Run
-starts a new daemon. The project service shuts its execution daemon down with
-the project. JetBrains debugging is not yet supported.
+starts a new daemon. Closing a project cancels its active runs and shuts down its
+execution daemon.
 
 ## Build and test
 

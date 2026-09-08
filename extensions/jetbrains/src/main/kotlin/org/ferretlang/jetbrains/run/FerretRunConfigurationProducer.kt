@@ -22,6 +22,7 @@ class FerretRunConfigurationProducer : LazyRunConfigurationProducer<FerretRunCon
 
         configuration.sourcePath = virtualFile.toNioPath().toAbsolutePath().normalize().toString()
         configuration.workingDirectory = context.project.basePath.orEmpty()
+        configuration.parameters = FerretParameterBindings.EMPTY
         configuration.setGeneratedName()
         sourceElement.set(psiFile)
 

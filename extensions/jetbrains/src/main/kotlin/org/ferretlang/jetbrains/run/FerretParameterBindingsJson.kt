@@ -17,6 +17,7 @@ import java.io.StringReader
 object FerretParameterBindingsJson {
     private val gson: Gson = GsonBuilder()
         .disableHtmlEscaping()
+        .serializeNulls()
         .setPrettyPrinting()
         .create()
 

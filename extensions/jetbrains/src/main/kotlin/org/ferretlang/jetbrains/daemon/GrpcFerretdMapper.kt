@@ -217,10 +217,16 @@ internal object GrpcFerretdMapper {
                     )
                 }
             }
-            val description = error.status.description?.takeUnless(String::isBlank) ?: error.status.code.name
-            return FerretdRpcException(operation, "Ferret daemon $operation failed: $description", cause = error)
+            val message = when (error.status.code) {
+                io.grpc.Status.Code.UNAVAILABLE -> "The Ferret daemon is unavailable. Run again to reconnect."
+                io.grpc.Status.Code.UNAUTHENTICATED, io.grpc.Status.Code.PERMISSION_DENIED ->
+                    "The Ferret daemon rejected authentication. See the IDE log for details."
+                io.grpc.Status.Code.DEADLINE_EXCEEDED -> "The Ferret daemon did not respond in time. Try running again."
+                else -> "The Ferret daemon could not complete the execution request. See the IDE log for details."
+            }
+            return FerretdRpcException(operation, message, cause = error)
         }
-        return FerretdRpcException(operation, "Ferret daemon $operation failed: ${error.message ?: error::class.java.simpleName}", cause = error)
+        return FerretdRpcException(operation, "The Ferret daemon request failed. See the IDE log for details.", cause = error)
     }
 
     private fun failure(value: org.ferretlang.jetbrains.protocol.ferretd.execution.v1.Failure, operation: String): FerretdFailure {
