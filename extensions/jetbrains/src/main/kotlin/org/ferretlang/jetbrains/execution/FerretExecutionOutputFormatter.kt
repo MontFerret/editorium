@@ -11,7 +11,7 @@ import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 
 internal object FerretExecutionOutputFormatter {
-    private val gson = GsonBuilder().disableHtmlEscaping().setPrettyPrinting().create()
+    private val gson = GsonBuilder().disableHtmlEscaping().serializeNulls().setPrettyPrinting().create()
 
     fun format(output: FerretdExecutionOutput): String {
         val contentType = output.contentType.substringBefore(';').trim().lowercase()

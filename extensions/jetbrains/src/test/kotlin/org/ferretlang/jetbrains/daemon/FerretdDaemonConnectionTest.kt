@@ -53,7 +53,7 @@ class FerretdDaemonConnectionTest {
             assertEquals(1, starts.get())
             assertEquals(1, rpc.calls.count { it == "getInfo" })
             assertEquals(1, rpc.calls.count { it == "openWorkspace" })
-            assertEquals(startupTokens, connectorTokens)
+            assertTrue("Startup and authentication must use the same credential", startupTokens == connectorTokens)
             assertEquals(43, startupTokens.single().length)
             assertTrue(startupTokens.single().none { it == '=' })
 

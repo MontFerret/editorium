@@ -9,7 +9,7 @@ import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.WatchExecutionRequ
 import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.WatchExecutionResponse
 import java.util.concurrent.atomic.AtomicBoolean
 
-internal class GrpcExecutionWatch :
+internal class GrpcExecutionWatch(private val mapError: (Throwable) -> Throwable) :
     FerretdExecutionWatch,
     ClientResponseObserver<WatchExecutionRequest, WatchExecutionResponse> {
     private val events = Channel<FerretdExecutionEvent>(Channel.UNLIMITED)
@@ -28,13 +28,13 @@ internal class GrpcExecutionWatch :
         try {
             events.trySend(GrpcFerretdMapper.event(value)).getOrThrow()
         } catch (error: Throwable) {
-            events.close(error)
+            events.close(mapError(error))
             cancel()
         }
     }
 
     override fun onError(error: Throwable) {
-        events.close(GrpcFerretdMapper.error("watch-execution", error))
+        events.close(mapError(error))
     }
 
     override fun onCompleted() {

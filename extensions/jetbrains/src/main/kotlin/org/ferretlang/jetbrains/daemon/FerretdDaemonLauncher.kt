@@ -2,6 +2,7 @@ package org.ferretlang.jetbrains.daemon
 
 import com.intellij.openapi.diagnostic.Logger
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -49,6 +50,7 @@ internal class FerretdDaemonLauncher private constructor(
         val token = Base64.getUrlEncoder().withoutPadding().encodeToString(
             ByteArray(TOKEN_BYTES).also(SecureRandom()::nextBytes),
         )
+        val credentials = FerretdCredentials(token)
         LOG.info("Starting project Ferret execution daemon")
         currentCoroutineContext().ensureActive()
         val process = try {
@@ -58,14 +60,14 @@ internal class FerretdDaemonLauncher private constructor(
                 withContext(Dispatchers.IO) { processStarter(installation, token) }
             }
         } catch (error: Exception) {
-            throw FerretdConnectionException("Cannot start the bundled Ferret daemon.", error)
+            throw FerretdConnectionException("Cannot start the bundled Ferret daemon.", credentials.safeCause(error))
         }
         val ready = CompletableDeferred<FerretdReadyEvent>()
         val lost = CompletableDeferred<Throwable>()
         val stopping = AtomicBoolean()
         val readySeen = AtomicBoolean()
-        val stderr = readStderr(process, installation.version, ready, lost, readySeen)
-        val stdout = drainStdout(process)
+        val stderr = readStderr(process, installation.version, ready, lost, readySeen, credentials)
+        val stdout = drainStdout(process, credentials)
         val processWaiter = observeProcess(process, ready, lost, stopping)
         var rpc: FerretdRpc? = null
         try {
@@ -92,25 +94,34 @@ internal class FerretdDaemonLauncher private constructor(
                 try {
                     rpc?.close()
                 } catch (cleanup: Throwable) {
-                    LOG.warn("Closing a failed Ferret daemon channel failed", cleanup)
+                    LOG.warn("Closing a failed Ferret daemon channel failed", credentials.safeCause(cleanup))
                 }
                 try {
                     withContext(Dispatchers.IO) {
                         process.destroy()
                         if (!process.waitFor(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                             process.destroyForcibly()
+                            if (!process.waitFor(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                                LOG.warn("The failed Ferret daemon did not exit after forced termination")
+                            }
                         }
                     }
                 } catch (cleanup: Throwable) {
-                    LOG.warn("Stopping a failed Ferret daemon process failed", cleanup)
+                    LOG.warn("Stopping a failed Ferret daemon process failed", credentials.safeCause(cleanup))
                 }
                 stderr.cancel()
                 stdout.cancel()
                 processWaiter.cancel()
             }
-            throw if (error is FerretdConnectionException) error else {
-                FerretdConnectionException("The Ferret daemon failed during startup: ${error.message}", error)
+            if (error is CancellationException && error !is kotlinx.coroutines.TimeoutCancellationException) throw error
+            val message = if (error is kotlinx.coroutines.TimeoutCancellationException) {
+                "The Ferret daemon did not become ready in time. Try running again."
+            } else if (error is FerretdConnectionException) {
+                error.message ?: "The Ferret daemon failed during startup."
+            } else {
+                "The Ferret daemon failed during startup. See the IDE log for details."
             }
+            throw FerretdConnectionException(credentials.redact(message), credentials.safeCause(error))
         }
     }
 
@@ -120,15 +131,20 @@ internal class FerretdDaemonLauncher private constructor(
         ready: CompletableDeferred<FerretdReadyEvent>,
         lost: CompletableDeferred<Throwable>,
         readySeen: AtomicBoolean,
+        credentials: FerretdCredentials,
     ): Job = coroutineScope.launch(Dispatchers.IO) {
         try {
             process.errorStream.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
                 lines.forEach { line ->
-                    LOG.debug("ferretd stderr: ${redactCredentials(line)}")
+                    LOG.debug("ferretd stderr: ${credentials.redact(line)}")
                     val event = try {
                         FerretdReadyEvent.parse(line, version)
                     } catch (error: Throwable) {
-                        ready.completeExceptionally(error)
+                        val failure = FerretdConnectionException(
+                            credentials.redact(error.message ?: "The Ferret daemon returned invalid readiness."),
+                            credentials.safeCause(error),
+                        )
+                        if (!ready.completeExceptionally(failure)) lost.complete(failure)
                         return@forEach
                     }
                     if (event != null) {
@@ -147,13 +163,13 @@ internal class FerretdDaemonLauncher private constructor(
         }
     }
 
-    private fun drainStdout(process: Process): Job = coroutineScope.launch(Dispatchers.IO) {
+    private fun drainStdout(process: Process, credentials: FerretdCredentials): Job = coroutineScope.launch(Dispatchers.IO) {
         try {
             process.inputStream.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
-                lines.forEach { LOG.debug("ferretd stdout: ${redactCredentials(it)}") }
+                lines.forEach { LOG.debug("ferretd stdout: ${credentials.redact(it)}") }
             }
         } catch (error: Throwable) {
-            LOG.debug("Reading Ferret daemon stdout stopped", error)
+            LOG.debug("Reading Ferret daemon stdout stopped", credentials.safeCause(error))
         }
     }
 
@@ -171,15 +187,8 @@ internal class FerretdDaemonLauncher private constructor(
         }
     }
 
-    private fun redactCredentials(value: String): String = CREDENTIAL_PATTERN.replace(value) { match ->
-        match.groupValues[1] + "<redacted>"
-    }
-
     companion object {
         private val LOG = Logger.getInstance(FerretdDaemonLauncher::class.java)
-        private val CREDENTIAL_PATTERN = Regex(
-            "(?i)(authorization\\s*[:=]\\s*Bearer\\s+|FERRETD_AUTH_TOKEN\\s*[:=]\\s*)[A-Za-z0-9_-]+",
-        )
         private const val TOKEN_ENVIRONMENT = "FERRETD_AUTH_TOKEN"
         private const val TOKEN_BYTES = 32
         private const val STARTUP_TIMEOUT_MILLIS = 10_000L

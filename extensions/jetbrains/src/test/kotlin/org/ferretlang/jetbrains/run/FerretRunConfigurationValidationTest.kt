@@ -90,17 +90,17 @@ class FerretRunConfigurationValidationTest : BasePlatformTestCase() {
             sourcePath = temporaryRoot.resolve("missing.fql").toString()
         }
 
-        val error = configurationError(configuration)
+        val error = executionError(configuration)
 
         assertTrue(error.localizedMessage.orEmpty().contains("Cannot resolve the Ferret source file"))
     }
 
     fun testRejectsSourceDirectory() {
         val configuration = createConfiguration().apply {
-            sourcePath = Files.createDirectories(temporaryRoot.resolve("queries")).toString()
+            sourcePath = Files.createDirectories(temporaryRoot.resolve("queries.fql")).toString()
         }
 
-        val error = configurationError(configuration)
+        val error = executionError(configuration)
 
         assertTrue(
             error.localizedMessage,
@@ -126,7 +126,7 @@ class FerretRunConfigurationValidationTest : BasePlatformTestCase() {
             workingDirectory = temporaryRoot.resolve("missing-directory").toString()
         }
 
-        val error = configurationError(configuration)
+        val error = executionError(configuration)
 
         assertTrue(error.localizedMessage.orEmpty().contains("Cannot resolve the Ferret working directory"))
     }
@@ -139,7 +139,7 @@ class FerretRunConfigurationValidationTest : BasePlatformTestCase() {
             workingDirectory = workingFile.toString()
         }
 
-        val error = configurationError(configuration)
+        val error = executionError(configuration)
 
         assertTrue(error.localizedMessage.orEmpty().contains("working directory path is not a directory"))
     }
@@ -174,7 +174,7 @@ class FerretRunConfigurationValidationTest : BasePlatformTestCase() {
             workingDirectory = ""
         }
 
-        val error = configurationError(configuration)
+        val error = executionError(configuration)
 
         assertTrue(error.localizedMessage.orEmpty().contains("must be inside the project workspace"))
     }
@@ -234,6 +234,17 @@ class FerretRunConfigurationValidationTest : BasePlatformTestCase() {
         val source = Path.of(requireNotNull(project.basePath)).resolve(relativePath)
         Files.createDirectories(source.parent)
         return Files.writeString(source, "RETURN 1")
+    }
+
+    private fun executionError(configuration: FerretRunConfiguration): org.ferretlang.jetbrains.execution.FerretExecutionRequestException {
+        configuration.checkConfiguration()
+        return Assert.assertThrows(org.ferretlang.jetbrains.execution.FerretExecutionRequestException::class.java) {
+            org.ferretlang.jetbrains.execution.FerretExecutionRequest.resolve(
+                org.ferretlang.jetbrains.execution.FerretExecutionInput(
+                    configuration.sourcePath, configuration.workingDirectory, project.basePath, configuration.parameters,
+                ),
+            )
+        }
     }
 
     private fun configurationError(configuration: FerretRunConfiguration): RuntimeConfigurationError =

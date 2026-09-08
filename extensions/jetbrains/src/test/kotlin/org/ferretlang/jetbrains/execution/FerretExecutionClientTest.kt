@@ -5,7 +5,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
@@ -33,8 +32,10 @@ class FerretExecutionClientTest {
                 FerretdExecutionOptions("application/json", fixture.root.toRealPath()),
                 fixture.rpc.requestedExecutionOptions.single(),
             )
-            assertTrue(execution.system.any { it == "Workspace root: ${fixture.root.toRealPath()}" })
-            assertTrue(execution.system.any { it == "Working directory: ${fixture.root.toRealPath()}" })
+            assertTrue(execution.debug.any { it == "Workspace root: ${fixture.root.toRealPath()}" })
+            assertTrue(execution.debug.any { it == "Working directory: ${fixture.root.toRealPath()}" })
+            assertEquals(listOf("Ferret execution completed."), execution.system.toList())
+            assertEquals(listOf("output", "terminated:0"), execution.events.toList())
             assertEquals(
                 listOf(
                     "getInfo",
@@ -93,6 +94,9 @@ class FerretExecutionClientTest {
 
             assertEquals(1, fixture.rpc.calls.count { it == "cancelExecution:execution-1" })
             assertEquals(1, fixture.rpc.calls.count { it == "cancelExecution:execution-2" })
+            assertTrue(first.internal.toList().isEmpty())
+            assertTrue(second.internal.toList().isEmpty())
+            assertEquals(listOf("terminated:130"), first.events.toList())
         } finally {
             fixture.close()
         }
@@ -105,11 +109,7 @@ class FerretExecutionClientTest {
         fixture.rpc.createSessionGate = gate
         try {
             val execution = fixture.execute()
-            withTimeout(5_000L) {
-                while (fixture.rpc.calls.none { it.startsWith("createSession:") }) {
-                    delay(5L)
-                }
-            }
+            fixture.rpc.createSessionEntered.awaitResult()
             assertTrue(execution.handle.cancel())
             gate.complete(Unit)
 
@@ -130,21 +130,32 @@ class FerretExecutionClientTest {
         fixture.rpc.runExecutionGate = gate
         try {
             val execution = fixture.execute()
-            withTimeout(5_000L) {
-                while (fixture.rpc.calls.none { it.startsWith("runExecution:") }) {
-                    delay(5L)
-                }
-            }
+            fixture.rpc.runExecutionEntered.awaitResult()
             assertTrue(execution.handle.cancel())
-            withTimeout(5_000L) {
-                while (fixture.rpc.calls.none { it.startsWith("cancelExecution:") }) {
-                    delay(5L)
-                }
-            }
-            gate.complete(Unit)
+            fixture.rpc.cancellationEntered.awaitResult()
 
             assertEquals(130, execution.exit.awaitResult())
             assertEquals(1, fixture.rpc.calls.count { it == "cancelExecution:execution-1" })
+            assertTrue(execution.internal.toList().isEmpty())
+        } finally {
+            gate.complete(Unit)
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun acceptsAnAlreadyCompletedCancellationResponseBeforeTheResultIsCommitted() = runBlocking {
+        val fixture = fixture(FakeFerretdRpc.Outcome.COMPLETED)
+        val gate = CompletableDeferred<Unit>()
+        fixture.rpc.terminalGate = gate
+        try {
+            val execution = fixture.execute()
+            fixture.rpc.terminalEntered.awaitResult()
+            assertTrue(execution.handle.cancel())
+            assertEquals(130, execution.exit.awaitResult())
+            assertEquals(1, fixture.rpc.calls.count { it == "cancelExecution:execution-1" })
+            assertTrue(execution.internal.toList().isEmpty())
+            assertTrue(execution.stdout.toList().isEmpty())
         } finally {
             gate.complete(Unit)
             fixture.close()
@@ -173,7 +184,7 @@ class FerretExecutionClientTest {
             assertEquals(0, execution.exit.awaitResult())
             assertEquals(null, fixture.rpc.requestedExecutionOptions.single().workingDirectory)
             assertTrue(
-                execution.system.any {
+                execution.debug.any {
                     it == "Working directory: ${fixture.root.toRealPath()} (daemon default)"
                 },
             )
@@ -213,6 +224,98 @@ class FerretExecutionClientTest {
             fixture.close()
             firstRoot.toFile().deleteRecursively()
             secondRoot.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun stopDuringSharedStartupLeavesItAvailableForTheNextRun() = runBlocking {
+        val fixture = fixture(FakeFerretdRpc.Outcome.COMPLETED)
+        val gate = CompletableDeferred<Unit>()
+        fixture.rpc.getInfoGate = gate
+        try {
+            val first = fixture.execute()
+            fixture.rpc.getInfoEntered.awaitResult()
+            first.handle.cancel()
+            assertEquals(130, first.exit.awaitResult())
+            assertTrue(fixture.rpc.calls.none { it.startsWith("createSession:") })
+            val second = fixture.execute("second.fql")
+            gate.complete(Unit)
+            assertEquals(0, second.exit.awaitResult())
+            assertEquals(1, fixture.rpc.calls.count { it == "getInfo" })
+            assertEquals(1, fixture.rpc.calls.count { it == "openWorkspace" })
+        } finally {
+            gate.complete(Unit)
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun stopDuringSharedWorkspaceOpenDoesNotDiscardItsResult() = runBlocking {
+        val fixture = fixture(FakeFerretdRpc.Outcome.COMPLETED)
+        val gate = CompletableDeferred<Unit>()
+        fixture.rpc.workspaceGate = gate
+        try {
+            val first = fixture.execute()
+            fixture.rpc.workspaceEntered.awaitResult()
+            first.handle.cancel()
+            assertEquals(130, first.exit.awaitResult())
+            val second = fixture.execute("second.fql")
+            gate.complete(Unit)
+            assertEquals(0, second.exit.awaitResult())
+            assertEquals(1, fixture.rpc.calls.count { it == "openWorkspace" })
+        } finally {
+            gate.complete(Unit)
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun projectScopeCancellationTerminatesAnActiveRunAndReleasesItsDaemon() = runBlocking {
+        val fixture = fixture(FakeFerretdRpc.Outcome.WAIT_FOR_CANCELLATION)
+        try {
+            val execution = fixture.execute()
+            execution.awaitStarted()
+            val generation = fixture.connection.generation()
+            fixture.scope.cancel()
+            assertEquals(130, execution.exit.awaitResult())
+            withTimeout(5_000L) { fixture.scope.coroutineContext[kotlinx.coroutines.Job]!!.join() }
+            assertFalse(generation.process.isAlive)
+            assertEquals(listOf("terminated:130"), execution.events.toList())
+            assertTrue(execution.stderr.toList().isEmpty())
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun cancelledScopeStillTerminatesARunThatNeverStarts() = runBlocking {
+        val fixture = fixture(FakeFerretdRpc.Outcome.COMPLETED)
+        try {
+            fixture.scope.cancel()
+            val execution = fixture.execute()
+            assertEquals(130, execution.exit.awaitResult())
+            assertEquals(listOf("terminated:130"), execution.events.toList())
+            assertTrue(fixture.rpc.calls.isEmpty())
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun completionAndImmediateStopTerminateExactlyOnce() = runBlocking {
+        val fixture = fixture(*Array(20) { FakeFerretdRpc.Outcome.COMPLETED })
+        try {
+            repeat(20) {
+                val execution = fixture.execute("race-$it.fql")
+                execution.handle.cancel()
+                val code = execution.exit.awaitResult()
+                assertTrue(code == 0 || code == 130)
+                assertFalse(execution.handle.cancel())
+                assertEquals(1, execution.events.count { it.startsWith("terminated:") })
+                assertTrue(execution.internal.toList().isEmpty())
+            }
+        } finally {
+            fixture.close()
         }
     }
 
@@ -272,11 +375,19 @@ class FerretExecutionClientTest {
     }
 
     private class RecordingSink : FerretExecutionSink {
+        val started = CompletableDeferred<Unit>()
+        val debug = Collections.synchronizedList(mutableListOf<String>())
+        val internal = Collections.synchronizedList(mutableListOf<String>())
+        val events = Collections.synchronizedList(mutableListOf<String>())
         val system = Collections.synchronizedList(mutableListOf<String>())
         val stdout = Collections.synchronizedList(mutableListOf<String>())
         val stderr = Collections.synchronizedList(mutableListOf<String>())
         val exit = CompletableDeferred<Int>()
         lateinit var handle: FerretExecutionHandle
+
+        override fun started() { started.complete(Unit) }
+
+        override fun debug(message: String) { debug += message }
 
         override fun system(message: String) {
             system += message
@@ -284,24 +395,22 @@ class FerretExecutionClientTest {
 
         override fun stdout(message: String) {
             stdout += message
+            events += "output"
         }
 
         override fun stderr(message: String) {
             stderr += message
         }
 
-        override fun internal(message: String, cause: Throwable?) = Unit
+        override fun internal(message: String, cause: Throwable?) { internal += message }
 
         override fun terminate(exitCode: Int) {
+            events += "terminated:$exitCode"
             exit.complete(exitCode)
         }
 
         suspend fun awaitStarted() {
-            withTimeout(5_000L) {
-                while (system.none { it == "Ferret execution started." }) {
-                    delay(5L)
-                }
-            }
+            withTimeout(5_000L) { started.await() }
         }
     }
 

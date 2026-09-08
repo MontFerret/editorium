@@ -1,6 +1,10 @@
 package org.ferretlang.jetbrains.execution
 
 internal interface FerretExecutionSink {
+    fun started() = Unit
+
+    fun debug(message: String) = Unit
+
     fun system(message: String)
 
     fun stdout(message: String)

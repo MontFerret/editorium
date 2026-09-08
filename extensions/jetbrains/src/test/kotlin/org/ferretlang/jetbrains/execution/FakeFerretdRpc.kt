@@ -21,8 +21,19 @@ internal class FakeFerretdRpc(
     }
 
     val calls = Collections.synchronizedList(mutableListOf<String>())
+    val createSessionEntered = CompletableDeferred<Unit>()
+    val runExecutionEntered = CompletableDeferred<Unit>()
+    val cancellationEntered = CompletableDeferred<Unit>()
+    val getInfoEntered = CompletableDeferred<Unit>()
+    val workspaceEntered = CompletableDeferred<Unit>()
+    val closeEntered = CompletableDeferred<Unit>()
+    val terminalEntered = CompletableDeferred<Unit>()
+    var getInfoGate: CompletableDeferred<Unit>? = null
+    var workspaceGate: CompletableDeferred<Unit>? = null
     var createSessionGate: CompletableDeferred<Unit>? = null
     var runExecutionGate: CompletableDeferred<Unit>? = null
+    var closeGate: CompletableDeferred<Unit>? = null
+    var terminalGate: CompletableDeferred<Unit>? = null
     var serverInfo = FerretdServerInfo(version, "instance", 1, 1)
     var getInfoFailure: Throwable? = null
     var closeExecutionFailure: Throwable? = null
@@ -36,6 +47,8 @@ internal class FakeFerretdRpc(
 
     override suspend fun getInfo(): FerretdServerInfo {
         calls += "getInfo"
+        getInfoEntered.complete(Unit)
+        getInfoGate?.await()
         getInfoFailure?.let { throw it }
         return serverInfo
     }
@@ -47,12 +60,15 @@ internal class FakeFerretdRpc(
 
     override suspend fun openWorkspace(root: Path): FerretdWorkspace {
         calls += "openWorkspace"
+        workspaceEntered.complete(Unit)
+        workspaceGate?.await()
         return FerretdWorkspace("workspace", root)
     }
 
     override suspend fun createSession(workspaceId: String, relativePath: String): FerretdSession {
         val id = "session-${nextSession.incrementAndGet()}"
         calls += "createSession:$id"
+        createSessionEntered.complete(Unit)
         createSessionGate?.await()
         return FerretdSession(id, workspaceId, relativePath, root.resolve(relativePath).toUri().toString(), 1)
     }
@@ -84,7 +100,12 @@ internal class FakeFerretdRpc(
                 calls += "watchNext:$executionId"
                 val result = record.events.receiveCatching()
                 result.exceptionOrNull()?.let { throw it }
-                return result.getOrNull()
+                return result.getOrNull()?.also { event ->
+                    if (event.kind == FerretdExecutionState.COMPLETED) {
+                        terminalEntered.complete(Unit)
+                        terminalGate?.await()
+                    }
+                }
             }
 
             override fun cancel() {
@@ -96,32 +117,46 @@ internal class FakeFerretdRpc(
 
     override suspend fun runExecution(executionId: String): FerretdExecutionSnapshot {
         calls += "runExecution:$executionId"
+        runExecutionEntered.complete(Unit)
         runExecutionGate?.await()
         val record = requireNotNull(executions[executionId])
-        record.events.send(
-            record.event(
-                if (record.outcome == Outcome.MALFORMED_SEQUENCE) 3 else 2,
-                FerretdExecutionState.RUNNING,
-            ),
-        )
-        if (record.outcome == Outcome.COMPLETED) {
-            record.events.send(record.event(3, FerretdExecutionState.COMPLETED))
-            record.events.close()
+        synchronized(record) {
+            if (record.state != FerretdExecutionState.CREATED) {
+                throw FerretdRpcException("run-execution", "The execution is already terminal.")
+            }
+            record.state = FerretdExecutionState.RUNNING
+            record.events.trySend(
+                record.event(
+                    if (record.outcome == Outcome.MALFORMED_SEQUENCE) 3 else 2,
+                    FerretdExecutionState.RUNNING,
+                ),
+            ).getOrThrow()
+            if (record.outcome == Outcome.COMPLETED) {
+                record.state = FerretdExecutionState.COMPLETED
+                record.events.trySend(record.event(3, FerretdExecutionState.COMPLETED)).getOrThrow()
+                record.events.close()
+            }
+            return record.snapshot(FerretdExecutionState.RUNNING)
         }
-        return record.snapshot(FerretdExecutionState.RUNNING)
     }
 
     override suspend fun cancelExecution(executionId: String): FerretdExecutionSnapshot {
         calls += "cancelExecution:$executionId"
+        cancellationEntered.complete(Unit)
         val record = requireNotNull(executions[executionId])
-        val cancelled = record.snapshot(FerretdExecutionState.CANCELLED)
-        record.events.send(record.event(3, FerretdExecutionState.CANCELLED))
-        record.events.close()
-        return cancelled
+        synchronized(record) {
+            val state = record.state
+            if (state != FerretdExecutionState.CREATED && state != FerretdExecutionState.RUNNING) return record.snapshot(state)
+            record.state = FerretdExecutionState.CANCELLED
+            record.events.trySend(record.event(if (state == FerretdExecutionState.CREATED) 2 else 3, FerretdExecutionState.CANCELLED))
+            record.events.close()
+            return record.snapshot(if (state == FerretdExecutionState.RUNNING) state else FerretdExecutionState.CANCELLED)
+        }
     }
 
     override suspend fun closeExecution(executionId: String) {
         calls += "closeExecution:$executionId"
+        executions.remove(executionId)?.events?.close()
         closeExecutionFailure?.let { throw it }
     }
 
@@ -132,6 +167,8 @@ internal class FakeFerretdRpc(
 
     override suspend fun close() {
         calls += "close"
+        closeEntered.complete(Unit)
+        closeGate?.await()
     }
 
     private class ExecutionRecord(
@@ -140,6 +177,7 @@ internal class FakeFerretdRpc(
         val outcome: Outcome,
         val options: FerretdExecutionOptions,
     ) {
+        var state = FerretdExecutionState.CREATED
         val events = Channel<FerretdExecutionEvent>(Channel.UNLIMITED)
 
         fun snapshot(state: FerretdExecutionState): FerretdExecutionSnapshot = FerretdExecutionSnapshot(

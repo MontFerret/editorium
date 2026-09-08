@@ -1,6 +1,8 @@
 package org.ferretlang.jetbrains.execution
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -19,14 +21,14 @@ internal class FerretExecutionClient(
 ) {
     fun start(input: FerretExecutionInput, sink: FerretExecutionSink): FerretExecutionHandle {
         val handle = FerretExecutionHandle()
-        connection.launchRun {
-            val exitCode = try {
-                val request = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val job = connection.launchRun {
+            try {
+                val request = withContext(Dispatchers.IO) {
                     FerretExecutionRequest.resolve(input)
                 }
-                sink.system("Source: ${request.source}")
-                sink.system("Workspace root: ${request.workspaceRoot}")
-                sink.system(
+                sink.debug("Source: ${request.source}")
+                sink.debug("Workspace root: ${request.workspaceRoot}")
+                sink.debug(
                     request.workingDirectory?.let { "Working directory: $it" }
                         ?: "Working directory: ${request.workspaceRoot} (daemon default)",
                 )
@@ -36,13 +38,21 @@ internal class FerretExecutionClient(
                     run(request, handle, sink)
                 }
             } catch (error: Throwable) {
+                if (error is CancellationException) handle.cancel()
                 val code = handle.commit(1)
                 if (code != FerretExecutionHandle.CANCELLED_EXIT_CODE) {
                     reportError(error, sink)
                 }
-                code
             }
-            sink.terminate(exitCode)
+        }
+        job.invokeOnCompletion { error ->
+            if (error is CancellationException) handle.cancel()
+            val code = handle.commit(1)
+            when (code) {
+                0 -> sink.system("Ferret execution completed.")
+                FerretExecutionHandle.CANCELLED_EXIT_CODE -> sink.system("Ferret execution cancelled.")
+            }
+            sink.terminate(code)
         }
         return handle
     }
@@ -56,18 +66,21 @@ internal class FerretExecutionClient(
         var executionId: String? = null
         var watch: FerretdExecutionWatch? = null
         var cancellationJob: Job? = null
-        val generation = connection.generation()
+        val generation = untilCancelled(handle) { connection.generation() }
         return try {
-            val workspaceId = connection.workspace(generation, request.workspaceRoot)
+            val workspaceId = untilCancelled(handle) { connection.workspace(generation, request.workspaceRoot) }
             if (handle.isCancellationRequested()) {
                 return handle.commit(FerretExecutionHandle.CANCELLED_EXIT_CODE)
             }
-            val session = generation.rpc.createSession(workspaceId, request.relativeSourcePath)
-            sessionId = session.id
+            // Capture resource IDs inside the protected context: cancellation during
+            // its return must not discard a newly acquired daemon resource.
+            val session = withContext(NonCancellable) {
+                generation.rpc.createSession(workspaceId, request.relativeSourcePath).also { sessionId = it.id }
+            }
             if (
                 session.workspaceId != workspaceId ||
                 session.relativePath != request.relativeSourcePath ||
-                !sessionUriMatches(session.uri, request.source) ||
+                !withContext(Dispatchers.IO) { sessionUriMatches(session.uri, request.source) } ||
                 session.revision < 1L
             ) {
                 throw FerretdRpcException("create-session", "The Ferret daemon returned a session for another source.")
@@ -76,18 +89,19 @@ internal class FerretExecutionClient(
                 return handle.commit(FerretExecutionHandle.CANCELLED_EXIT_CODE)
             }
             val options = FerretdExecutionOptions(JSON_CONTENT_TYPE, request.workingDirectory)
-            val created = generation.rpc.createExecution(
-                session.id,
-                FerretStructMapper.map(request.bindings),
-                options,
-            )
-            executionId = created.id
+            val created = withContext(NonCancellable) {
+                generation.rpc.createExecution(
+                    session.id,
+                    FerretStructMapper.map(request.bindings),
+                    options,
+                ).also { executionId = it.id }
+            }
             validateExecution(created, created.id, session.id, FerretdExecutionState.CREATED, options)
             if (handle.isCancellationRequested()) {
                 return handle.commit(FerretExecutionHandle.CANCELLED_EXIT_CODE)
             }
             watch = generation.rpc.watchExecution(created.id)
-            val initial = nextEvent(watch, generation.lost)
+            val initial = untilCancelled(handle) { nextEvent(watch, generation.lost) }
                 ?: throw FerretdRpcException(
                     "watch-execution",
                     "The Ferret execution watch ended before its created event.",
@@ -95,27 +109,31 @@ internal class FerretExecutionClient(
             validateEvent(initial, created.id, session.id, 1L, options, FerretdExecutionState.CREATED)
             cancellationJob = CoroutineScope(currentCoroutineContext()).launch {
                 handle.cancellation.await()
-                if (handle.claimCancelRpc()) {
+                if (!generation.lost.isCompleted && !generation.stopping.get() && handle.claimCancelRpc()) {
                     try {
                         val cancelled = generation.rpc.cancelExecution(created.id)
                         validateExecution(
                             cancelled,
                             created.id,
                             session.id,
-                            FerretdExecutionState.CANCELLED,
+                            cancelled.state,
                             options,
                         )
+                        if (cancelled.state != FerretdExecutionState.RUNNING && cancelled.state !in TERMINAL_STATES) {
+                            throw FerretdRpcException("cancel-execution", "The Ferret daemon did not accept cancellation.")
+                        }
                     } catch (error: Throwable) {
-                        sink.internal("Cancelling Ferret execution ${created.id} failed", error)
+                        if (error !is CancellationException && !generation.lost.isCompleted && !generation.stopping.get()) {
+                            sink.internal("Cancelling Ferret execution ${created.id} failed", error)
+                        }
                     }
                 }
             }
             if (handle.isCancellationRequested()) {
                 return handle.commit(FerretExecutionHandle.CANCELLED_EXIT_CODE)
             }
-            sink.system("Starting Ferret execution...")
             val started = try {
-                generation.rpc.runExecution(created.id)
+                untilCancelled(handle) { generation.rpc.runExecution(created.id) }
             } catch (error: Throwable) {
                 if (!handle.isCancellationRequested()) {
                     throw error
@@ -127,33 +145,40 @@ internal class FerretExecutionClient(
             }
             observe(created.id, session.id, options, watch, generation.lost, handle, sink)
         } catch (error: Throwable) {
+            if (error is CancellationException) handle.cancel()
             val code = handle.commit(1)
             if (code != FerretExecutionHandle.CANCELLED_EXIT_CODE) {
                 reportError(error, sink)
             }
             code
         } finally {
-            if (handle.isCancellationRequested()) {
-                cancellationJob?.join()
-            } else {
-                cancellationJob?.cancelAndJoin()
-            }
-            watch?.cancel()
             withContext(NonCancellable) {
+                if (handle.isCancellationRequested() && !generation.lost.isCompleted) {
+                    cancellationJob?.join()
+                } else {
+                    cancellationJob?.cancelAndJoin()
+                }
+                watch?.cancel()
                 executionId?.let { id ->
+                    if (generation.lost.isCompleted || generation.stopping.get()) return@let
                     try {
                         generation.rpc.closeExecution(id)
                     } catch (error: Throwable) {
-                        sink.stderr("Warning: Ferret execution cleanup failed.")
-                        sink.internal("Closing Ferret execution $id failed", error)
+                        if (!generation.lost.isCompleted && !generation.stopping.get()) {
+                            sink.stderr("Warning: Ferret execution cleanup failed.")
+                            sink.internal("Closing Ferret execution $id failed", error)
+                        }
                     }
                 }
                 sessionId?.let { id ->
+                    if (generation.lost.isCompleted || generation.stopping.get()) return@let
                     try {
                         generation.rpc.closeSession(id)
                     } catch (error: Throwable) {
-                        sink.stderr("Warning: Ferret session cleanup failed.")
-                        sink.internal("Closing Ferret session $id failed", error)
+                        if (!generation.lost.isCompleted && !generation.stopping.get()) {
+                            sink.stderr("Warning: Ferret session cleanup failed.")
+                            sink.internal("Closing Ferret session $id failed", error)
+                        }
                     }
                 }
             }
@@ -172,15 +197,19 @@ internal class FerretExecutionClient(
         var sequence = 1L
         var started = false
         while (true) {
-            val event = nextEvent(watch, lost)
+            val event = untilCancelled(handle) { nextEvent(watch, lost) }
                 ?: throw FerretdRpcException("watch-execution", "The Ferret execution watch ended before a terminal event.")
             validateEvent(event, executionId, sessionId, sequence + 1L, options)
             sequence = event.sequence
             if (!started) {
+                if (event.kind == FerretdExecutionState.CANCELLED) {
+                    sink.stderr("The Ferret execution was cancelled unexpectedly.")
+                    return handle.commit(1)
+                }
                 if (event.kind != FerretdExecutionState.RUNNING) {
                     throw FerretdRpcException("watch-execution", "The Ferret daemon returned an invalid execution lifecycle order.")
                 }
-                sink.system("Ferret execution started.")
+                sink.started()
                 started = true
                 continue
             }
@@ -206,9 +235,6 @@ internal class FerretExecutionClient(
                     val code = handle.commit(0)
                     if (code == 0) {
                         sink.stdout(formatted)
-                        sink.system("Ferret execution completed.")
-                    } else {
-                        sink.system("Ferret execution cancelled.")
                     }
                     code
                 }
@@ -216,8 +242,6 @@ internal class FerretExecutionClient(
                     val code = handle.commit(1)
                     if (code == 1) {
                         renderFailure(event.execution.failure, sink)
-                    } else {
-                        sink.system("Ferret execution cancelled.")
                     }
                     code
                 }
@@ -225,13 +249,24 @@ internal class FerretExecutionClient(
                     val code = handle.commit(1)
                     if (code == 1) {
                         sink.stderr("The Ferret execution was cancelled unexpectedly.")
-                    } else {
-                        sink.system("Ferret execution cancelled.")
                     }
                     code
                 }
                 else -> error("unreachable")
             }
+        }
+    }
+
+    private suspend fun <T> untilCancelled(handle: FerretExecutionHandle, block: suspend () -> T): T = coroutineScope {
+        if (handle.isCancellationRequested()) throw CancellationException("Ferret execution cancelled")
+        val pending = async { block() }
+        try {
+            select {
+                handle.cancellation.onAwait { throw CancellationException("Ferret execution cancelled") }
+                pending.onAwait { it }
+            }
+        } finally {
+            pending.cancel()
         }
     }
 

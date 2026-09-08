@@ -25,6 +25,30 @@ import java.util.concurrent.atomic.AtomicInteger
 
 class FerretdDaemonLauncherTest {
     @Test
+    fun readinessErrorsRedactTheGeneratedCredentialBeforeLeavingTheLauncher() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val version = "1.0.0-alpha.6"
+        var credential = ""
+        lateinit var process: FakeDaemonProcess
+        val launcher = FerretdDaemonLauncher.testing(scope,
+            { FerretdInstallation(Path.of("/installed/ferretd"), version) },
+            { _, token ->
+                credential = token
+                FakeDaemonProcess.ready(token).also { process = it }
+            },
+            { _, _ -> error("Invalid readiness must not connect") },
+        )
+        try {
+            val error = assertThrows(FerretdConnectionException::class.java) { runBlocking { launcher.start() } }
+            assertTrue(credential.isNotEmpty())
+            assertFalse("Readiness error chains must not disclose authentication", error.stackTraceToString().contains(credential))
+            assertFalse(process.isAlive)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun launchesWithOneUnpaddedTokenAndAuthenticatedInfo() = runBlocking {
         val root = Files.createTempDirectory("ferretd-launcher-").toRealPath()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -51,7 +75,7 @@ class FerretdDaemonLauncherTest {
             val started = launcher.start()
             assertSame(process, started.process)
             assertSame(rpc, started.rpc)
-            assertEquals(starterTokens, connectorTokens)
+            assertTrue("Startup and authentication must use the same credential", starterTokens == connectorTokens)
             assertEquals(43, starterTokens.single().length)
             assertTrue(starterTokens.single().none { it == '=' })
             assertEquals(listOf("getInfo"), rpc.calls)
@@ -134,7 +158,7 @@ class FerretdDaemonLauncherTest {
             val error = assertThrows(FerretdConnectionException::class.java) {
                 runBlocking { launcher.start() }
             }
-            assertTrue(error.message.orEmpty().contains("failed during startup"))
+            assertTrue(error.message.orEmpty().contains("did not become ready in time"))
             assertTrue(rpc.calls.none { it == "getInfo" })
             assertFalse(process.isAlive)
         } finally {
