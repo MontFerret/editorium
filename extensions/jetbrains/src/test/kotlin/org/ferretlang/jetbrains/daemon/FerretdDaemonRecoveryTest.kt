@@ -9,12 +9,14 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
 import org.ferretlang.jetbrains.execution.FakeFerretdRpc
 import org.junit.Assert.*
 import org.junit.Test
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 class FerretdDaemonRecoveryTest {
@@ -111,21 +113,25 @@ class FerretdDaemonRecoveryTest {
     @Test
     fun duplicateReadinessDuringStartupCannotOrphanAProcess() = runBlocking {
         val event = "{\"event\":\"ferretd.ready\",\"endpoint\":\"tcp://127.0.0.1:43123\",\"version\":\"$version\",\"message\":\"ferretd started\"}\n"
-        val process = FakeDaemonProcess(event + event)
-        val fixture = fixture(process)
-        try {
+        val malformed = "{\"event\":\"ferretd.ready\",\"endpoint\":false}\n"
+        for (duplicate in listOf(event, malformed)) {
+            val process = FakeDaemonProcess(event + duplicate)
+            val fixture = fixture(process)
             try {
-                val generation = fixture.connection.generation()
-                withTimeout(5_000L) { generation.stopped.await() }
-            } catch (_: FerretdConnectionException) {
-                // Readiness can fail before or after the generation is accepted.
+                try {
+                    val generation = fixture.connection.generation()
+                    withTimeout(5_000L) { generation.stopped.await() }
+                } catch (_: FerretdConnectionException) {
+                    // Readiness can fail before or after the generation is accepted.
+                }
+                assertTrue(withContext(Dispatchers.IO) { process.waitFor(5, TimeUnit.SECONDS) })
+                assertFalse(process.isAlive)
+                assertEquals(1, fixture.rpc.calls.count { it == "close" })
+            } finally {
+                fixture.connection.closeForTest()
+                fixture.scope.cancel()
+                fixture.root.toFile().deleteRecursively()
             }
-            assertFalse(process.isAlive)
-            assertEquals(1, fixture.rpc.calls.count { it == "close" })
-        } finally {
-            fixture.connection.closeForTest()
-            fixture.scope.cancel()
-            fixture.root.toFile().deleteRecursively()
         }
     }
 

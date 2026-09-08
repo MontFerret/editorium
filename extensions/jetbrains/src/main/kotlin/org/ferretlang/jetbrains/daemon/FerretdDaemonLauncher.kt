@@ -140,7 +140,11 @@ internal class FerretdDaemonLauncher private constructor(
                     val event = try {
                         FerretdReadyEvent.parse(line, version)
                     } catch (error: Throwable) {
-                        ready.completeExceptionally(error)
+                        val failure = FerretdConnectionException(
+                            credentials.redact(error.message ?: "The Ferret daemon returned invalid readiness."),
+                            credentials.safeCause(error),
+                        )
+                        if (!ready.completeExceptionally(failure)) lost.complete(failure)
                         return@forEach
                     }
                     if (event != null) {
