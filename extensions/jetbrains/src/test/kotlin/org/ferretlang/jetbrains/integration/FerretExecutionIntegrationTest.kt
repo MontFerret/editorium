@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
 import org.ferretlang.jetbrains.daemon.FerretdInstallation
@@ -185,6 +186,11 @@ class FerretExecutionIntegrationTest {
         running.awaitStarted()
         val oldGeneration = connection.generation()
         oldGeneration.process.destroyForcibly()
+        // Forced termination can return before the OS has finished exiting,
+        // particularly on Windows. Recovery starts after an observed crash.
+        assertTrue("The daemon did not exit after forced termination", withContext(Dispatchers.IO) {
+            oldGeneration.process.waitFor(5, TimeUnit.SECONDS)
+        })
         assertEquals(1, running.exit.awaitResult().also { if (it != 1) error(running.debug()) })
 
         val recovered = execute(write("recovered.fql", "RETURN \"recovered\""))

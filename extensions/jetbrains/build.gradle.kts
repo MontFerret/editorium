@@ -86,6 +86,9 @@ val prepareFerretd = tasks.register<Exec>("prepareFerretd") {
 }
 
 tasks {
+    withType<Test>().configureEach {
+        testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
     test {
         useJUnit {
             excludeCategories("org.ferretlang.jetbrains.integration.FerretdIntegrationTest")
