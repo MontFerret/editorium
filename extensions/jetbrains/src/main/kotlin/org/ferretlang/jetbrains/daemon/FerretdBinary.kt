@@ -9,6 +9,20 @@ internal class FerretdBinary(
     private val pluginRoot: Path,
     private val platform: FerretdPlatform = FerretdPlatform.current(),
 ) {
+    fun resolveInstallation(): FerretdInstallation {
+        val executable = resolve()
+        val versionPath = pluginRoot.resolve("ferretd").resolve("version")
+        val version = try {
+            Files.readString(versionPath).trim()
+        } catch (error: Exception) {
+            throw FerretdBinaryException("Cannot read the bundled ferretd version: $versionPath.", error)
+        }
+        if (version.isBlank()) {
+            throw FerretdBinaryException("The bundled ferretd version is empty: $versionPath.")
+        }
+        return FerretdInstallation(executable, version)
+    }
+
     fun resolve(): Path {
         val path = pluginRoot
             .resolve("ferretd")

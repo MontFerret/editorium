@@ -46,10 +46,11 @@ the macOS and Linux entries executable. Repeated builds reuse unchanged Gradle
 outputs and re-verify cached release archives whenever preparation runs.
 
 At runtime, a stateless resolver maps the JVM OS and architecture to this layout,
-validates the installed executable, and returns its path. It never searches
-`PATH`, starts `ferretd`, owns process state or streams, or registers an IntelliJ
-service. The Ferret LSP descriptor constructs the `ferretd lsp` command line,
-and the JetBrains LSP subsystem owns the process and protocol lifecycle.
+validates the installed executable and version marker, and returns that passive
+description. It never searches `PATH` or owns a process. The Ferret LSP
+descriptor constructs the `ferretd lsp` command line, and the JetBrains LSP
+subsystem owns that process and protocol lifecycle. Run configurations use a
+separate project service; the LSP process is never reused for execution.
 
 ## Language intelligence
 
@@ -66,7 +67,7 @@ with the project. The pinned daemon advertises diagnostics, completion, hover,
 same-document definition navigation, and full-document formatting to the
 standard JetBrains language actions.
 
-Definition lookup is currently document-local. `ferretd` 1.0.0-alpha.4 does not
+Definition lookup is currently document-local. `ferretd` 1.0.0-alpha.6 does not
 advertise project or module resolution, so a symbol declared in another `.fql`
 file is not a supported navigation target.
 
@@ -79,10 +80,10 @@ Ferret Query Language execution. Open **Run | Edit Configurations**, select
 - **Source file**: the `.fql` file to execute. The chooser filters for Ferret
   files, while a path entered by hand may be absolute or relative to the
   project base directory.
-- **Working directory**: the execution directory, defaulting to the project
-  base directory when one exists. It may be overridden with an absolute path
-  or a project-relative path, and may be left empty for projects without a base
-  directory.
+- **Working directory**: the root used by Ferret runtime filesystem operations.
+  It defaults to the project base directory when one exists, may be overridden
+  with an absolute or project-relative path anywhere on the local filesystem,
+  and may be left empty to use the daemon's workspace-root default.
 - **Parameters (JSON object)**: FQL bind parameter values using the same JSON
   object shape as the Ferret execution protocol. For example:
 
@@ -100,9 +101,18 @@ Ferret Query Language execution. Open **Run | Edit Configurations**, select
   arrays and scalar values are supported. Malformed JSON and non-finite numbers
   are rejected.
 
-The source file is required; the working directory is optional. Relative paths
-require a project base directory and resolve against it. Absolute paths are
-used independently of the project base directory.
+The source file is required; the working directory is optional. At every Run,
+the plugin snapshots the configuration and resolves existing paths to their
+canonical locations. The compilation workspace is the project base directory
+when one exists, otherwise the canonical source parent. A present project base
+must be a readable directory containing the source; the plugin does not fall
+back when it is invalid. Relative configured paths require a project base.
+
+The runtime working directory is resolved and validated independently. It may
+be outside the workspace and does not participate in source containment or
+relative source identity. Leaving it blank omits the execution option, causing
+the daemon to use the workspace root. These execution-time checks do not
+rewrite the saved configuration.
 
 Run configurations use JetBrains' normal project persistence and survive IDE
 restart, project reopen, and configuration duplication. Opening a local `.fql`
@@ -110,11 +120,30 @@ file also enables the standard Run context action, which creates or reuses a
 Ferret configuration named after that file. Other file types do not offer a
 Ferret configuration.
 
-This milestone establishes configuration and validation only. Invoking a valid
-configuration currently reports **Ferret execution is not implemented yet.**
-The next milestone task will connect this state to the `ferretd` execution API.
-No query process, execution session, output console, or cancellation lifecycle
-is implemented here. JetBrains debugging is also not yet supported.
+Running a configuration immediately opens the normal JetBrains Run console.
+Filesystem and daemon work continues off the UI thread. Parameter nulls,
+booleans, finite numbers, strings, arrays, and objects retain their protocol
+types. The console shows the canonical source, compilation workspace, effective
+runtime working directory, status, formatted `application/json` terminal
+output, and actionable compile/runtime diagnostics. Protocol v1 exposes only
+terminal output, so the plugin does not present fabricated incremental stdout.
+
+The first Run in a project lazily starts the bundled daemon as an authenticated
+IPv4-loopback service on an operating-system-assigned port. A dedicated launcher
+owns binary resolution, authentication, readiness, and failed-start cleanup;
+the project connection owns the accepted daemon generation, channel, workspace
+cache, crash invalidation, and shutdown. The plugin validates the ready event,
+packaged version, nonempty instance ID, and API 1.1 before use. Workspaces are
+cached by canonical root within that daemon generation, while every invocation
+gets a fresh Session, Execution, watch, output sink, cancellation state, and
+optional runtime working directory. This refreshes saved edits and new files
+and permits unrestricted concurrent runs.
+
+**Stop**, detach, and Run-tab closure cancel only that invocation. Successful
+runs exit 0, failures exit 1, and a locally requested cancellation exits 130. A
+daemon crash fails current runs and clears its workspace cache; only a later Run
+starts a new daemon. The project service shuts its execution daemon down with
+the project. JetBrains debugging is not yet supported.
 
 ## Build and test
 
@@ -127,6 +156,8 @@ make lint jetbrains
 make test jetbrains
 make package jetbrains
 make package-check jetbrains
+make proto-generate jetbrains
+make proto-check jetbrains
 ```
 
 `prepare` downloads only missing pinned artifacts and atomically refreshes the
@@ -145,6 +176,12 @@ cd extensions/jetbrains
 ./gradlew buildPlugin verifyPluginProjectConfiguration verifyPluginStructure
 ./gradlew verifyPlugin
 ```
+
+Ordinary `./gradlew test` remains offline and excludes real-daemon tests. Root
+`make test jetbrains` checks generated-client drift, acquires only the pinned
+current-host daemon, runs unit tests, and then runs `ferretdIntegrationTest` with
+`FERRETD_TEST_PATH`. Running that Gradle task directly without an executable
+`FERRETD_TEST_PATH` is an error, not a skip.
 
 `verifyPlugin` checks the archive against IntelliJ Platform 2026.2. The root
 package check additionally verifies every bundled daemon's bytes, version, and
@@ -176,8 +213,9 @@ configuration, select `test.fql`, choose a working directory, enter a JSON
 parameter object, apply the changes, and reopen the dialog to confirm they were
 preserved. From the open `test.fql` editor, invoke the native Run context action
 and confirm it creates or reuses a configuration for that file. Invoking the
-configuration should report that execution is not implemented yet; a non-Ferret
-file must not offer a Ferret run context.
+configuration should show formatted JSON output. Also verify nested parameters,
+compile/runtime failures, Stop, concurrent runs, a saved edit, and a newly
+created `.fql` file. A non-Ferret file must not offer a Ferret run context.
 
 Open a non-Ferret file before `test.fql` to confirm lazy activation. Opening
 additional `.fql` files in the same project should reuse the project-wide
@@ -199,6 +237,11 @@ plugin's `ferretd/` directory rather than from `PATH`.
   failed server and request a restart after repairing the installation. JetBrains
   owns restart behavior; the plugin does not supervise or replace the native LSP
   process.
+- Execution connection and protocol failures appear in the Run console. Details,
+  daemon stderr, stack traces, and cleanup failures remain in `idea.log`; the
+  bearer credential is never logged. Rerunning after an execution-daemon crash
+  starts a fresh project daemon, while restarting the LSP widget has no effect
+  on execution.
 - An immediate or unexpected daemon exit is reported by JetBrains as a stopped
   Ferret LSP server. If it repeats after a widget restart, run the installed
   binary with `--version` and reinstall the plugin when that check fails.

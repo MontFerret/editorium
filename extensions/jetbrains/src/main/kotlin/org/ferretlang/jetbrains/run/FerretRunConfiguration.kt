@@ -9,7 +9,9 @@ import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.openapi.options.SettingsEditor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
-import java.nio.file.Files
+import org.ferretlang.jetbrains.execution.FerretExecutionInput
+import org.ferretlang.jetbrains.execution.FerretExecutionRequest
+import org.ferretlang.jetbrains.execution.FerretExecutionRequestException
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
 
@@ -51,78 +53,41 @@ class FerretRunConfiguration(
         FerretRunConfigurationEditor(project)
 
     override fun checkConfiguration() {
-        val source = resolveRequiredPath(sourcePath, "source file")
-        if (!Files.exists(source)) {
-            throw RuntimeConfigurationError("The Ferret source file does not exist: $source")
-        }
-        if (!Files.isRegularFile(source)) {
-            throw RuntimeConfigurationError("The Ferret source path is not a file: $source")
-        }
-        val sourceFile = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(source)
-        if (sourceFile == null || !FerretRunSourceFile.isEligible(sourceFile)) {
-            throw RuntimeConfigurationError(
-                "The Ferret source file must be a local .fql file recognized by the IDE: $source",
-            )
-        }
-
-        resolveOptionalPath(workingDirectory, "working directory")?.let { directory ->
-            if (!Files.exists(directory)) {
-                throw RuntimeConfigurationError("The working directory does not exist: $directory")
-            }
-            if (!Files.isDirectory(directory)) {
-                throw RuntimeConfigurationError("The working directory path is not a directory: $directory")
-            }
-        }
-
         try {
             FerretParameterBindingsJson.parse(parametersJson)
         } catch (error: IllegalArgumentException) {
             throw RuntimeConfigurationError(error.message ?: "The Ferret parameters are invalid.")
+        }
+
+        val request = try {
+            FerretExecutionRequest.resolve(executionInput())
+        } catch (error: FerretExecutionRequestException) {
+            throw RuntimeConfigurationError(error.message ?: "The Ferret execution paths are invalid.")
+        }
+
+        val sourceFile = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(request.source)
+        if (sourceFile == null || !FerretRunSourceFile.isEligible(sourceFile)) {
+            throw RuntimeConfigurationError(
+                "The Ferret source file must be a local .fql file recognized by the IDE: ${request.source}",
+            )
         }
     }
 
     override fun getState(
         executor: Executor,
         environment: ExecutionEnvironment,
-    ): RunProfileState = FerretRunProfileState()
+    ): RunProfileState = FerretRunProfileState(project, executionInput())
+
+    private fun executionInput(): FerretExecutionInput = FerretExecutionInput(
+        sourcePath = sourcePath,
+        workingDirectory = workingDirectory,
+        projectBasePath = project.basePath,
+        bindings = parameters,
+    )
 
     internal fun resolvedSourcePathOrNull(): Path? = resolvePathOrNull(sourcePath)
 
     internal fun resolvedWorkingDirectoryOrNull(): Path? = resolvePathOrNull(workingDirectory)
-
-    private fun resolveRequiredPath(value: String, label: String): Path {
-        if (value.isBlank()) {
-            throw RuntimeConfigurationError("Set the Ferret $label.")
-        }
-
-        return resolveConfiguredPath(value, label)
-    }
-
-    private fun resolveOptionalPath(value: String, label: String): Path? =
-        if (value.isBlank()) null else resolveConfiguredPath(value, label)
-
-    private fun resolveConfiguredPath(value: String, label: String): Path {
-        val path = try {
-            Path.of(value)
-        } catch (error: InvalidPathException) {
-            throw RuntimeConfigurationError("The Ferret $label path is invalid: ${error.message}")
-        }
-
-        if (path.isAbsolute) {
-            return path.normalize()
-        }
-
-        val basePath = project.basePath
-            ?: throw RuntimeConfigurationError(
-                "The Ferret $label path must be absolute because the project has no base directory.",
-            )
-
-        return try {
-            Path.of(basePath).resolve(path).normalize()
-        } catch (error: InvalidPathException) {
-            throw RuntimeConfigurationError("The Ferret $label path is invalid: ${error.message}")
-        }
-    }
 
     private fun resolvePathOrNull(value: String): Path? = try {
         if (value.isBlank()) {

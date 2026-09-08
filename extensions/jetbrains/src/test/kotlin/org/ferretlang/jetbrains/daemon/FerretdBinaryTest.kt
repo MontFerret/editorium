@@ -27,6 +27,25 @@ class FerretdBinaryTest {
     }
 
     @Test
+    fun resolvesTheInstalledBinaryAndPackagedVersionTogether() {
+        val root = Files.createTempDirectory("ferretd-installation-")
+        try {
+            val platform = FerretdPlatform("win32", "x64", "ferretd.exe", false)
+            val executable = root.resolve("ferretd/win32/x64/ferretd.exe")
+            Files.createDirectories(executable.parent)
+            Files.writeString(executable, "test executable")
+            Files.writeString(root.resolve("ferretd/version"), "1.0.0-alpha.6\n")
+
+            assertEquals(
+                FerretdInstallation(executable, "1.0.0-alpha.6"),
+                FerretdBinary(root, platform).resolveInstallation(),
+            )
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun reportsTheExpectedPathWhenTheBinaryIsMissing() {
         val root = Files.createTempDirectory("ferretd-missing-")
         try {
@@ -36,8 +55,9 @@ class FerretdBinaryTest {
                     FerretdPlatform("linux", "arm64", "ferretd", true),
                 ).resolve()
             }
+            val expectedPath = root.resolve("ferretd/linux/arm64/ferretd").normalize().toString()
             assertTrue(error.message.orEmpty().contains("linux-arm64"))
-            assertTrue(error.message.orEmpty().contains("ferretd/linux/arm64/ferretd"))
+            assertTrue(error.message, error.message.orEmpty().contains(expectedPath))
         } finally {
             root.toFile().deleteRecursively()
         }
