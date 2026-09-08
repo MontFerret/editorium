@@ -6,6 +6,13 @@ import org.junit.Test
 
 class FerretExecutionOutputFormatterTest {
     @Test
+    fun preservesNullObjectFieldsAndArrayItems() {
+        val json = """{"value":null,"nested":{"child":null},"array":[null,{"key":null}]}"""
+        val formatted = FerretExecutionOutputFormatter.format(FerretdExecutionOutput("application/json", json.toByteArray()))
+        assertEquals(com.google.gson.JsonParser.parseString(json), com.google.gson.JsonParser.parseString(formatted))
+    }
+
+    @Test
     fun strictlyFormatsJsonTerminalOutput() {
         assertEquals(
             "{\n  \"answer\": 42\n}",

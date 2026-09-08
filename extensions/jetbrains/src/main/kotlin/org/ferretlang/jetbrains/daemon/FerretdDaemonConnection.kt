@@ -14,6 +14,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -39,8 +40,10 @@ internal class FerretdDaemonConnection private constructor(
     private val mutex = Mutex()
     private val sequence = AtomicLong()
     private var active: Generation? = null
+    private val generations = mutableSetOf<Generation>()
     private var starting: Deferred<Generation>? = null
-    private val lifetime = coroutineScope.launch {
+    private var closed = false
+    private val lifetime = coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
         try {
             awaitCancellation()
         } finally {
@@ -54,76 +57,52 @@ internal class FerretdDaemonConnection private constructor(
 
     internal suspend fun generation(): Generation {
         val pending = mutex.withLock {
-            active?.takeUnless { it.lost.isCompleted }?.let { return it }
+            checkOpen()
+            active?.let { generation ->
+                if (!generation.process.isAlive) {
+                    generation.lost.complete(FerretdConnectionException("The Ferret daemon exited unexpectedly."))
+                }
+                if (!generation.lost.isCompleted) return generation
+            }
             starting ?: coroutineScope.async(start = CoroutineStart.LAZY) {
-                startGeneration(sequence.incrementAndGet())
+                try {
+                    startGeneration(sequence.incrementAndGet())
+                } finally {
+                    withContext(NonCancellable) {
+                        mutex.withLock { starting = null }
+                    }
+                }
             }.also { starting = it }
         }
-        try {
-            val generation = pending.await()
-            val accepted = mutex.withLock {
-                if (starting === pending) {
-                    starting = null
-                    if (!generation.lost.isCompleted) {
-                        active = generation
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    active === generation && !generation.lost.isCompleted
-                }
-            }
-            if (!accepted) {
-                val cause = if (generation.lost.isCompleted) {
-                    generation.lost.await()
-                } else {
-                    FerretdConnectionException("The Ferret daemon startup was cancelled during project shutdown.")
-                }
-                withContext(NonCancellable) {
-                    stopGeneration(generation)
-                }
-                throw cause
-            }
-            return generation
-        } catch (error: Throwable) {
-            mutex.withLock {
-                if (starting === pending) {
-                    starting = null
-                }
-            }
-            throw error
-        }
+        // Awaiters borrow startup. Only the project-owned job publishes or discards it.
+        return pending.await().also { ensureCurrent(it) }
     }
 
     internal suspend fun workspace(generation: Generation, root: Path): String {
         ensureCurrent(generation)
         val pending = generation.workspaceMutex.withLock {
             generation.workspaces[root] ?: coroutineScope.async(start = CoroutineStart.LAZY) {
-                val workspace = generation.rpc.openWorkspace(root)
-                if (workspace.root != root) {
-                    throw FerretdConnectionException(
-                        "The Ferret daemon opened ${workspace.root} instead of the requested workspace $root.",
-                    )
+                try {
+                    val workspace = generation.rpc.openWorkspace(root)
+                    if (workspace.root != root) {
+                        throw FerretdConnectionException("The Ferret daemon opened a different workspace than requested.")
+                    }
+                    workspace.id
+                } catch (error: Throwable) {
+                    withContext(NonCancellable) {
+                        generation.workspaceMutex.withLock { generation.workspaces.remove(root) }
+                    }
+                    throw error
                 }
-                workspace.id
             }.also { generation.workspaces[root] = it }
         }
-        return try {
-            pending.await().also { ensureCurrent(generation) }
-        } catch (error: Throwable) {
-            generation.workspaceMutex.withLock {
-                if (generation.workspaces[root] === pending) {
-                    generation.workspaces.remove(root)
-                }
-            }
-            throw error
-        }
+        return pending.await().also { ensureCurrent(generation) }
     }
 
     internal suspend fun shutdown() {
-        val (generation, pending) = mutex.withLock {
-            val current = active
+        val (owned, pending) = mutex.withLock {
+            closed = true
+            val current = generations.toList()
             val startup = starting
             active = null
             starting = null
@@ -137,8 +116,8 @@ internal class FerretdDaemonConnection private constructor(
                 null
             }
         }
-        generation?.let { stopGeneration(it) }
-        if (started != null && started !== generation) {
+        owned.forEach { stopGeneration(it) }
+        if (started != null && started !in owned) {
             stopGeneration(started)
         }
     }
@@ -149,50 +128,50 @@ internal class FerretdDaemonConnection private constructor(
 
     private suspend fun startGeneration(number: Long): Generation {
         val generation = Generation(number, launcher.start())
-        coroutineScope.launch {
-            val cause = generation.lost.await()
-            invalidate(generation, cause)
+        try {
+            mutex.withLock {
+                checkOpen()
+                if (generation.lost.isCompleted) throw generation.lost.await()
+                generations.add(generation)
+                active = generation
+            }
+            coroutineScope.launch {
+                val cause = generation.lost.await()
+                withContext(NonCancellable) { invalidate(generation, cause) }
+            }
+            return generation
+        } catch (error: Throwable) {
+            withContext(NonCancellable) { stopGeneration(generation, graceful = false) }
+            throw error
         }
-        return generation
     }
 
     private suspend fun invalidate(generation: Generation, cause: Throwable) {
-        if (generation.stopping.get() || !generation.cleanupStarted.compareAndSet(false, true)) {
-            return
+        if (generation.stopping.get()) return
+        mutex.withLock {
+            if (active === generation) active = null
         }
-        try {
-            mutex.withLock {
-                if (active === generation) {
-                    active = null
-                }
-            }
-            generation.workspaceMutex.withLock { generation.workspaces.clear() }
-            try {
-                generation.rpc.close()
-            } catch (error: Throwable) {
-                LOG.warn("Closing a lost Ferret daemon channel failed", error)
-            }
-            generation.stderr.cancel()
-            generation.stdout.cancel()
-            generation.processWaiter.cancel()
-            LOG.warn("Project Ferret execution daemon was lost", cause)
-        } finally {
-            generation.stopped.complete(Unit)
-        }
+        stopGeneration(generation, graceful = false)
+        LOG.warn("Project Ferret execution daemon was lost", cause)
     }
 
-    private suspend fun stopGeneration(generation: Generation) {
+    private suspend fun stopGeneration(generation: Generation, graceful: Boolean = true) {
         generation.stopping.set(true)
         if (!generation.cleanupStarted.compareAndSet(false, true)) {
             generation.stopped.await()
             return
         }
         try {
-            generation.workspaceMutex.withLock { generation.workspaces.clear() }
-            try {
-                generation.rpc.shutdown()
-            } catch (error: Throwable) {
-                LOG.warn("Graceful Ferret daemon shutdown failed", error)
+            generation.workspaceMutex.withLock {
+                generation.workspaces.values.forEach { it.cancel() }
+                generation.workspaces.clear()
+            }
+            if (graceful && generation.process.isAlive && !generation.lost.isCompleted) {
+                try {
+                    generation.rpc.shutdown()
+                } catch (error: Throwable) {
+                    LOG.warn("Graceful Ferret daemon shutdown failed", error)
+                }
             }
             try {
                 generation.rpc.close()
@@ -200,10 +179,14 @@ internal class FerretdDaemonConnection private constructor(
                 LOG.warn("Closing the Ferret daemon channel failed", error)
             }
             withContext(Dispatchers.IO) {
+                if (!graceful && generation.process.isAlive) generation.process.destroy()
                 if (!generation.process.waitFor(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                     generation.process.destroy()
                     if (!generation.process.waitFor(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                         generation.process.destroyForcibly()
+                        if (!generation.process.waitFor(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                            LOG.warn("The Ferret daemon did not exit after forced termination")
+                        }
                     }
                 }
             }
@@ -214,6 +197,13 @@ internal class FerretdDaemonConnection private constructor(
             LOG.info("Project Ferret execution daemon stopped")
         } finally {
             generation.stopped.complete(Unit)
+            mutex.withLock { generations.remove(generation) }
+        }
+    }
+
+    private fun checkOpen() {
+        if (closed || !coroutineScope.isActive) {
+            throw FerretdConnectionException("The Ferret project is closing; execution is unavailable.")
         }
     }
 

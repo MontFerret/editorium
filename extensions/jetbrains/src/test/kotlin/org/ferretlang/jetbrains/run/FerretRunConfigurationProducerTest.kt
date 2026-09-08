@@ -75,6 +75,28 @@ class FerretRunConfigurationProducerTest : BasePlatformTestCase() {
         assertFalse(producer.isConfigurationFromContext(configuration, context))
     }
 
+    fun testNamesUseProjectRelativeIdentityAndContextDoesNotInheritTemplateParameters() {
+        val base = Path.of(requireNotNull(project.basePath))
+        val first = createLocalFile(base.resolve("first/query.fql").toString())
+        val second = createLocalFile(base.resolve("second/query.fql").toString())
+        val runManager = RunManager.getInstance(project)
+        val factory = FerretRunConfigurationType.getInstance().configurationFactories.single()
+        val template = runManager.getConfigurationTemplate(factory).configuration as FerretRunConfiguration
+        val original = template.parameters
+        template.parametersJson = "{\"inherited\":true}"
+        try {
+            val producer = FerretRunConfigurationProducer()
+            val a = requireNotNull(producer.createConfigurationFromContext(contextFor(first))).configuration as FerretRunConfiguration
+            val b = requireNotNull(producer.createConfigurationFromContext(contextFor(second))).configuration as FerretRunConfiguration
+            assertEquals("first/query.fql", a.name)
+            assertEquals("second/query.fql", b.name)
+            assertSame(FerretParameterBindings.EMPTY, a.parameters)
+            assertFalse(producer.isConfigurationFromContext(a, contextFor(second)))
+        } finally {
+            template.parameters = original
+        }
+    }
+
     fun testUnrelatedAndNonLocalFilesDoNotProduceConfigurations() {
         val producer = FerretRunConfigurationProducer()
         val unrelated = createLocalFile("README.md")

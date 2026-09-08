@@ -5,8 +5,26 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.UIUtil
 import org.junit.Assert
+import java.awt.Container
 
 class FerretRunConfigurationEditorTest : BasePlatformTestCase() {
+    fun testParametersEditorGrowsWithTheNativeSettingsPanel() {
+        val editor = FerretRunConfigurationEditor(project)
+        try {
+            val component = editor.component
+            component.setSize(component.preferredSize)
+            layout(component)
+            val field = parametersField(editor)
+            val original = field.size
+            component.setSize(component.width + 200, component.height + 150)
+            layout(component)
+            assertTrue(field.width > original.width)
+            assertTrue(field.height > original.height)
+        } finally {
+            editor.dispose()
+        }
+    }
+
     fun testEditorAppliesJsonAsSemanticBindingsAndPreservesValidFormatting() {
         val configuration = createConfiguration()
         val editor = FerretRunConfigurationEditor(project)
@@ -60,6 +78,11 @@ class FerretRunConfigurationEditorTest : BasePlatformTestCase() {
 
     private fun parametersField(editor: FerretRunConfigurationEditor): JBTextArea =
         requireNotNull(UIUtil.findComponentOfType(editor.component, JBTextArea::class.java))
+
+    private fun layout(container: Container) {
+        container.doLayout()
+        container.components.filterIsInstance<Container>().forEach(::layout)
+    }
 
     private fun createConfiguration(): FerretRunConfiguration =
         FerretRunConfigurationType

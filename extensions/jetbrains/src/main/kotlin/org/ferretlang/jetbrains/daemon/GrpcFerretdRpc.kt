@@ -7,6 +7,8 @@ import io.grpc.Metadata
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder
 import io.grpc.stub.MetadataUtils
 import io.grpc.stub.StreamObserver
+import io.grpc.stub.ClientResponseObserver
+import io.grpc.stub.ClientCallStreamObserver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -52,6 +54,7 @@ internal class GrpcFerretdRpc private constructor(
     private val channel: ManagedChannel,
     token: String,
 ) : FerretdRpc {
+    private val credentials = FerretdCredentials(token)
     private val authenticatedChannel = ClientInterceptors.intercept(
         channel,
         MetadataUtils.newAttachHeadersInterceptor(Metadata().apply {
@@ -137,7 +140,7 @@ internal class GrpcFerretdRpc private constructor(
     }
 
     override fun watchExecution(executionId: String): FerretdExecutionWatch {
-        val watch = GrpcExecutionWatch()
+        val watch = GrpcExecutionWatch { rpcError("watch-execution", it) }
         executions.watchExecution(
             WatchExecutionRequest.newBuilder().setId(ExecutionId.newBuilder().setValue(executionId)).build(),
             watch,
@@ -202,7 +205,11 @@ internal class GrpcFerretdRpc private constructor(
     ): Response = suspendCancellableCoroutine { continuation ->
         val completed = AtomicBoolean()
         var response: Response? = null
-        val observer = object : StreamObserver<Response> {
+        val observer = object : ClientResponseObserver<Any, Response> {
+            override fun beforeStart(requestStream: ClientCallStreamObserver<Any>) {
+                continuation.invokeOnCancellation { requestStream.cancel("Ferret request cancelled", null) }
+            }
+
             override fun onNext(value: Response) {
                 if (response != null) {
                     if (completed.compareAndSet(false, true)) {
@@ -217,7 +224,7 @@ internal class GrpcFerretdRpc private constructor(
 
             override fun onError(error: Throwable) {
                 if (completed.compareAndSet(false, true)) {
-                    continuation.resumeWithException(GrpcFerretdMapper.error(operation, error))
+                    continuation.resumeWithException(rpcError(operation, error))
                 }
             }
 
@@ -233,9 +240,19 @@ internal class GrpcFerretdRpc private constructor(
             invoke(observer)
         } catch (error: Throwable) {
             if (completed.compareAndSet(false, true)) {
-                continuation.resumeWithException(GrpcFerretdMapper.error(operation, error))
+                continuation.resumeWithException(rpcError(operation, error))
             }
         }
+    }
+
+    private fun rpcError(operation: String, error: Throwable): FerretdRpcException {
+        val mapped = GrpcFerretdMapper.error(operation, error)
+        return FerretdRpcException(
+            operation,
+            credentials.redact(mapped.message.orEmpty()),
+            mapped.diagnostics,
+            credentials.safeCause(error),
+        )
     }
 
     companion object {

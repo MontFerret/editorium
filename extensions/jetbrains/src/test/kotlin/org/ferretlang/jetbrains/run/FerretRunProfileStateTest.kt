@@ -12,6 +12,30 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 class FerretRunProfileStateTest : BasePlatformTestCase() {
+    fun testRunRejectsASourceDocumentThatRemainsUnsaved() {
+        val source = Path.of(requireNotNull(project.basePath)).resolve("unsaved-run.fql")
+        Files.writeString(source, "RETURN 1")
+        val file = requireNotNull(com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByNioFile(source))
+        val documents = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance()
+        val document = requireNotNull(documents.getDocument(file))
+        val input = org.ferretlang.jetbrains.execution.FerretExecutionInput(
+            source.toString(), "", project.basePath, FerretParameterBindings.EMPTY,
+        )
+        try {
+            com.intellij.openapi.command.WriteCommandAction.runWriteCommandAction(project) { document.setText("RETURN 2") }
+            assertTrue(documents.isDocumentUnsaved(document))
+            try {
+                FerretRunProfileState(project, input).execute(DefaultRunExecutor.getRunExecutorInstance(), TestProgramRunner)
+                fail("An unsaved source must not execute stale disk contents")
+            } catch (error: com.intellij.execution.ExecutionException) {
+                assertTrue(error.message.orEmpty().contains("could not save"))
+            }
+            assertEquals("RETURN 1", Files.readString(source))
+        } finally {
+            documents.saveDocument(document)
+        }
+    }
+
     fun testConfigurationReturnsAnAttachedSyntheticExecutionResultImmediately() {
         val source = Path.of(requireNotNull(project.basePath)).resolve("ferret-run-state.fql")
         try {

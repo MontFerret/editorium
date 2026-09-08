@@ -3,6 +3,14 @@ package org.ferretlang.jetbrains.run
 import junit.framework.TestCase
 
 class FerretParameterBindingsJsonTest : TestCase() {
+    fun testRenderingRetainsTopLevelAndNestedNullBindings() {
+        val json = """{"value":null,"nested":{"child":null},"array":[null,{"key":null}]}"""
+        val bindings = FerretParameterBindingsJson.parse(json)
+        val rendered = FerretParameterBindingsJson.render(bindings)
+        assertEquals(bindings, FerretParameterBindingsJson.parse(rendered))
+        assertEquals(com.google.gson.JsonParser.parseString(json), com.google.gson.JsonParser.parseString(rendered))
+    }
+
     fun testBlankInputProducesEmptyBindings() {
         assertSame(FerretParameterBindings.EMPTY, FerretParameterBindingsJson.parse("  \n\t"))
     }
