@@ -5,6 +5,11 @@ It registers `.fql` files, provides language intelligence through JetBrains'
 native LSP support, and executes queries through native Ferret Run configurations.
 The plugin bundles the required `ferretd` executable.
 
+Debugging is planned separately. The
+[M3 T1 debugger architecture report](docs/debugger-architecture.md) records the
+selected DAP/XDebugger design, upstream prerequisites, and future M3 T2/T3
+implementation tasks; it does not describe an available plugin feature.
+
 ## Prerequisites
 
 - Go 1.26 or newer for the shared Editorium distribution tool;
