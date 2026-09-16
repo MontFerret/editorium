@@ -65,8 +65,10 @@ The current integration state is intentionally asymmetric:
   distribution and current-host executable resolution, and connects local files
   to a lazy project-wide JetBrains native LSP client running `ferretd lsp`.
   Native Run configurations use an independent authenticated project-scoped
-  execution daemon and the JetBrains Run console. JetBrains does not yet provide
-  debugging or settings beyond the existing persisted Run configuration fields.
+  execution daemon and the JetBrains Run console. Debug uses the same persisted
+  configuration through native XDebugger and LSP4J Debug, with one independently
+  owned `ferretd dap` process per launch. Variables, scopes, evaluation, and watches
+  remain deferred; there are no additional settings.
 * Both integrations consume the daemon version from `ferretd.json`; neither may
   introduce a separate editor-local pin.
 
@@ -225,8 +227,9 @@ compatibility-sensitive contracts.
 * project-scoped authenticated execution-daemon connection lifecycle;
 * separate compilation-workspace and runtime-working-directory resolution;
 * generated Java protobuf and gRPC clients;
-* future JetBrains settings, UI, and debugging integration when explicitly
-  implemented;
+* native XDebugger presentation and per-launch LSP4J DAP session ownership;
+* shared Run/Debug launch inputs, with protocol encoding kept in each adapter;
+* future JetBrains settings and inspection UI when explicitly implemented;
 * Gradle configuration and plugin packaging;
 * JetBrains-specific platform, binary-resolution, and integration tests.
 
@@ -242,6 +245,14 @@ command line and lets the JetBrains LSP subsystem own that process lifecycle.
 Separately, the project-scoped execution connection owns lazy authenticated
 `ferretd serve` startup, its channel, workspace cache, restart generation, and
 shutdown. These LSP and execution processes must not be coupled.
+
+Each Debug launch separately owns its `ferretd dap` process, LSP4J transport,
+ordered state queue, breakpoint revisions, stop generations, and bounded cleanup.
+The project debug launcher supplies coroutine lifetime only; it keeps no session
+registry. XDebugger presentation must recheck generation and disposal on the UI
+dispatcher. Initial synchronization failure aborts launch before configurationDone;
+live synchronization failure ends only that session. Unverified breakpoint results
+are nonfatal. Source edits do not replace an active debug session's compiled snapshot.
 
 For execution, the canonical project base is the compilation workspace when it
 exists; otherwise the canonical source parent is used. The source must remain

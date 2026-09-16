@@ -1,5 +1,7 @@
 package org.ferretlang.jetbrains.execution
 
+import org.ferretlang.jetbrains.launch.FerretLaunchInput
+
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -406,7 +408,7 @@ class FerretExecutionClientTest {
             val source = Files.writeString(root.resolve(relativePath), "RETURN 1")
             val sink = RecordingSink()
             sink.handle = FerretExecutionClient(connection).start(
-                FerretExecutionInput(
+                FerretLaunchInput(
                     source.toString(),
                     workingDirectory,
                     null,

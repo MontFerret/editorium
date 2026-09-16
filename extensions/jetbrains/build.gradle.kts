@@ -20,11 +20,13 @@ dependencies {
     implementation("io.grpc:grpc-protobuf")
     implementation("io.grpc:grpc-stub")
     implementation("com.google.protobuf:protobuf-java:4.36.1")
+    implementation("org.eclipse.lsp4j:org.eclipse.lsp4j.debug:0.24.0")
 
     testImplementation("junit:junit:4.13.2")
 
     intellijPlatform {
         intellijIdea("2026.2.0.1")
+        bundledModule("intellij.platform.debugger")
         testFramework(TestFrameworkType.Platform)
     }
 }

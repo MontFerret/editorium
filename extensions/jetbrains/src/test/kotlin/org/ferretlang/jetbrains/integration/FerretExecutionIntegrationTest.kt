@@ -13,7 +13,7 @@ import org.ferretlang.jetbrains.daemon.FerretdInstallation
 import org.ferretlang.jetbrains.daemon.FerretdDaemonLauncher
 import org.ferretlang.jetbrains.daemon.GrpcFerretdRpc
 import org.ferretlang.jetbrains.execution.FerretExecutionClient
-import org.ferretlang.jetbrains.execution.FerretExecutionInput
+import org.ferretlang.jetbrains.launch.FerretLaunchInput
 import org.ferretlang.jetbrains.execution.FerretExecutionSink
 import org.ferretlang.jetbrains.run.FerretParameterBindings
 import org.ferretlang.jetbrains.run.FerretParameterValue
@@ -115,6 +115,32 @@ class FerretExecutionIntegrationTest {
         assertEquals(0, second.exit.awaitResult().also { if (it != 0) error(second.debug()) })
         assertEquals(JsonParser.parseString("2"), JsonParser.parseString(second.stdout.single()))
         assertTrue(first.internal.none { it.contains("Cancelling") })
+    }
+
+    @Test
+    fun runAndDebugHaveIndependentProcessesAndCancellation() = runBlocking {
+        withTimeout(20_000) {
+            val source = write("debug.fql", "LET value = 1\nRETURN value")
+            val debug = RealDapLaunch(FerretLaunchInput(source.toString(), "", root.toString(), FerretParameterBindings.EMPTY), scope, 2)
+            try {
+                debug.session.launchCompleted.await()
+                val stopped = debug.stopped()
+                val running = execute(write("run.fql", "WAIT(10s)\nRETURN 2"))
+                running.awaitStarted()
+                assertNotEquals(connection.generation().process.pid(), debug.process.pid())
+                assertTrue(running.handle.cancel())
+                assertEquals(130, running.exit.awaitResult())
+                assertTrue(debug.process.isAlive)
+                assertTrue(debug.session.isCurrentStop(stopped))
+                debug.session.stop()
+                debug.session.completion.await()
+                val next = execute(write("after-debug.fql", "RETURN 3"))
+                assertEquals(0, next.exit.awaitResult())
+            } finally {
+                debug.session.stop()
+                debug.session.completion.await()
+            }
+        }
     }
 
     @Test
@@ -348,7 +374,7 @@ class FerretExecutionIntegrationTest {
     ): RecordingExecution {
         val sink = RecordingExecution()
         sink.handle = FerretExecutionClient(daemon).start(
-            FerretExecutionInput(
+            FerretLaunchInput(
                 source.toString(),
                 workingDirectory?.toString().orEmpty(),
                 projectRoot.toString(),

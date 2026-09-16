@@ -14,7 +14,7 @@ import com.intellij.openapi.util.io.FileUtil
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFileSystemItem
 import com.intellij.refactoring.listeners.RefactoringElementListener
-import org.ferretlang.jetbrains.execution.FerretExecutionInput
+import org.ferretlang.jetbrains.launch.FerretLaunchInput
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
 
@@ -112,9 +112,9 @@ class FerretRunConfiguration(
     override fun getState(
         executor: Executor,
         environment: ExecutionEnvironment,
-    ): RunProfileState = FerretRunProfileState(project, executionInput())
+    ): RunProfileState = FerretRunProfileState(project, launchInput())
 
-    private fun executionInput(): FerretExecutionInput = FerretExecutionInput(
+    internal fun launchInput(): FerretLaunchInput = FerretLaunchInput(
         sourcePath = sourcePath,
         workingDirectory = workingDirectory,
         projectBasePath = project.basePath,

@@ -7,8 +7,11 @@
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.lang</depends>
     <depends>com.intellij.modules.lsp</depends>
+    <depends>com.intellij.modules.xdebugger</depends>
 
     <extensions defaultExtensionNs="com.intellij">
+        <programRunner implementation="org.ferretlang.jetbrains.debugger.FerretDebugRunner" />
+        <xdebugger.breakpointType implementation="org.ferretlang.jetbrains.debugger.FerretBreakpointType" />
         <fileType
             name="Ferret"
             implementationClass="org.ferretlang.jetbrains.lang.FerretLanguageFileType"

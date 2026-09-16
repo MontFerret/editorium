@@ -2,13 +2,13 @@
 
 This module is the JetBrains IDE integration for Ferret Query Language files.
 It registers `.fql` files, provides language intelligence through JetBrains'
-native LSP support, and executes queries through native Ferret Run configurations.
+native LSP support, and runs and debugs queries through native Ferret configurations.
 The plugin bundles the required `ferretd` executable.
 
-Debugging is planned separately. The
+The
 [M3 T1 debugger architecture report](docs/debugger-architecture.md) records the
-selected DAP/XDebugger design, upstream prerequisites, and future M3 T2/T3
-implementation tasks; it does not describe an available plugin feature.
+selected DAP/XDebugger design and historical spike evidence. M3 T2 implements
+debugger control and stacks; T3 inspection remains deferred.
 
 ## Prerequisites
 
@@ -72,7 +72,7 @@ with the project. The pinned daemon advertises diagnostics, completion, hover,
 same-document definition navigation, and full-document formatting to the
 standard JetBrains language actions.
 
-Definition lookup is currently document-local. `ferretd` 1.0.0-alpha.6 does not
+Definition lookup is currently document-local. `ferretd` 1.0.0-alpha.7 does not
 advertise project or module resolution, so a symbol declared in another `.fql`
 file is not a supported navigation target.
 
@@ -161,6 +161,53 @@ daemon crash fails current runs and clears its workspace cache; only a later Run
 starts a new daemon. Closing a project cancels its active runs and shuts down its
 execution daemon.
 
+## Debugging
+
+Use **Debug** on the same Ferret configuration or current local `.fql` file.
+Source, typed parameters, compilation workspace, and optional independent
+working directory follow the Run rules above. JetBrains saves the source before
+launch; an unsaved document is rejected. Every Debug launch starts its own
+bundled `ferretd dap` process, independently of Run, LSP, and other Debug sessions.
+
+Set ordinary line breakpoints in the gutter before or during a session. They
+persist with the project. Enabled, disabled, moved, removed, and muted
+breakpoints are synchronized immediately as complete per-source replacements.
+The daemon decides whether a line is executable and may bind to a later line;
+the original breakpoint stays in place, with verification details in its
+presentation. An unverified breakpoint does not fail launch. A synchronization
+request failure fails that Debug session and cleans up its adapter.
+
+Known alpha.7 limitation: a verified breakpoint on the first executable
+statement can be skipped when the daemon suppresses its entry stop. Later
+breakpoints work normally. This requires an upstream `ferretd`/Ferret fix;
+the plugin does not synthesize a stop or change the `stopOnEntry=false` contract.
+
+The standard Debug window supports **Resume**, **Pause**, **Step Over**,
+**Step Into**, **Step Out**, and **Stop**. One logical **Ferret** stack shows frame
+names and source locations, including Unicode columns. A confirmed stop remains
+suspended even if its breakpoint is subsequently removed. Missing or nonlocal
+source information is shown without an invented navigation location.
+
+Debug compiles a snapshot of the saved source at launch. Editing or saving the
+source while paused does not recompile that session; changed line numbers may
+no longer match the snapshot. Start a new Debug session to execute those edits.
+Live breakpoint edits apply to the existing compiled snapshot.
+
+The Debug console retains daemon stdout/stderr output and final results.
+Adapter stderr and transport diagnostics go to the IDE log. Console input is
+unavailable. Stop, detach, and project disposal clean up only the owned adapter;
+target exit codes are retained, with 1 for failures and 130 for local cancellation
+when the target has not supplied a code. Startup and protocol requests have
+bounded deadlines; running queries have no execution time limit.
+
+T3 exclusions: variables, scopes, expression evaluation, and watches are not
+implemented. Conditional breakpoints, logpoints, interactive console input,
+attach, restart, and reverse debugging are also unavailable. The breakpoint UI
+hides unsupported condition, action, dependency, and suspend-policy controls.
+
+See the [M3 T2 validation report](docs/debugger-validation.md) for the tested
+feature matrix, upstream finding, and manual sandbox limitations.
+
 ## Build and test
 
 The root Make interface is the normal contributor workflow:
@@ -232,6 +279,14 @@ and confirm it creates or reuses a configuration for that file. Invoking the
 configuration should show formatted JSON output. Also verify nested parameters,
 compile/runtime failures, Stop, concurrent runs, a saved edit, and a newly
 created `.fql` file. A non-Ferret file must not offer a Ferret run context.
+
+Debug the same configuration with a persisted line breakpoint. Verify source
+navigation, stepping through a function, Resume, Pause, and Stop; then add,
+disable, move, remove, and mute breakpoints while running and paused. Confirm
+relocation leaves the requested gutter line intact, a removed committed stop
+remains suspended, and concurrent Debug and Run sessions remain independent.
+Check non-ASCII source, an external runtime directory, startup failure, and
+project close. Inspection trees and evaluation should remain unavailable.
 
 Open a non-Ferret file before `test.fql` to confirm lazy activation. Opening
 additional `.fql` files in the same project should reuse the project-wide

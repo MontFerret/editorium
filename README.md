@@ -10,7 +10,7 @@ Ferret and its language server.
   support for Ferret Query Language files.
 - [`extensions/jetbrains/`](extensions/jetbrains/README.md) — the Kotlin-based
   JetBrains IDE plugin, `.fql` file recognition, native LSP integration,
-  Run-console execution, and bundled daemon distribution.
+  Run-console execution, native debugging, and bundled daemon distribution.
 - `shared/` — editor-independent inputs. Protocol schemas live under
   `shared/proto/`; generated clients remain owned by each extension.
 - `tools/editorium/` — the Go implementation behind the repository Make
@@ -73,8 +73,10 @@ language behavior. Ferret Run configurations use a separate authenticated,
 project-scoped execution daemon and display terminal JSON results and failures
 in the Run console. The project base, or source parent when no base exists, is
 the compilation workspace. The optional Run working directory separately roots
-runtime filesystem access and may be outside that workspace. JetBrains
-debugging remains deferred.
+runtime filesystem access and may be outside that workspace. Debug uses the same
+configuration and launch-input rules, with an independent `ferretd dap` process
+per session and native XDebugger breakpoints, control commands, stacks, and
+source navigation. Variables, scopes, evaluation, and watches remain deferred.
 
 ## Protocol schemas
 
