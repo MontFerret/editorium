@@ -1,5 +1,7 @@
 package org.ferretlang.jetbrains.execution
 
+import org.ferretlang.jetbrains.launch.FerretLaunchInput
+
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -19,7 +21,7 @@ import java.net.URI
 internal class FerretExecutionClient(
     private val connection: FerretdDaemonConnection,
 ) {
-    fun start(input: FerretExecutionInput, sink: FerretExecutionSink): FerretExecutionHandle {
+    fun start(input: FerretLaunchInput, sink: FerretExecutionSink): FerretExecutionHandle {
         val handle = FerretExecutionHandle()
         val job = connection.launchRun {
             try {

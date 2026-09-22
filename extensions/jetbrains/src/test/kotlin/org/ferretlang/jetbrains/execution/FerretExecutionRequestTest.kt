@@ -1,5 +1,8 @@
 package org.ferretlang.jetbrains.execution
 
+import org.ferretlang.jetbrains.launch.FerretLaunchException
+import org.ferretlang.jetbrains.launch.FerretLaunchInput
+
 import org.ferretlang.jetbrains.run.FerretParameterBindings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -19,7 +22,7 @@ class FerretExecutionRequestTest {
         val source = Files.writeString(queries.resolve("query ü.fql"), "RETURN 1")
 
         val request = FerretExecutionRequest.resolve(
-            FerretExecutionInput(
+            FerretLaunchInput(
                 "queries space/query ü.fql",
                 "runtime ü",
                 project.toString(),
@@ -40,14 +43,14 @@ class FerretExecutionRequestTest {
         val source = Files.writeString(nested.resolve("query.fql"), "RETURN 1")
 
         val projectRequest = FerretExecutionRequest.resolve(
-            FerretExecutionInput(source.toString(), " ", project.toString(), FerretParameterBindings.EMPTY),
+            FerretLaunchInput(source.toString(), " ", project.toString(), FerretParameterBindings.EMPTY),
         )
         assertEquals(project.toRealPath(), projectRequest.workspaceRoot)
         assertEquals("nested/query.fql", projectRequest.relativeSourcePath)
         assertNull(projectRequest.workingDirectory)
 
         val parentRequest = FerretExecutionRequest.resolve(
-            FerretExecutionInput(source.toString(), "", null, FerretParameterBindings.EMPTY),
+            FerretLaunchInput(source.toString(), "", null, FerretParameterBindings.EMPTY),
         )
         assertEquals(nested.toRealPath(), parentRequest.workspaceRoot)
         assertEquals("query.fql", parentRequest.relativeSourcePath)
@@ -61,7 +64,7 @@ class FerretExecutionRequestTest {
         val runtime = Files.createTempDirectory("ferret-external-runtime-")
 
         val request = FerretExecutionRequest.resolve(
-            FerretExecutionInput(
+            FerretLaunchInput(
                 source.toString(),
                 runtime.toString(),
                 project.toString(),
@@ -77,29 +80,29 @@ class FerretExecutionRequestTest {
     fun rejectsInvalidOrNoncontainingProjectBaseWithoutFallingBack() {
         val source = Files.writeString(Files.createTempFile("ferret-outside-", ".fql"), "RETURN 1")
         val project = Files.createTempDirectory("ferret-project-")
-        assertThrows(FerretExecutionRequestException::class.java) {
+        assertThrows(FerretLaunchException::class.java) {
             FerretExecutionRequest.resolve(
-                FerretExecutionInput(source.toString(), "", project.toString(), FerretParameterBindings.EMPTY),
+                FerretLaunchInput(source.toString(), "", project.toString(), FerretParameterBindings.EMPTY),
             )
         }
 
         val missing = project.resolve("missing")
-        assertThrows(FerretExecutionRequestException::class.java) {
+        assertThrows(FerretLaunchException::class.java) {
             FerretExecutionRequest.resolve(
-                FerretExecutionInput(source.toString(), "", missing.toString(), FerretParameterBindings.EMPTY),
+                FerretLaunchInput(source.toString(), "", missing.toString(), FerretParameterBindings.EMPTY),
             )
         }
 
         val file = Files.writeString(project.resolve("not-a-directory"), "value")
-        assertThrows(FerretExecutionRequestException::class.java) {
+        assertThrows(FerretLaunchException::class.java) {
             FerretExecutionRequest.resolve(
-                FerretExecutionInput(source.toString(), "", file.toString(), FerretParameterBindings.EMPTY),
+                FerretLaunchInput(source.toString(), "", file.toString(), FerretParameterBindings.EMPTY),
             )
         }
 
-        assertThrows(FerretExecutionRequestException::class.java) {
+        assertThrows(FerretLaunchException::class.java) {
             FerretExecutionRequest.resolve(
-                FerretExecutionInput(source.toString(), "", "", FerretParameterBindings.EMPTY),
+                FerretLaunchInput(source.toString(), "", "", FerretParameterBindings.EMPTY),
             )
         }
     }
@@ -107,22 +110,22 @@ class FerretExecutionRequestTest {
     @Test
     fun rejectsRelativeWorkingDirectoryWithoutProjectBaseAndInvalidRuntimePaths() {
         val source = Files.writeString(Files.createTempFile("ferret-source-", ".fql"), "RETURN 1")
-        assertThrows(FerretExecutionRequestException::class.java) {
+        assertThrows(FerretLaunchException::class.java) {
             FerretExecutionRequest.resolve(
-                FerretExecutionInput(source.toString(), "runtime", null, FerretParameterBindings.EMPTY),
+                FerretLaunchInput(source.toString(), "runtime", null, FerretParameterBindings.EMPTY),
             )
         }
 
         val file = Files.writeString(Files.createTempFile("ferret-runtime-file-", ".txt"), "value")
-        assertThrows(FerretExecutionRequestException::class.java) {
+        assertThrows(FerretLaunchException::class.java) {
             FerretExecutionRequest.resolve(
-                FerretExecutionInput(source.toString(), file.toString(), null, FerretParameterBindings.EMPTY),
+                FerretLaunchInput(source.toString(), file.toString(), null, FerretParameterBindings.EMPTY),
             )
         }
 
-        assertThrows(FerretExecutionRequestException::class.java) {
+        assertThrows(FerretLaunchException::class.java) {
             FerretExecutionRequest.resolve(
-                FerretExecutionInput(
+                FerretLaunchInput(
                     source.toString(),
                     file.resolveSibling("missing").toString(),
                     null,
@@ -146,9 +149,9 @@ class FerretExecutionRequestTest {
         } catch (_: UnsupportedOperationException) {
             return
         }
-        assertThrows(FerretExecutionRequestException::class.java) {
+        assertThrows(FerretLaunchException::class.java) {
             FerretExecutionRequest.resolve(
-                FerretExecutionInput(link.toString(), "", project.toString(), FerretParameterBindings.EMPTY),
+                FerretLaunchInput(link.toString(), "", project.toString(), FerretParameterBindings.EMPTY),
             )
         }
     }
@@ -170,7 +173,7 @@ class FerretExecutionRequestTest {
         }
 
         val request = FerretExecutionRequest.resolve(
-            FerretExecutionInput(source.toString(), link.toString(), project.toString(), FerretParameterBindings.EMPTY),
+            FerretLaunchInput(source.toString(), link.toString(), project.toString(), FerretParameterBindings.EMPTY),
         )
 
         assertEquals(runtime.toRealPath(), request.workingDirectory)
@@ -189,9 +192,9 @@ class FerretExecutionRequestTest {
         try {
             Files.setPosixFilePermissions(runtime, emptySet<PosixFilePermission>())
             assumeFalse(Files.isReadable(runtime))
-            assertThrows(FerretExecutionRequestException::class.java) {
+            assertThrows(FerretLaunchException::class.java) {
                 FerretExecutionRequest.resolve(
-                    FerretExecutionInput(
+                    FerretLaunchInput(
                         source.toString(),
                         runtime.toString(),
                         project.toString(),

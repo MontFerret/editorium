@@ -1,5 +1,7 @@
 package org.ferretlang.jetbrains.run
 
+import org.ferretlang.jetbrains.launch.FerretLaunchInput
+
 import com.intellij.execution.configurations.RuntimeConfigurationError
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
@@ -236,11 +238,11 @@ class FerretRunConfigurationValidationTest : BasePlatformTestCase() {
         return Files.writeString(source, "RETURN 1")
     }
 
-    private fun executionError(configuration: FerretRunConfiguration): org.ferretlang.jetbrains.execution.FerretExecutionRequestException {
+    private fun executionError(configuration: FerretRunConfiguration): org.ferretlang.jetbrains.launch.FerretLaunchException {
         configuration.checkConfiguration()
-        return Assert.assertThrows(org.ferretlang.jetbrains.execution.FerretExecutionRequestException::class.java) {
+        return Assert.assertThrows(org.ferretlang.jetbrains.launch.FerretLaunchException::class.java) {
             org.ferretlang.jetbrains.execution.FerretExecutionRequest.resolve(
-                org.ferretlang.jetbrains.execution.FerretExecutionInput(
+                org.ferretlang.jetbrains.launch.FerretLaunchInput(
                     configuration.sourcePath, configuration.workingDirectory, project.basePath, configuration.parameters,
                 ),
             )

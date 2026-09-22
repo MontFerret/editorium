@@ -1,5 +1,7 @@
 package org.ferretlang.jetbrains.run
 
+import org.ferretlang.jetbrains.launch.FerretLaunchInput
+
 import com.intellij.execution.configurations.ConfigurationInfoProvider
 import com.intellij.execution.configurations.RunProfile
 import com.intellij.execution.configurations.RunnerSettings
@@ -18,7 +20,7 @@ class FerretRunProfileStateTest : BasePlatformTestCase() {
         val file = requireNotNull(com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByNioFile(source))
         val documents = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance()
         val document = requireNotNull(documents.getDocument(file))
-        val input = org.ferretlang.jetbrains.execution.FerretExecutionInput(
+        val input = org.ferretlang.jetbrains.launch.FerretLaunchInput(
             source.toString(), "", project.basePath, FerretParameterBindings.EMPTY,
         )
         try {
