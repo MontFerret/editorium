@@ -41,7 +41,7 @@ class FerretDapIntegrationTest {
         }
     }
 
-    @Test fun stepsThroughFunctionsAndLoadsPagedStacksWithoutInspection() = runBlocking {
+    @Test fun stepsThroughFunctionsAndLoadsPagedStacksWithInspection() = runBlocking {
         withTimeout(15_000) {
             val launch = launch("steps.fql", """
                 FUNC add(value) {
@@ -70,6 +70,11 @@ class FerretDapIntegrationTest {
                 val stack = requireNotNull(launch.session.stackTrace(next, 0, 1))
                 assertTrue(stack.stackFrames.isNotEmpty())
                 assertTrue(stack.stackFrames.first().name.isNotBlank())
+                val frame = stack.stackFrames.first()
+                val groups = requireNotNull(launch.session.scopes(next, frame.id)).scopes
+                assertEquals(listOf("Locals", "Parameters"), groups.map { it.name })
+                groups.forEach { assertNotNull(launch.session.variables(next, it.variablesReference)) }
+                assertEquals("2", requireNotNull(launch.session.evaluate(next, frame.id, "@value")).result)
                 if (command == FerretDapCommand.STEP_IN) {
                     val caller = requireNotNull(launch.session.stackTrace(next, 1, 1))
                     assertEquals(1, caller.stackFrames.size)
@@ -93,6 +98,10 @@ class FerretDapIntegrationTest {
             assertEquals("breakpoint", hit.reason)
             assertEquals(listOf(3L), hit.hitKeys)
             assertEquals(3, requireNotNull(launch.session.stackTrace(hit, 0, 1)).stackFrames.single().line)
+            val frame = requireNotNull(launch.session.stackTrace(hit, 0, 1)).stackFrames.single()
+            val locals = requireNotNull(launch.session.scopes(hit, frame.id)).scopes.first()
+            assertTrue(requireNotNull(launch.session.variables(hit, locals.variablesReference)).variables.isNotEmpty())
+            assertNotNull(launch.session.evaluate(hit, frame.id, "i"))
             launch.replace(2)
             assertTrue(launch.listener.replacements.receive().second.isEmpty())
             launch.session.command(FerretDapCommand.CONTINUE, hit)
@@ -100,6 +109,9 @@ class FerretDapIntegrationTest {
             launch.session.command(FerretDapCommand.PAUSE)
             val paused = launch.stopped()
             assertEquals("pause", paused.reason)
+            assertNull(launch.session.variables(hit, locals.variablesReference))
+            val pausedFrame = requireNotNull(launch.session.stackTrace(paused, 0, 1)).stackFrames.single()
+            assertNotNull(launch.session.scopes(paused, pausedFrame.id))
             launch.replace(3, 4)
             launch.listener.replacements.receive()
             launch.session.command(FerretDapCommand.CONTINUE, paused)

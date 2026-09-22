@@ -28,13 +28,7 @@ class FerretLaunchParityTest {
                 assertEquals("queries/main.fql", run.relativeSourcePath)
                 assertSame(bindings, resolved.bindings)
                 assertSame(bindings, run.bindings)
-                val values = (debug["parameters"] as Map<*, *>)["value"] as Map<*, *>
-                assertTrue(values.containsKey("null"))
-                assertNull(values["null"])
-                assertEquals(true, values["boolean"])
-                assertEquals(1.25, values["number"])
-                assertEquals("😀", values["string"])
-                assertEquals(listOf(false, 2.0), values["array"])
+                assertSame(bindings, debug["parameters"])
             }
         } finally {
             root.toFile().deleteRecursively()

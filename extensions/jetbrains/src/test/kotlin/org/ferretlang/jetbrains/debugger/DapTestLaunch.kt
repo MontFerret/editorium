@@ -13,10 +13,11 @@ internal class DapTestLaunch(
     timeouts: FerretDapTimeouts = FerretDapTimeouts(3_000, 2_000, 100),
     requiresForce: Boolean = false,
     beforeProcess: () -> Unit = {},
+    bindings: FerretParameterBindings = FerretParameterBindings.EMPTY,
 ) {
     val root = Files.createTempDirectory("ferret-dap-test-")
     val source = Files.writeString(root.resolve("query.fql"), "RETURN 1")
-    val input = FerretLaunchInput(source.toString(), "", root.toString(), FerretParameterBindings.EMPTY)
+    val input = FerretLaunchInput(source.toString(), "", root.toString(), bindings)
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val adapter = DapTestAdapter()
     val process = DapTestProcess(adapter, requiresForce)

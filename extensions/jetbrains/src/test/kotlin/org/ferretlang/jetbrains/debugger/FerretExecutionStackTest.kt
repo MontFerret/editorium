@@ -1,13 +1,19 @@
 package org.ferretlang.jetbrains.debugger
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.eclipse.lsp4j.debug.StackFrame
 import org.eclipse.lsp4j.debug.StackTraceResponse
+import org.eclipse.lsp4j.jsonrpc.ResponseErrorException
+import org.eclipse.lsp4j.jsonrpc.messages.ResponseError
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class FerretExecutionStackTest : BasePlatformTestCase() {
     fun testPagingStartsAtRequestedIndexAndRetainsFrameIdentity() = scenario {
@@ -15,7 +21,7 @@ class FerretExecutionStackTest : BasePlatformTestCase() {
         session.launchCompleted.await()
         adapter.stop("step")
         val stop = listener.stops.receive()
-        val stack = FerretExecutionStack(session, stop, scope, FerretSourcePositions(root))
+        val stack = FerretExecutionStack(session, stop, scope, FerretSourcePositions(root), project)
         val container = DapTestStackContainer()
         stack.computeStackFrames(10, container)
         val first = adapter.stackRequests.receive()
@@ -28,10 +34,10 @@ class FerretExecutionStackTest : BasePlatformTestCase() {
         val frame = shown.first.first() as FerretStackFrame
         assertSame(stop, frame.stop)
         assertEquals("frame 10", frame.name)
-        assertEquals(FerretStackFrame(10, "same frame", stop, null).equalityObject, frame.equalityObject)
-        assertFalse(FerretStackFrame(10, "new stop", stop.copy(generation = stop.generation + 1), null).equalityObject == frame.equalityObject)
+        assertEquals(FerretStackFrame(10, "same frame", FerretInspectionContext(session, stop, scope, project), null).equalityObject, frame.equalityObject)
+        assertFalse(FerretStackFrame(10, "new stop", FerretInspectionContext(session, stop.copy(generation = stop.generation + 1), scope, project), null).equalityObject == frame.equalityObject)
         assertNull(frame.sourcePosition)
-        assertNull(frame.evaluator)
+        assertNotNull(frame.evaluator)
         val last = adapter.stackRequests.receive()
         assertEquals(110, last.first.startFrame)
         assertEquals(100, last.first.levels)
@@ -47,7 +53,7 @@ class FerretExecutionStackTest : BasePlatformTestCase() {
         session.launchCompleted.await()
         adapter.stop()
         val stop = listener.stops.receive()
-        val stack = FerretExecutionStack(session, stop, scope, FerretSourcePositions(root))
+        val stack = FerretExecutionStack(session, stop, scope, FerretSourcePositions(root), project)
         val container = DapTestStackContainer()
         stack.computeStackFrames(0, container)
         val old = adapter.stackRequests.receive()
@@ -60,6 +66,34 @@ class FerretExecutionStackTest : BasePlatformTestCase() {
         barrier.await()
         assertTrue(container.pages.tryReceive().isFailure)
         assertNull(stack.topFrame)
+    }
+
+    fun testRejectedPageQueuedBehindEdtFinishesEmptyAfterAReplacementStop() = scenario {
+        start()
+        session.launchCompleted.await()
+        adapter.stop()
+        val stop = listener.stops.receive()
+        val stack = FerretExecutionStack(session, stop, scope, FerretSourcePositions(root), project)
+        val container = DapTestStackContainer()
+        stack.computeStackFrames(0, container)
+        val request = adapter.stackRequests.receive()
+        val entered = CompletableDeferred<Unit>()
+        val release = CountDownLatch(1)
+        ApplicationManager.getApplication().invokeLater {
+            entered.complete(Unit)
+            check(release.await(5, TimeUnit.SECONDS))
+        }
+        try {
+            entered.await()
+            request.second.completeExceptionally(ResponseErrorException(ResponseError(-32602, "old stack error", null)))
+            val barrier = scope.async { session.stackTrace(stop, 0, 1) }
+            adapter.stackRequests.receive().second.complete(page(0, 1, 1))
+            barrier.await()
+            adapter.stop("step")
+            listener.stops.receive()
+        } finally { release.countDown() }
+        assertEquals(emptyList<Any>() to true, container.pages.receive())
+        assertTrue(container.errors.tryReceive().isFailure)
     }
 
     private fun scenario(block: suspend DapTestLaunch.() -> Unit) {

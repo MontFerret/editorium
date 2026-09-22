@@ -12,6 +12,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.future.await
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.selects.select
@@ -61,6 +62,8 @@ internal class FerretDapSession(
     private var pendingBreakpoints = 0
     private val sourceRevisions = mutableMapOf<Path, Long>()
     private val breakpointKeys = mutableMapOf<Int, Long>()
+    private val inspections = mutableMapOf<CompletableDeferred<*>, () -> Unit>()
+    private val inspectionEnded = CompletableDeferred<Unit>()
     @Volatile private var confirmedStop: FerretDapStop? = null
     @Volatile private var inspectable = false
     @Volatile var ready: Boolean = false
@@ -93,11 +96,10 @@ internal class FerretDapSession(
                     }
                     launch(Dispatchers.IO) {
                         try {
-                            adapter.errorStream.bufferedReader().useLines { lines ->
-                                lines.forEach { LOG.info("ferretd dap: $it") }
-                            }
+                            // Drain diagnostics without copying potentially sensitive runtime text into IDE logs.
+                            adapter.errorStream.use { it.copyTo(java.io.OutputStream.nullOutputStream()) }
                         } catch (error: Exception) {
-                            if (!ending) LOG.debug("Ferret debug diagnostic stream closed", error)
+                            FerretDapErrors.log("diagnostic stream", error)
                         }
                     }
                     launch(Dispatchers.IO) {
@@ -113,7 +115,7 @@ internal class FerretDapSession(
                             linesStartAt1 = true
                             columnsStartAt1 = true
                             pathFormat = "path"
-                            supportsVariableType = false
+                            supportsVariableType = true
                             supportsRunInTerminalRequest = false
                         })
                     }) { result ->
@@ -136,16 +138,18 @@ internal class FerretDapSession(
         } finally {
             ending = true
             ready = false
-            inspectable = false
+            invalidateInspection()
             confirmedStop = null
-            events.close()
+            inspectionEnded.complete(Unit)
+            // Completed consoles can retain this session; release queued responses and their runtime values.
+            events.cancel()
             coroutineContext.cancelChildren()
             withContext(NonCancellable) {
                 try {
                     withContext(Dispatchers.IO) { cleanup() }
                 } catch (error: Exception) {
                     failure = true
-                    LOG.warn("Ferret Debug cleanup failed", error)
+                    FerretDapErrors.log("cleanup", error)
                 }
                 val code = exitCode ?: when {
                     failure -> 1
@@ -169,7 +173,7 @@ internal class FerretDapSession(
     }
 
     fun isCurrentStop(stop: FerretDapStop): Boolean =
-        inspectable && confirmedStop === stop && !stopRequested.get()
+        inspectable && confirmedStop === stop && !stopRequested.get() && scope.isActive
 
     fun canPerformCommands(): Boolean = ready && pendingCommand == null && !stopRequested.get()
 
@@ -208,7 +212,7 @@ internal class FerretDapSession(
         val previous = confirmedStop
         val sequence = ++commandSequence
         pendingCommand = sequence
-        if (!pausing) inspectable = false
+        if (!pausing) invalidateInspection()
         val thread = previous?.threadId ?: FERRET_THREAD
         request("${command.name.lowercase()}", {
             when (command) {
@@ -225,8 +229,10 @@ internal class FerretDapSession(
             }
             if (pendingCommand == sequence) {
                 pendingCommand = null
-                inspectable = previous != null
-                previous?.let(listener::stopped)
+                // Rejection preserves the backend stop, but must never revive old requests or UI handles.
+                confirmedStop = previous?.copy(generation = ++generation)
+                inspectable = confirmedStop != null
+                confirmedStop?.let(listener::stopped)
             }
             listener.error("Ferret ${command.name.lowercase()} failed: ${error.message}")
         }) {
@@ -240,27 +246,70 @@ internal class FerretDapSession(
         }
     }
 
-    suspend fun stackTrace(stop: FerretDapStop, start: Int, count: Int): StackTraceResponse? {
-        val result = CompletableDeferred<StackTraceResponse?>()
+    suspend fun stackTrace(stop: FerretDapStop, start: Int, count: Int): StackTraceResponse? =
+        inspect(stop, "stackTrace") {
+            server.stackTrace(StackTraceArguments().apply {
+                threadId = stop.threadId
+                startFrame = start
+                levels = count
+            })
+        }
+
+    suspend fun scopes(stop: FerretDapStop, frameId: Int): ScopesResponse? = inspect(stop, "scopes") {
+        server.scopes(ScopesArguments().apply { this.frameId = frameId })
+    }
+
+    suspend fun variables(stop: FerretDapStop, reference: Int): VariablesResponse? {
+        if (!isCurrentStop(stop)) return null
+        // Leaf values have no remote children, including summarized collections.
+        if (reference <= 0) return VariablesResponse().apply { variables = emptyArray() }
+        return inspect(stop, "variables") {
+            server.variables(VariablesArguments().apply { variablesReference = reference })
+        }
+    }
+
+    suspend fun evaluate(stop: FerretDapStop, frameId: Int, expression: String): EvaluateResponse? =
+        inspect(stop, "evaluate") {
+            server.evaluate(EvaluateArguments().apply {
+                this.frameId = frameId
+                this.expression = expression
+            })
+        }
+
+    private suspend fun <T> inspect(stop: FerretDapStop, name: String, operation: () -> CompletableFuture<T>): T? {
+        if (!isCurrentStop(stop)) return null
+        val result = CompletableDeferred<T?>()
         if (!enqueue {
             if (!isCurrentStop(stop)) {
                 result.complete(null)
             } else {
-                request("stackTrace", {
-                    server.stackTrace(StackTraceArguments().apply {
-                        threadId = stop.threadId
-                        startFrame = start
-                        levels = count
-                    })
-                }, failed = { result.completeExceptionally(it) }) {
+                val abandon = request(name, operation, fatalTimeout = false, failed = {
+                    inspections.remove(result)
+                    if (isCurrentStop(stop)) {
+                        FerretDapErrors.log(name, it)
+                        result.completeExceptionally(it)
+                    } else result.complete(null)
+                }) {
+                    inspections.remove(result)
                     result.complete(if (isCurrentStop(stop)) it else null)
                 }
+                if (!result.isCompleted) inspections[result] = { abandon(); result.complete(null) }
             }
         }) return null
-        return select {
-            result.onAwait { it }
-            completion.onAwait { null }
+        try {
+            return select {
+                result.onAwait { it }
+                inspectionEnded.onAwait { null }
+            }
+        } finally {
+            enqueue { inspections.remove(result)?.invoke() }
         }
+    }
+
+    private fun invalidateInspection() {
+        inspectable = false
+        inspections.values.forEach { it() }
+        inspections.clear()
     }
 
     override fun initialized() { enqueue {
@@ -280,6 +329,7 @@ internal class FerretDapSession(
     } }
 
     override fun stopped(args: StoppedEventArguments) { enqueue {
+        invalidateInspection()
         val stop = FerretDapStop(
             ++generation, args.threadId ?: FERRET_THREAD, args.reason,
             args.description ?: args.text, args.hitBreakpointIds.orEmpty().mapNotNull(breakpointKeys::get),
@@ -297,6 +347,7 @@ internal class FerretDapSession(
     override fun exited(args: ExitedEventArguments) { enqueue { exitCode = args.exitCode } }
 
     override fun terminated(args: TerminatedEventArguments?) { enqueue {
+        invalidateInspection()
         targetTerminated = true
         ending = true
     } }
@@ -311,25 +362,26 @@ internal class FerretDapSession(
         name: String,
         operation: () -> CompletableFuture<T>,
         startup: Boolean = false,
+        fatalTimeout: Boolean = true,
         failed: (Throwable) -> Unit = ::fail,
         succeeded: (T) -> Unit,
-    ) {
+    ): () -> Unit {
         var delivered = false
         val future = try {
             operation()
         } catch (error: Exception) {
             failed(error)
-            return
+            return {}
         }
         val timer = if (startup) null else scope.launch {
             delay(timeouts.requestMillis)
             enqueue {
                 if (!delivered) {
                     delivered = true
-                    // A timeout leaves command acceptance unknown, so it is a session failure.
+                    // Control acceptance is unknown after a timeout; read-only inspection can fail locally.
                     val error = IllegalStateException("Ferret DAP $name timed out.")
                     failed(error)
-                    fail(error)
+                    if (fatalTimeout) fail(error)
                 }
             }
         }
@@ -342,6 +394,8 @@ internal class FerretDapSession(
                 } else failed(error.cause ?: error)
             }
         } }
+        // Called only by the state queue. Do not emit unsupported DAP cancellation requests.
+        return { delivered = true; timer?.cancel() }
     }
 
     private fun enqueue(event: () -> Unit): Boolean = events.trySend {
@@ -352,8 +406,10 @@ internal class FerretDapSession(
         if (ending || stopRequested.get()) return
         failure = true
         ending = true
+        invalidateInspection()
         launchCompleted.completeExceptionally(error)
-        LOG.warn("Ferret Debug failed", error)
+        FerretDapErrors.log("session", error)
+        LOG.warn("Ferret Debug session failed (${error.javaClass.simpleName}).")
         listener.error(error.message ?: "Ferret Debug failed. See the IDE log for details.")
     }
 
@@ -364,7 +420,7 @@ internal class FerretDapSession(
                 cleanupRequest("terminate") { connection.server.terminate(TerminateArguments()) }
             }
             cleanupRequest("disconnect") { connection.server.disconnect(DisconnectArguments().apply { terminateDebuggee = true }) }
-            try { connection.close() } catch (error: Exception) { LOG.warn("Closing Ferret DAP transport failed", error) }
+            try { connection.close() } catch (error: Exception) { FerretDapErrors.log("transport cleanup", error) }
         }
         process?.let { adapter ->
             try {
@@ -385,13 +441,16 @@ internal class FerretDapSession(
         }
         breakpointKeys.clear()
         sourceRevisions.clear()
+        transport = null
+        process = null
+        resolvedInput = null
     }
 
     private suspend fun cleanupRequest(name: String, operation: () -> CompletableFuture<*>) {
         try {
             withTimeout(timeouts.shutdownMillis) { operation().await() }
         } catch (error: Exception) {
-            LOG.debug("Ferret DAP $name cleanup failed", error)
+            FerretDapErrors.log("$name cleanup", error)
         }
     }
 

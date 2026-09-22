@@ -1,17 +1,21 @@
 # M3 T1: JetBrains debugger architecture spike
 
-Current status (September 22, 2026): M3 T2 implements the selected native
+Current status (September 22, 2026): M3 T2/T3 implement the selected native
 XDebugger → LSP4J Debug → per-launch `ferretd dap` architecture against the sole
 repository pin `1.0.0-alpha.8`. Run and Debug share launch-input resolution;
 breakpoints, control commands, stacks, source navigation, console output, and
-session cleanup are implemented. Variables, scopes, evaluation, and watches
-remain T3 work. See the [current README](../README.md#debugging) for supported
+session cleanup are implemented. M3 T3 adds lazy Locals/Parameters groups, typed
+values, selected-frame expression evaluation, and native watches. Inspection
+shares the ordered session queue, is invalidated per stop, and reports request
+failures locally while transport loss remains session-fatal. Null launch bindings
+are preserved by a parameter-specific DAP serializer.
+See the [current README](../README.md#debugging) for supported
 behavior and source-snapshot limitations. The original spike text below is
 historical evidence, including its alpha.6 blockers and then-future task lists;
 it is not the current capability summary.
 
 Alpha.8 fixes the first-executable-statement breakpoint failure recorded with
-alpha.7. The [T2 validation report](debugger-validation.md) retains that
+alpha.7. The [debugger validation report](debugger-validation.md) retains that
 historical evidence and records follow-up validation. The manual UI pass
 remains unverified, so T2 is not an unconditional release sign-off.
 

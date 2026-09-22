@@ -61,15 +61,17 @@ internal class FerretDebugProcess(session: XDebugSession, input: FerretLaunchInp
     override fun stopped(stop: FerretDapStop) {
         scope.launch(Dispatchers.IO) {
             val workspace = dap.resolvedInput?.workspaceRoot ?: return@launch
-            val stack = FerretExecutionStack(dap, stop, scope, FerretSourcePositions(workspace))
-            try {
+            val stack = FerretExecutionStack(dap, stop, scope, FerretSourcePositions(workspace), session.project)
+            val stackError = try {
                 stack.loadTopFrame()
+                null
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
-                if (dap.isCurrentStop(stop)) this@FerretDebugProcess.error(error.message ?: "Cannot load the Ferret stack.")
+                FerretDapErrors.message(error, "Cannot load the Ferret stack.")
             }
             withContext(Dispatchers.EDT) {
                 if (!dap.isCurrentStop(stop) || session.project.isDisposed || handler.isProcessTerminated) return@withContext
+                stackError?.let(this@FerretDebugProcess::error)
                 val context = FerretSuspendContext(stack)
                 val breakpoint = breakpoints.hit(stop.hitKeys)
                 if (stop.reason != "breakpoint" || breakpoint == null || !session.breakpointReached(breakpoint, null, context)) {

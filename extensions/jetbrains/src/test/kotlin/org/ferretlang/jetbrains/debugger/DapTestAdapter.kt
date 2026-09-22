@@ -16,6 +16,9 @@ internal class DapTestAdapter : IDebugProtocolServer {
     val breakpointRequests = Channel<Pair<SetBreakpointsArguments, CompletableFuture<SetBreakpointsResponse>>>(Channel.UNLIMITED)
     val controlRequests = Channel<Pair<String, CompletableFuture<Void>>>(Channel.UNLIMITED)
     val stackRequests = Channel<Pair<StackTraceArguments, CompletableFuture<StackTraceResponse>>>(Channel.UNLIMITED)
+    val scopeRequests = Channel<Pair<ScopesArguments, CompletableFuture<ScopesResponse>>>(Channel.UNLIMITED)
+    val variableRequests = Channel<Pair<VariablesArguments, CompletableFuture<VariablesResponse>>>(Channel.UNLIMITED)
+    val evaluateRequests = Channel<Pair<EvaluateArguments, CompletableFuture<EvaluateResponse>>>(Channel.UNLIMITED)
     val disconnected = CompletableFuture<Void>()
     val terminateResponse = CompletableFuture<Void>()
     var autoTerminate = true
@@ -68,6 +71,21 @@ internal class DapTestAdapter : IDebugProtocolServer {
     override fun stackTrace(args: StackTraceArguments): CompletableFuture<StackTraceResponse> {
         history.add("stackTrace")
         return CompletableFuture<StackTraceResponse>().also { stackRequests.trySend(args to it) }
+    }
+
+    override fun scopes(args: ScopesArguments): CompletableFuture<ScopesResponse> {
+        history.add("scopes")
+        return CompletableFuture<ScopesResponse>().also { scopeRequests.trySend(args to it) }
+    }
+
+    override fun variables(args: VariablesArguments): CompletableFuture<VariablesResponse> {
+        history.add("variables")
+        return CompletableFuture<VariablesResponse>().also { variableRequests.trySend(args to it) }
+    }
+
+    override fun evaluate(args: EvaluateArguments): CompletableFuture<EvaluateResponse> {
+        history.add("evaluate")
+        return CompletableFuture<EvaluateResponse>().also { evaluateRequests.trySend(args to it) }
     }
 
     override fun terminate(args: TerminateArguments): CompletableFuture<Void> {
