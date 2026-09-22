@@ -9,6 +9,10 @@ import {
 import { showExecutionOutputCommand } from '../execution/feedback';
 import { restartForServerConfigurationChange } from '../extension';
 import { extensionId } from './extension-identity';
+import {
+  discardTestDocument,
+  waitForFerretLanguageConfiguration,
+} from './language-configuration-readiness';
 
 class FakeServerLifecycleController {
   public restarts = 0;
@@ -421,53 +425,61 @@ suite('Ferret declarative language support', () => {
   });
 
   test('uses the configured line and block comment commands', async () => {
+    await waitForFerretLanguageConfiguration();
     const original = 'return 1\nreturn 2';
     const document = await vscode.workspace.openTextDocument({
       language: 'ferret',
       content: original,
     });
-    const editor = await vscode.window.showTextDocument(document);
+    try {
+      const editor = await vscode.window.showTextDocument(document);
 
-    editor.selection = new vscode.Selection(0, 0, 1, 'return 2'.length);
-    await vscode.commands.executeCommand('editor.action.commentLine');
+      editor.selection = new vscode.Selection(0, 0, 1, 'return 2'.length);
+      await vscode.commands.executeCommand('editor.action.commentLine');
 
-    assert.match(document.getText(), /^\/\/\s?return 1\n\/\/\s?return 2$/u);
+      assert.match(document.getText(), /^\/\/\s?return 1\n\/\/\s?return 2$/u);
 
-    await vscode.commands.executeCommand('undo');
-    assert.strictEqual(document.getText(), original);
+      await vscode.commands.executeCommand('undo');
+      assert.strictEqual(document.getText(), original);
 
-    editor.selection = new vscode.Selection(0, 0, 0, 'return 1'.length);
-    await vscode.commands.executeCommand('editor.action.blockComment');
+      editor.selection = new vscode.Selection(0, 0, 0, 'return 1'.length);
+      await vscode.commands.executeCommand('editor.action.blockComment');
 
-    assert.match(document.getText(), /^\/\*\s?return 1\s?\*\/\nreturn 2$/u);
+      assert.match(document.getText(), /^\/\*\s?return 1\s?\*\/\nreturn 2$/u);
 
-    await vscode.commands.executeCommand('undo');
-    assert.strictEqual(document.getText(), original);
-
-    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+      await vscode.commands.executeCommand('undo');
+      assert.strictEqual(document.getText(), original);
+    } finally {
+      await discardTestDocument(document);
+    }
   });
 
   test('auto-closes braces and indents their contents', async () => {
+    await waitForFerretLanguageConfiguration();
     const document = await vscode.workspace.openTextDocument({
       language: 'ferret',
       content: '',
     });
 
-    await vscode.window.showTextDocument(document);
-    await vscode.commands.executeCommand('type', {
-      text: 'for item in items ',
-    });
-    await vscode.commands.executeCommand('type', { text: '{' });
+    try {
+      await vscode.window.showTextDocument(document);
+      await vscode.commands.executeCommand('type', {
+        text: 'for item in items ',
+      });
+      await vscode.commands.executeCommand('type', { text: '{' });
 
-    assert.strictEqual(document.getText(), 'for item in items {}');
+      assert.strictEqual(document.getText(), 'for item in items {}');
 
-    await vscode.commands.executeCommand('type', { text: '\n' });
-    await vscode.commands.executeCommand('type', { text: 'return item' });
+      await vscode.commands.executeCommand('type', { text: '\n' });
+      await vscode.commands.executeCommand('type', { text: 'return item' });
 
-    assert.strictEqual(
-      document.getText(),
-      'for item in items {\n    return item\n}',
-    );
+      assert.strictEqual(
+        document.getText(),
+        'for item in items {\n    return item\n}',
+      );
+    } finally {
+      await discardTestDocument(document);
+    }
   });
 
   test('recognizes .fql files and activates successfully', async () => {
