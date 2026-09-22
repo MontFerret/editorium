@@ -1,5 +1,52 @@
 # M3 T2 debugger validation
 
+## September 22, 2026: alpha.8 follow-up
+
+The sole repository pin is now `1.0.0-alpha.8`. The
+[upstream release](https://github.com/MontFerret/ferretd/releases/tag/v1.0.0-alpha.8)
+fixes the first-executable-statement breakpoint defect described in the
+historical alpha.7 report below.
+
+On revision `b861896`, [JetBrains CI](https://github.com/MontFerret/editorium/actions/runs/35755685043)
+passed unit/platform tests and build, verification, and packaging. All three OS
+integration jobs (Ubuntu, macOS, and Windows) ran 20 tests with one failure:
+`alpha7SkipsVerifiedBreakpointAtFirstExecutableStatement`. That characterization
+expected the old defect and awaited termination without continuing the newly
+correct breakpoint stop. The stale expectation belongs to Editorium.
+
+The replacement `hitsVerifiedBreakpointAtFirstExecutableStatement` checks
+verification, the breakpoint reason and hit identity, the original source at
+line 1/column 1, and confirmed suspension with `stopOnEntry=false`. It then
+continues and checks result `1`, exit code 0, no further stops or session errors,
+and adapter exit. Production behavior, the daemon pin, deadlines, and CI
+configuration are unchanged by this correction.
+
+Local follow-up on macOS arm64 with Temurin JDK 25.0.4.1 and IntelliJ Platform
+2026.2.0.1:
+
+| Check | Status | Evidence |
+| --- | --- | --- |
+| Alpha.8 acquisition | PASS | `make prepare jetbrains` verified and staged all six release targets; native version reports `1.0.0-alpha.8`. |
+| First-statement regression | PASS | Focused `ferretdIntegrationTest` ran the replacement test against the acquired alpha.8 binary supplied by `FERRETD_TEST_PATH`. |
+| Complete JetBrains suite | PASS | `make test jetbrains`: protocol drift check, 152 unit/platform tests, and 20 real-daemon tests; no failures or skips. |
+| Final review | PASS | Complete four-file diff reviewed; `git diff --check` passed. |
+| Hosted CI for this correction | NOT RUN | Changes are local; Ubuntu, macOS, and Windows must pass on the updated PR revision before declaring hosted CI resolved. |
+
+The focused command, run from the repository root with `JAVA_HOME` set to the
+JDK 25 installation, was:
+
+```sh
+FERRETD_TEST_PATH="$PWD/.dist/ferretd/1.0.0-alpha.8/darwin-arm64/extracted/ferretd" \
+  extensions/jetbrains/gradlew -p extensions/jetbrains ferretdIntegrationTest \
+  --tests org.ferretlang.jetbrains.integration.FerretDapIntegrationTest.hitsVerifiedBreakpointAtFirstExecutableStatement
+```
+
+The manual sandbox limitations below remain unresolved. The September 16
+results, including alpha.7's failure and package evidence, remain historical
+evidence rather than claims about alpha.8.
+
+## September 16, 2026: historical alpha.7 validation
+
 Recorded September 16, 2026, on macOS arm64 with JDK 25 and IntelliJ Platform
 2026.2.0.1 (`IU-262.8665.337`). The Editorium debugger core is implemented.
 Unconditional milestone sign-off remains blocked by the upstream first-statement

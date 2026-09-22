@@ -110,15 +110,26 @@ class FerretDapIntegrationTest {
         }
     }
 
-    @Test fun alpha7SkipsVerifiedBreakpointAtFirstExecutableStatement() = runBlocking {
-        // Upstream limitation: suppressed entry resumes past this location. Keep this
-        // characterization explicit until ferretd/Ferret fixes it; do not emulate a stop.
+    @Test fun hitsVerifiedBreakpointAtFirstExecutableStatement() = runBlocking {
         withTimeout(15_000) {
             val launch = launch("first-statement.fql", "LET value = 1\nRETURN value", lines = intArrayOf(1))
             launch.session.launchCompleted.await()
             assertTrue(launch.listener.replacements.receive().second.single().isVerified)
+            val stop = launch.stopped()
+            assertEquals("breakpoint", stop.reason)
+            assertEquals(listOf(1L), stop.hitKeys)
+            val frame = requireNotNull(launch.session.stackTrace(stop, 0, 1)).stackFrames.single()
+            assertEquals(launch.input.sourcePath, frame.source.path)
+            assertEquals(1, frame.line)
+            assertEquals(1, frame.column)
+            assertTrue(launch.session.isCurrentStop(stop))
+            assertFalse(launch.session.completion.isCompleted)
+            launch.session.command(FerretDapCommand.CONTINUE, stop)
             assertEquals(0, launch.session.completion.await())
+            assertEquals("1", launch.listener.output.receive().first.trim())
             assertTrue(launch.listener.stops.tryReceive().isFailure)
+            assertTrue(launch.listener.errors.tryReceive().isFailure)
+            assertFalse(launch.process.isAlive)
         }
     }
 

@@ -177,10 +177,9 @@ the original breakpoint stays in place, with verification details in its
 presentation. An unverified breakpoint does not fail launch. A synchronization
 request failure fails that Debug session and cleans up its adapter.
 
-Known alpha.7 limitation: a verified breakpoint on the first executable
-statement can be skipped when the daemon suppresses its entry stop. Later
-breakpoints work normally. This requires an upstream `ferretd`/Ferret fix;
-the plugin does not synthesize a stop or change the `stopOnEntry=false` contract.
+The bundled `ferretd` alpha.8 fixes the alpha.7 first-statement breakpoint
+limitation. A verified breakpoint on the first executable statement stops
+normally with `stopOnEntry=false`.
 
 The standard Debug window supports **Resume**, **Pause**, **Step Over**,
 **Step Into**, **Step Out**, and **Stop**. One logical **Ferret** stack shows frame

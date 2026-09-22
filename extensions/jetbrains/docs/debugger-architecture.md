@@ -1,8 +1,8 @@
 # M3 T1: JetBrains debugger architecture spike
 
-Current status (September 16, 2026): M3 T2 implements the selected native
+Current status (September 22, 2026): M3 T2 implements the selected native
 XDebugger → LSP4J Debug → per-launch `ferretd dap` architecture against the sole
-repository pin `1.0.0-alpha.7`. Run and Debug share launch-input resolution;
+repository pin `1.0.0-alpha.8`. Run and Debug share launch-input resolution;
 breakpoints, control commands, stacks, source navigation, console output, and
 session cleanup are implemented. Variables, scopes, evaluation, and watches
 remain T3 work. See the [current README](../README.md#debugging) for supported
@@ -10,9 +10,10 @@ behavior and source-snapshot limitations. The original spike text below is
 historical evidence, including its alpha.6 blockers and then-future task lists;
 it is not the current capability summary.
 
-The [T2 validation report](debugger-validation.md) records an alpha.7
-first-executable-statement breakpoint failure and the unavailable manual UI
-pass. T2 is not an unconditional release sign-off while those remain open.
+Alpha.8 fixes the first-executable-statement breakpoint failure recorded with
+alpha.7. The [T2 validation report](debugger-validation.md) retains that
+historical evidence and records follow-up validation. The manual UI pass
+remains unverified, so T2 is not an unconditional release sign-off.
 
 Status: architecture decision and implementation plan, recorded September 8,
 2026. This task adds documentation only. JetBrains debugging is not implemented
