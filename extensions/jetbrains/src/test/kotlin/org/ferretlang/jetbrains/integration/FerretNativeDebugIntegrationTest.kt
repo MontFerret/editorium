@@ -135,8 +135,8 @@ class FerretNativeDebugIntegrationTest : HeavyPlatformTestCase() {
             assertEquals(file, session.currentPosition?.file)
             assertEquals(1, breakpoint.line) // Daemon relocation must not move persisted intent.
             assertEquals("Ferret", session.suspendContext?.activeExecutionStack?.displayName)
-            assertNull(session.debugProcess.evaluator)
-            assertNull(session.currentStackFrame?.evaluator)
+            assertSame(session.currentStackFrame?.evaluator, session.debugProcess.evaluator)
+            assertNotNull(session.currentStackFrame?.evaluator)
             assertNull(session.debugProcess.processHandler.processInput)
             WriteCommandAction.runWriteCommandAction(project) { manager.breakpointManager.removeBreakpoint(breakpoint) }
             assertTrue(session.isSuspended)

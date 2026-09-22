@@ -4,6 +4,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeout
 import org.eclipse.lsp4j.debug.*
 import org.eclipse.lsp4j.jsonrpc.ResponseErrorException
@@ -24,6 +25,7 @@ class FerretDapSessionTest {
         assertTrue(preferences.linesStartAt1)
         assertTrue(preferences.columnsStartAt1)
         assertEquals("path", preferences.pathFormat)
+        assertTrue(preferences.supportsVariableType)
         session.replaceBreakpoints(batch(2, 3))
         val second = adapter.breakpointRequests.receive()
         first.second.complete(response(11, 2))
@@ -159,8 +161,10 @@ class FerretDapSessionTest {
         val stop = listener.stops.receive()
         session.command(FerretDapCommand.NEXT, stop)
         adapter.controlRequests.receive().second.completeExceptionally(rejected())
-        assertSame(stop, listener.stops.receive())
-        assertTrue(session.isCurrentStop(stop))
+        val restored = listener.stops.receive()
+        assertTrue(restored.generation > stop.generation)
+        assertTrue(session.isCurrentStop(restored))
+        assertFalse(session.isCurrentStop(stop))
         assertTrue(listener.errors.receive().contains("rejected"))
     }
 
@@ -207,6 +211,46 @@ class FerretDapSessionTest {
         assertEquals(1, session.completion.await())
         assertTrue(listener.errors.receive().contains("connection failed"))
         assertFalse(process.isAlive)
+    }
+
+    @Test
+    fun unsolicitedResponseFailsWithoutLoggingItsPayload() = scenario {
+        val leaked = CompletableDeferred<Unit>()
+        val logger = java.util.logging.Logger.getLogger("org.eclipse.lsp4j.jsonrpc.RemoteEndpoint")
+        val handler = object : java.util.logging.Handler() {
+            override fun publish(record: java.util.logging.LogRecord) {
+                if (record.message.contains("private-inspection-value")) leaked.complete(Unit)
+            }
+            override fun flush() = Unit
+            override fun close() = Unit
+        }
+        logger.addHandler(handler)
+        try {
+            start()
+            session.launchCompleted.await()
+            process.unsolicitedResponse()
+            select<Unit> {
+                leaked.onAwait { fail("LSP4J logged the inspection payload") }
+                session.completion.onAwait { assertEquals(1, it) }
+            }
+            assertFalse(leaked.isCompleted)
+            assertFalse(process.isAlive)
+        } finally { logger.removeHandler(handler) }
+    }
+
+    @Test
+    fun unsupportedAdapterRequestReturnsOnlyASafeError() = scenario {
+        start()
+        session.launchCompleted.await()
+        val error = runCatching {
+            adapter.client.runInTerminal(RunInTerminalRequestArguments().apply {
+                cwd = root.toString()
+                args = arrayOf("private-parameter")
+            }).await()
+        }.exceptionOrNull() as ResponseErrorException
+        assertEquals("The Ferret debug client cannot handle this adapter request.", error.responseError.message)
+        assertNull(error.responseError.data)
+        assertTrue(session.ready)
     }
 
     @Test

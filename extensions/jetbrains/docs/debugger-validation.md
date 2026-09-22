@@ -1,4 +1,105 @@
-# M3 T2 debugger validation
+# JetBrains debugger validation
+
+## September 22, 2026: M3 T3 inspection and hardening
+
+M3 T3 implements lazy native scopes and recursive typed values, selected-frame
+expression evaluation, and native watches through each frame's evaluator. The
+Debug console remains output-only. Validation uses the unchanged root
+`ferretd 1.0.0-alpha.8` pin on macOS arm64, Temurin JDK 25.0.4.1, LSP4J 0.24.0,
+and IntelliJ Platform 2026.2.0.1 (`IU-262.8665.337`). Production changes are confined
+to the JetBrains debugger; protocols, Run ownership, settings, and public commands
+are unchanged.
+
+### Automated inspection evidence
+
+| Contract | Result and evidence |
+| --- | --- |
+| Lazy scopes and values | Platform tests request scopes only from frame `computeChildren`, initially collapse Locals/Parameters, and request children only on expansion. Nested values preserve upstream names, types, empty/null-like text, opaque summaries, and positive references. Nonpositive references send no variables request. |
+| Caller-frame support | Real alpha.8 tests stop inside `inner`, with distinct `inner`, `outer`, and `<main>` bindings. They inspect and evaluate all three frames, page to the caller, and expand collections owned by the main frame. Native XDebugger tests select the caller and main frame and use their actual evaluators. |
+| Expressions and watches | The shared frame evaluator preserves the selected ID and expression text, leaves DAP context unset, and returns the same expandable value model. Native tests reevaluate after step-out and the next breakpoint. Tests exercise the Ferret evaluator contract; JetBrains owns watch storage and refresh UI. |
+| Expression-only editing | Public evaluator overrides disable code fragments and select expression mode even for multiline selections. Explicit code-fragment evaluation is rejected without DAP traffic; callbacks complete on the EDT even when called from a background thread. The existing ordinary-document Ferret editor provider is reused. |
+| Safe evaluator surface | Real tests cover bindings, typed parameters, member/index access, scalar operators, empty input, invalid syntax, unknown names, rejected calls, invalid frame IDs, and invalid child references. Rejection leaves subsequent inspection usable. |
+| Runtime failure | Division by zero stops with an inspectable frame and local `x = 7`; evaluation succeeds before continuation produces exit code 1. |
+| Stop lifetime | Controlled requests remain manually pending across Continue, Next, Step In, Step Out, replacement stops, rejected controls, Stop, termination, transport loss, and owning-scope cancellation. Old callbacks settle, timers are cancelled, and late successes/errors cannot revive old handles. Rejected controls publish a fresh local generation. |
+| EDT presentation races | Explicit barriers hold the EDT after a protocol result arrives, replace the stop, and then release presentation. Obsolete live nodes finish empty; evaluators finish once with an unavailable-context error. Obsolete/disposed nodes receive no values or error banner. No sleeps coordinate these races. |
+| Local deadlines | Controlled tests assert all four deadline jobs are cancelled on invalidation, then await a later request batch's deadlines without sleeps. Inspection timeouts leave the session usable. Control-command timeouts retain fatal handling because execution state is unknown. |
+| Session/project isolation | Real and native tests run concurrent Debug sessions, terminate one, inspect the other, and launch a fresh session. Platform tests dispose a separate project with pending inspection while a peer project remains usable. Real Run + Debug tests inspect throughout independent Run cancellation. |
+| Breakpoints and controls | The complete existing breakpoint/control suite runs together with inspection coverage. Real stepping, live replacement, pause, native enable/disable/mute, startup synchronization, committed stops, and cleanup regressions remain covered. |
+| Logging | Adapter stderr is drained; owned diagnostics retain category/class/code without exception messages, values, or payloads. Program output is preserved in the Debug console. Unsolicited responses are rejected before LSP4J's payload-bearing warning path. |
+
+Primary tests:
+[controlled inspection](../src/test/kotlin/org/ferretlang/jetbrains/debugger/FerretDapInspectionTest.kt),
+[presentation](../src/test/kotlin/org/ferretlang/jetbrains/debugger/FerretInspectionPlatformTest.kt),
+[real inspection](../src/test/kotlin/org/ferretlang/jetbrains/integration/FerretDapInspectionIntegrationTest.kt),
+and [native selection/lifecycle](../src/test/kotlin/org/ferretlang/jetbrains/integration/FerretNativeInspectionIntegrationTest.kt).
+
+### Corrections and backend limits
+
+The typed-parameter fixture exposed a local T2 transport defect: converting launch
+bindings to a generic map let LSP4J's Gson configuration omit null object members.
+A wire-level regression first reproduced the missing binding. A parameter-only
+serializer now preserves top-level and nested nulls without serializing omitted
+optional fields elsewhere in DAP. All typed launch parameters are referenced in
+the real fixture, so they are exposed according to the compiled program's backend
+contract. The plugin does not invent entries for unused parameters.
+
+The current daemon intentionally returns `Array(9)` with type `Array` and
+`variablesReference: 0` for the nine-item fixture. Real tests assert that summary
+and zero reference; controlled tests assert no expansion request. There is no
+client paging or synthetic expansion. Direct canonical bindings retain upstream
+`evaluateName`, and evaluation results retain the entered expression. Nested
+children omit evaluation expressions because alpha.8 can return bare names such
+as `nested`, which are not valid standalone expressions in the selected frame.
+Users can enter qualified member/index expressions themselves. These are backend
+limitations, not new upstream defects found during this implementation.
+
+Review also tightened stale-response handling, released queued runtime values
+and transport references during cleanup, restored user-expanded scopes at a new
+stop, and moved explicit code-fragment rejection and top-frame error publication
+behind EDT lifetime checks. Diagnostic regressions cover unsolicited error
+responses and safe errors for unsupported adapter requests. Inspection state
+remains owned by the existing per-session queue; there is no independent value
+cache, parser, REPL, watch service, renderer framework, or DAP cancel request.
+
+### Commands and manual status
+
+| Check | Status | Evidence |
+| --- | --- | --- |
+| Focused tests | PASS | Controlled, presentation, real-daemon, and native inspection tests ran before broad validation. |
+| `make test jetbrains` | PASS | Protocol drift validation, 173 unit/platform tests, and 27 pinned-daemon integration tests; zero failures, errors, or skips. |
+| `make lint jetbrains` | PASS | Plugin Verifier reports compatibility with IU-262.8665.337. |
+| `make build jetbrains` | PASS | Universal plugin build and structure validation. |
+| `make package jetbrains` | PASS | Universal ZIP built and verified through repository tooling. |
+| `make package-check jetbrains` | PASS | All six pinned daemon artifacts, version marker, executable modes, and native version validated. |
+| Complete diff/self-review | PASS | Tracked and new files reviewed for ownership, lifecycle, public API use, threading, diagnostics, coverage, and documentation. Affected checks rerun; whitespace and local documentation links pass. |
+| Manual target-version IDE matrix | BLOCKED / UNVERIFIED | The target IDE loaded Ferret, but computer control rejected its Java-hosted sandbox application. Details below. |
+| Other hosts / hosted CI | NOT RUN | These local results do not claim Linux, Windows, or hosted CI execution. |
+
+The final archive is `extensions/jetbrains/build/distributions/ferret-jetbrains-0.1.0.zip`.
+Package validation compared all six embedded daemon binaries with the verified
+alpha.8 release bytes. Cross-target binaries were verified, not executed on this
+Mac. Generated clients and the root daemon pin have no diff.
+
+The manual attempt used `runIde` with disposable FQL projects and an ignored
+task-local Gradle init script. Default sandbox startup failed in IntelliJ's
+`DirectoryLock` with `SocketException: No such file or directory`; shortened
+system/config paths and an explicit writable Java temporary directory allowed
+startup. The IDE log confirms build `IU-262.8665.337` and `Loaded custom plugins:
+Ferret (0.1.0)`. Computer control listed **IntelliJ IDEA M3 T3 Sandbox** with bundle
+ID `com.jetbrains.jbr.java`, but selecting either the ID or the displayed name
+returned **Invalid app**. The owned launch was then interrupted and shut down;
+exit 130 records that deliberate cleanup.
+
+No manual pass is claimed for watches and their persistence/refresh, caller-frame
+selection, nested expansion, live gutter breakpoint edits, Pause/Continue or any
+step gesture, termination/relaunch, Run + Debug, normal Run, or project close.
+The native automated tests above verify those integration contracts where stated;
+they do not replace the requested visual smoke matrix. No new Ferret/ferretd
+defect was found that requires an upstream exchange or client workaround.
+
+The historical T2 reports below preserve their original versions, counts,
+limitations, and validation outcomes; they are not the current T3 capability
+or test summary.
 
 ## September 22, 2026: alpha.8 follow-up
 

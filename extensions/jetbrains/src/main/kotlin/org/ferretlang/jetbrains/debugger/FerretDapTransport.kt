@@ -8,6 +8,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import org.eclipse.lsp4j.debug.services.IDebugProtocolClient
 import org.eclipse.lsp4j.debug.services.IDebugProtocolServer
+import org.ferretlang.jetbrains.run.FerretParameterBindings
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.concurrent.atomic.AtomicBoolean
@@ -34,6 +35,7 @@ internal class FerretDapTransport(
                 .setInput(input)
                 .setOutput(output)
                 .setExecutorService(executor)
+                .configureGson { it.registerTypeAdapter(FerretParameterBindings::class.java, FerretDapParameterBindingsAdapter()) }
                 .validateMessages(true)
                 .create()
             server = launcher.remoteProxy

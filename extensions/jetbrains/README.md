@@ -8,7 +8,8 @@ The plugin bundles the required `ferretd` executable.
 The
 [M3 T1 debugger architecture report](docs/debugger-architecture.md) records the
 selected DAP/XDebugger design and historical spike evidence. M3 T2 implements
-debugger control and stacks; T3 inspection remains deferred.
+debugger control and stacks; M3 T3 adds suspended-frame inspection, expression
+evaluation, native watches, and inspection lifecycle hardening.
 
 ## Prerequisites
 
@@ -187,25 +188,51 @@ names and source locations, including Unicode columns. A confirmed stop remains
 suspended even if its breakpoint is subsequently removed. Missing or nonlocal
 source information is shown without an invented navigation location.
 
+Select a stack frame to inspect its **Locals** and **Parameters** groups.
+Scopes and child values load on expansion. Types and display text come directly
+from `ferretd`; a value expands only when the daemon provides a child reference.
+Caller frames retain their own locals and evaluator context. **Parameters** shows
+the launch bindings exposed by the compiled program's debugger, including typed
+nulls, arrays, and objects; unused configured parameters may be absent.
+
+Use **Evaluate Expression** and ordinary **Watches** against the selected frame
+while suspended. Ferret's safe evaluator supports binding and parameter
+references, member/index access, and scalar operators. Calls, mutation, and full
+program/code-fragment evaluation are unavailable. Expressions are sent unchanged
+to the daemon. Inspection refreshes at each stop; obsolete results cannot replace
+the current values. An expression or node-level request error does not end an
+otherwise usable session. Runtime-failure stops remain inspectable until resumed
+or terminated.
+
+Current upstream limitations:
+
+- Collections exceeding the inspection limit (currently eight items) can appear
+  as summaries such as `Array(9)` without expansion. The plugin does not fabricate
+  children or provide variable paging.
+- Nested values currently supply bare names rather than qualified evaluation
+  expressions. Their automatic add-to-watch expression is unavailable. Enter a
+  valid member/index expression manually in Watches or Evaluate Expression.
+
 Debug compiles a snapshot of the saved source at launch. Editing or saving the
 source while paused does not recompile that session; changed line numbers may
 no longer match the snapshot. Start a new Debug session to execute those edits.
 Live breakpoint edits apply to the existing compiled snapshot.
 
 The Debug console retains daemon stdout/stderr output and final results.
-Adapter stderr and transport diagnostics go to the IDE log. Console input is
-unavailable. Stop, detach, and project disposal clean up only the owned adapter;
+Adapter stderr is drained without copying runtime content to IDE logs. Diagnostic
+logs record operation/error categories, excluding expressions, values, parameter
+contents, and protocol payloads. Console input is unavailable. Stop, detach, and
+project disposal clean up only the owned adapter;
 target exit codes are retained, with 1 for failures and 130 for local cancellation
 when the target has not supplied a code. Startup and protocol requests have
 bounded deadlines; running queries have no execution time limit.
 
-T3 exclusions: variables, scopes, expression evaluation, and watches are not
-implemented. Conditional breakpoints, logpoints, interactive console input,
+Conditional breakpoints, logpoints, interactive console input,
 attach, restart, and reverse debugging are also unavailable. The breakpoint UI
 hides unsupported condition, action, dependency, and suspend-policy controls.
 
-See the [M3 T2 validation report](docs/debugger-validation.md) for the tested
-feature matrix, upstream finding, and manual sandbox limitations.
+See the [debugger validation report](docs/debugger-validation.md) for automated
+coverage, manual results, and remaining validation limits.
 
 ## Build and test
 
@@ -285,7 +312,12 @@ disable, move, remove, and mute breakpoints while running and paused. Confirm
 relocation leaves the requested gutter line intact, a removed committed stop
 remains suspended, and concurrent Debug and Run sessions remain independent.
 Check non-ASCII source, an external runtime directory, startup failure, and
-project close. Inspection trees and evaluation should remain unavailable.
+project close. Expand both scopes and nested values, select a caller frame, and
+evaluate an expression in each frame. Add a watch and verify it refreshes after
+stepping and the next breakpoint. Check a nine-item collection summary, an
+invalid expression, an inspectable runtime failure, and a second Debug launch
+after termination. Repeat inspection in two projects and close one while the
+other remains suspended.
 
 Open a non-Ferret file before `test.fql` to confirm lazy activation. Opening
 additional `.fql` files in the same project should reuse the project-wide

@@ -76,7 +76,9 @@ the compilation workspace. The optional Run working directory separately roots
 runtime filesystem access and may be outside that workspace. Debug uses the same
 configuration and launch-input rules, with an independent `ferretd dap` process
 per session and native XDebugger breakpoints, control commands, stacks, and
-source navigation. Variables, scopes, evaluation, and watches remain deferred.
+source navigation. Suspended frames provide lazy Locals/Parameters scopes,
+typed expandable values, expression evaluation, and native watches, including
+caller-frame inspection within the daemon's supported limits.
 
 ## Protocol schemas
 

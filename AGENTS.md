@@ -67,8 +67,8 @@ The current integration state is intentionally asymmetric:
   Native Run configurations use an independent authenticated project-scoped
   execution daemon and the JetBrains Run console. Debug uses the same persisted
   configuration through native XDebugger and LSP4J Debug, with one independently
-  owned `ferretd dap` process per launch. Variables, scopes, evaluation, and watches
-  remain deferred; there are no additional settings.
+  owned `ferretd dap` process per launch. Suspended frames provide lazy scopes,
+  typed variables, expression evaluation, and native watches; there are no additional settings.
 * Both integrations consume the daemon version from `ferretd.json`; neither may
   introduce a separate editor-local pin.
 
@@ -229,7 +229,8 @@ compatibility-sensitive contracts.
 * generated Java protobuf and gRPC clients;
 * native XDebugger presentation and per-launch LSP4J DAP session ownership;
 * shared Run/Debug launch inputs, with protocol encoding kept in each adapter;
-* future JetBrains settings and inspection UI when explicitly implemented;
+* frame-scoped inspection, expression evaluation, and native watches;
+* future JetBrains settings when explicitly implemented;
 * Gradle configuration and plugin packaging;
 * JetBrains-specific platform, binary-resolution, and integration tests.
 
@@ -253,6 +254,11 @@ registry. XDebugger presentation must recheck generation and disposal on the UI
 dispatcher. Initial synchronization failure aborts launch before configurationDone;
 live synchronization failure ends only that session. Unverified breakpoint results
 are nonfatal. Source edits do not replace an active debug session's compiled snapshot.
+Inspection requests and presentation belong to one stop generation. Resume,
+stepping, replacement stops, and disposal invalidate their handles and callbacks.
+Ordinary inspection errors remain local to the node or evaluator; transport loss
+ends the session. Values use upstream types, display text, and child references;
+do not synthesize collection paging or nested evaluation expressions.
 
 For execution, the canonical project base is the compilation workspace when it
 exists; otherwise the canonical source parent is used. The source must remain

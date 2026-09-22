@@ -51,6 +51,15 @@ internal class DapTestProcess(adapter: DapTestAdapter, private val requiresForce
         }
     }
 
+    fun unsolicitedResponse() {
+        val body = """{"seq":9999,"type":"response","request_seq":9999,"success":false,"command":"evaluate","message":"private-inspection-value"}""".toByteArray()
+        synchronized(serverOutput) {
+            serverOutput.write("Content-Length: ${body.size}\r\n\r\n".toByteArray())
+            serverOutput.write(body)
+            serverOutput.flush()
+        }
+    }
+
     override fun close() {
         runCatching { clientOutput.close() }
         runCatching { serverOutput.close() }
