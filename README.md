@@ -80,6 +80,12 @@ source navigation. Suspended frames provide lazy Locals/Parameters scopes,
 typed expandable values, expression evaluation, and native watches, including
 caller-frame inspection within the daemon's supported limits.
 
+Run and Debug accept explicitly selected lowercase `.fql` regular files beneath
+discovery-excluded directories such as `.tmp` and `testdata`, including nested
+Go modules. Selection preserves the original source identity and compilation
+workspace; it does not discover neighboring excluded files. Workspace containment
+and the daemon's nested-symlink restrictions still apply.
+
 ## Protocol schemas
 
 [`ferretd.json`](ferretd.json) is the sole version pin for both the daemon

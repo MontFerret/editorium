@@ -105,6 +105,40 @@ class FerretExecutionIntegrationTest {
     }
 
     @Test
+    fun executesExplicitExcludedSourcesWithOriginalIdentityAndWorkspace() = runBlocking {
+        write("value.txt", "project workspace")
+        write("module/go.mod", "module example.com/nested\n")
+        for (relativePath in listOf(".tmp/test.fql", "testdata/test.fql", "module/test.fql")) {
+            val source = write(relativePath, "RETURN {value: 7, root: TO_STRING(IO::FS::READ(\"value.txt\"))}")
+            Files.writeString(source.parent.resolve("value.txt"), "wrong source parent")
+            val first = execute(source, workingDirectory = null)
+            val firstExit = first.exit.awaitResult()
+            assertEquals(relativePath + ": " + first.debug(), 0, firstExit)
+            assertEquals(JsonParser.parseString("""{"value":7,"root":"project workspace"}"""), JsonParser.parseString(first.stdout.single()))
+            assertTrue(first.debug.contains("Source: ${source.toRealPath()}"))
+            assertTrue(first.debug.contains("Workspace root: ${root.toRealPath()}"))
+
+            val generation = connection.generation()
+            val workspaceId = connection.workspace(generation, root.toRealPath())
+            val session = generation.rpc.createSession(workspaceId, relativePath)
+            try {
+                assertEquals(workspaceId, session.workspaceId)
+                assertEquals(relativePath, session.relativePath)
+                assertEquals(source.toRealPath(), Path.of(java.net.URI(session.uri)))
+            } finally {
+                generation.rpc.closeSession(session.id)
+            }
+
+            Files.writeString(source, "RETURN 8")
+            val edited = execute(source, workingDirectory = null)
+            val editedExit = edited.exit.awaitResult()
+            assertEquals(relativePath + ": " + edited.debug(), 0, editedExit)
+            assertEquals(JsonParser.parseString("8"), JsonParser.parseString(edited.stdout.single()))
+            assertEquals(generation.number, connection.generation().number)
+        }
+    }
+
+    @Test
     fun cancelsAndIsolatesConcurrentRuns() = runBlocking {
         val first = execute(write("first.fql", "WAIT(10s)\nRETURN 1"))
         val second = execute(write("second.fql", "WAIT(2s)\nRETURN 2"))

@@ -1,5 +1,6 @@
 package org.ferretlang.jetbrains.integration
 
+import com.google.gson.JsonParser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -119,6 +120,37 @@ class FerretDapIntegrationTest {
             launch.session.stop()
             launch.session.completion.await()
             assertFalse(launch.process.isAlive)
+        }
+    }
+
+    @Test fun debugsExplicitExcludedSourcesWithOriginalIdentityAndWorkspace() = runBlocking {
+        Files.writeString(root.resolve("value.txt"), "project workspace")
+        Files.createDirectories(root.resolve("module"))
+        Files.writeString(root.resolve("module/go.mod"), "module example.com/nested\n")
+        for (relativePath in listOf(".tmp/test.fql", "testdata/test.fql", "module/test.fql")) {
+            withTimeout(15_000) {
+                val source = root.resolve(relativePath)
+                Files.createDirectories(source.parent)
+                Files.writeString(source.parent.resolve("value.txt"), "wrong source parent")
+                val launch = launch(relativePath, "LET value = 7\nRETURN {value, root: TO_STRING(IO::FS::READ(\"value.txt\"))}", lines = intArrayOf(2))
+                launch.session.launchCompleted.await()
+                assertTrue(relativePath, launch.listener.replacements.receive().second.single().isVerified)
+                val stop = launch.stopped()
+                assertEquals("breakpoint", stop.reason)
+                assertEquals(listOf(2L), stop.hitKeys)
+                val frame = requireNotNull(launch.session.stackTrace(stop, 0, 1)).stackFrames.single()
+                assertEquals(source.toString(), frame.source.path)
+                assertEquals(2, frame.line)
+                val locals = requireNotNull(launch.session.scopes(stop, frame.id)).scopes.single { it.name == "Locals" }
+                val value = requireNotNull(launch.session.variables(stop, locals.variablesReference)).variables.single { it.name == "value" }
+                assertEquals("7", value.value)
+                assertEquals("8", requireNotNull(launch.session.evaluate(stop, frame.id, "value + 1")).result)
+                launch.session.command(FerretDapCommand.CONTINUE, stop)
+                assertEquals(0, launch.session.completion.await())
+                assertEquals(JsonParser.parseString("""{"value":7,"root":"project workspace"}"""), JsonParser.parseString(launch.listener.output.receive().first))
+                assertTrue(launch.listener.errors.tryReceive().isFailure)
+                assertFalse(launch.process.isAlive)
+            }
         }
     }
 

@@ -121,6 +121,15 @@ when one exists, otherwise the canonical source parent. A present project base
 must be a readable directory containing the source; the plugin does not fall
 back when it is invalid. Relative configured paths require a project base.
 
+The bundled daemon accepts explicitly selected lowercase `.fql` regular files
+inside discovery-excluded directories such as `.tmp`, `testdata`, and nested Go
+modules. For example, a configuration targeting `.tmp/test.fql` runs and debugs
+that file within the project workspace, preserving its source identity. Automatic
+discovery exclusions remain in effect for neighboring files; workspace containment
+and the daemon's nested-symlink restrictions are unchanged. Plugins bundled with
+`ferretd 1.0.0-alpha.8` require updating to a build containing alpha.9 or later
+to use this capability.
+
 The runtime working directory is resolved and validated independently. It may
 be outside the workspace and does not participate in source containment or
 relative source identity. Leaving it blank omits the execution option, causing

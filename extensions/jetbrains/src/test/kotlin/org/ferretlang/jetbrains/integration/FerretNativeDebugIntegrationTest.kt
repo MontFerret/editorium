@@ -33,7 +33,7 @@ class FerretNativeDebugIntegrationTest : HeavyPlatformTestCase() {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         project.replaceService(FerretDebugLauncher::class.java,
             FerretDebugLauncher.testing(scope, Path.of(requireNotNull(System.getenv("FERRETD_TEST_PATH")))), testRootDisposable)
-        val path = Path.of(requireNotNull(project.basePath)).resolve("native-live.fql")
+        val path = Path.of(requireNotNull(project.basePath)).resolve(".tmp/test.fql")
         Files.createDirectories(path.parent)
         Files.writeString(path, "RETURN FOR i IN 1..1000000\n LET delay = WAIT(10)\n LET value = i + 1\n RETURN value")
         val file = requireNotNull(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path))
@@ -98,7 +98,7 @@ class FerretNativeDebugIntegrationTest : HeavyPlatformTestCase() {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val launcher = FerretDebugLauncher.testing(scope, Path.of(requireNotNull(System.getenv("FERRETD_TEST_PATH"))))
         project.replaceService(FerretDebugLauncher::class.java, launcher, testRootDisposable)
-        val path = Path.of(requireNotNull(project.basePath)).resolve("native-debug.fql")
+        val path = Path.of(requireNotNull(project.basePath)).resolve(".tmp/test.fql")
         Files.createDirectories(path.parent)
         Files.writeString(path, "RETURN missing\n\nRETURN missing")
         val file = requireNotNull(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path))

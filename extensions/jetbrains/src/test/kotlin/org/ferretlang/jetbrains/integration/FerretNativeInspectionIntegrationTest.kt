@@ -64,7 +64,7 @@ class FerretNativeInspectionIntegrationTest : HeavyPlatformTestCase() {
     }
 
     fun testSelectedFrameEvaluationAndVariablesRefreshAcrossStepsAndStops() {
-        val session = launch("frames", 2)
+        val session = launch("test", 2)
         val stack = requireNotNull(session.suspendContext?.activeExecutionStack)
         val frames = frames(stack)
         assertEquals(listOf("inner", "outer", "<main>"), frames.map { (it as FerretStackFrame).name })
@@ -124,8 +124,8 @@ class FerretNativeInspectionIntegrationTest : HeavyPlatformTestCase() {
 
     private fun launch(name: String, input: Int): XDebugSession {
         val root = Path.of(requireNotNull(project.basePath))
-        Files.createDirectories(root)
-        val path = Files.writeString(root.resolve("$name.fql"), SOURCE)
+        Files.createDirectories(root.resolve(".tmp"))
+        val path = Files.writeString(root.resolve(".tmp/$name.fql"), SOURCE)
         val file = requireNotNull(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path))
         val manager = XDebuggerManager.getInstance(project)
         val type = XDebuggerUtil.getInstance().findBreakpointType(FerretBreakpointType::class.java)
@@ -142,6 +142,7 @@ class FerretNativeInspectionIntegrationTest : HeavyPlatformTestCase() {
         // This fixture invokes the builder directly, outside ExecutionManager's process-start notification.
         result.session.debugProcess.processHandler.startNotify()
         awaitStop(result.session, null)
+        assertEquals(file, result.session.currentPosition?.file)
         return result.session
     }
 
