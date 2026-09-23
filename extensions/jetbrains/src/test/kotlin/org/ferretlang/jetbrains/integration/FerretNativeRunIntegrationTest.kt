@@ -38,7 +38,7 @@ class FerretNativeRunIntegrationTest : BasePlatformTestCase() {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val connection = FerretdDaemonConnection.testing(scope, FerretdInstallation(executable, version))
         project.replaceService(FerretdDaemonConnection::class.java, connection, testRootDisposable)
-        val path = Path.of(requireNotNull(project.basePath)).resolve("native-unsaved.fql")
+        val path = Path.of(requireNotNull(project.basePath)).resolve(".tmp/test.fql")
         Files.createDirectories(path.parent)
         Files.writeString(path, "RETURN missing")
         val file = requireNotNull(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path))

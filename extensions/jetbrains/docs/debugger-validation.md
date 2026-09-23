@@ -1,5 +1,92 @@
 # JetBrains debugger validation
 
+## September 22, 2026: alpha.9 explicit-file admission
+
+The sole repository pin is now `1.0.0-alpha.9`. The
+[upstream release](https://github.com/MontFerret/ferretd/releases/tag/v1.0.0-alpha.9)
+includes explicit source admission and the macOS and Windows test-fixture
+corrections from PR #28. The alpha.8-to-alpha.9 release diff
+contains no protobuf changes. Both supported generators ran against the new
+schemas and produced no client diff.
+
+Run and Debug now accept explicitly selected lowercase `.fql` regular files
+beneath discovery-excluded directories and nested Go modules. Source identity,
+the compilation workspace, containment, nested-symlink restrictions, and
+immutable active-session snapshots retain their existing contracts. Editorium
+adds no admission logic, path rewriting, source copies, or workspace fallback.
+
+### Regression evidence
+
+The native Run test, both native Debug tests, and both native inspection tests
+now retain `.tmp` fixtures permanently. They cover saving edited documents,
+source navigation, live breakpoint controls, caller-frame selection, recursive
+values, expression evaluation across stops, concurrent sessions, project lifetime
+cancellation, and relaunch. The selected-frame fixture uses `.tmp/test.fql`;
+ordinary-directory cases remain in the existing real-daemon suites.
+
+Two additional real-daemon tests each exercise `.tmp/test.fql`,
+`testdata/test.fql`, and `module/test.fql` beneath a nested `go.mod`.
+Run checks the returned Session workspace ID, relative path, original canonical
+source URI, results, saved edits, and daemon reuse. DAP checks a verified
+breakpoint, original stack source, locals, evaluation, final output, and adapter
+termination. Both read a root-owned file with no runtime-directory override;
+different contents in each source parent detect an accidental workspace fallback.
+
+The seven focused alpha.9 tests passed. Against retained alpha.8, both new
+tests failed on `.tmp/test.fql`: DAP returned `workspace document not found`,
+and Run reported `Ferret source was not found.` The complete subsequent
+alpha.9 suite passed. The first focused attempt also corrected a test expectation
+to use JetBrains' canonical macOS path rather than its temporary-directory alias;
+no production path conversion changed.
+
+### Automated validation
+
+Local environment: macOS arm64, Go 1.26.5, Temurin JDK 25.0.4.1 for Gradle,
+Node.js 26.5.1, and IntelliJ Platform 2026.2.0.1 (`IU-262.8665.337`).
+These results do not claim execution on the CI Node.js 22 environment or on
+Linux/Windows hosts.
+
+| Check | Result |
+| --- | --- |
+| `make prepare jetbrains` | PASS; all six alpha.9 release archives checksum-verified and staged. |
+| `make proto-sync FORCE=1`; both `proto-generate` and `proto-check` targets | PASS; generated Java and TypeScript clients unchanged. |
+| `go test ./...` in `tools/editorium` | PASS. |
+| `make test jetbrains` | PASS; 173 unit/platform tests and 29 real-daemon integration tests, zero failures, errors, or skips. |
+| `make lint jetbrains` | PASS; Plugin Verifier reports compatibility with IU-262.8665.337. |
+| `make build jetbrains` | PASS; universal build and structure validation. |
+| `make package jetbrains`; `make package-check jetbrains` | PASS; complete six-target matrix, alpha.9 version marker, binary bytes, Unix modes, and native executable version checked. |
+| `make test vscode` | PASS; 138 unit tests, 13 integration tests, and daemon execution transport smoke. |
+| `make lint vscode`; `make build vscode` | PASS. |
+| `make package vscode`; `make package-check vscode` | PASS; native darwin-arm64 VSIX. |
+| Final diff review | PASS; ownership, cleanup, source identity, coverage, generated output, documentation, and whitespace reviewed. |
+
+The universal artifact is
+`extensions/jetbrains/build/distributions/ferret-jetbrains-0.1.0.zip`.
+The native VSIX is
+`extensions/vscode/dist/ferret-vscode-0.1.0-darwin-arm64.vsix`.
+Other-host daemon binaries were validated as package contents, not executed.
+No plugin version was changed, no extension release was published, and the
+user's installed plugins were not replaced. Installed alpha.8 bundles remain
+affected until updated to a build containing the correction.
+
+### Manual IDE attempt
+
+An isolated target-version IDE was launched with disposable system/config/plugin
+directories and a project containing `.tmp/test.fql`, an inspection configuration,
+and an ordinary `normal.fql` control. Its log confirms
+`IU-262.8665.337` and `Loaded custom plugins: Ferret (0.1.0)`; the sandbox's
+daemon version marker is `1.0.0-alpha.9`.
+
+Computer control listed **IntelliJ IDEA Alpha9 Sandbox**, but selecting either
+`com.jetbrains.jbr.java` or the displayed name returned **Invalid app**.
+The owned launch was interrupted and exited with code 130. Manual Run, Debug,
+breakpoints, caller selection, expansion, watches, controls, termination, and
+relaunch remain **UNVERIFIED**. Automated native-platform results above do not
+substitute for that UI matrix.
+
+The alpha.8 reports below preserve their original versions, test counts, and
+manual limitations; their pin statements describe those historical runs.
+
 ## September 22, 2026: M3 T3 inspection and hardening
 
 M3 T3 implements lazy native scopes and recursive typed values, selected-frame

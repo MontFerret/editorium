@@ -101,6 +101,12 @@ provides them. Execution-time diagnostics stay in that output rather than being
 added to **Problems**, which continues to reflect live language-server analysis.
 Different files may execute concurrently.
 
+Run and Debug accept explicitly selected lowercase `.fql` regular files beneath
+discovery-excluded directories such as `.tmp`, `testdata`, and nested Go modules.
+The original source identity and workspace are preserved. Selecting one file
+does not discover excluded neighbors or relax workspace containment and the
+daemon's nested-symlink restrictions.
+
 ## Bundled ferretd
 
 The extension includes a compatible `ferretd` executable. No separate daemon
