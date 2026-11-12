@@ -26,7 +26,10 @@ async function main() {
   );
 
   try {
-    const vscodeExecutablePath = await downloadAndUnzipVSCode('stable');
+    const vscodeExecutablePath = await downloadAndUnzipVSCode({
+      version: 'stable',
+      timeout: 60_000,
+    });
     const [cli, ...cliArguments] =
       resolveCliArgsFromVSCodeExecutablePath(vscodeExecutablePath);
     await execFileAsync(
