@@ -91,8 +91,12 @@ Open a saved `.fql` file and use the editor Run button or **Ferret: Run Current
 File**. Both use the normal Ferret execution service. If the file has unsaved
 changes, confirm **Save and Run** so the daemon executes the saved version. When
 execution completes successfully, **Ferret Execution** opens under **View →
-Output** without taking focus from the editor and shows the result and elapsed
-time. Use **Ferret: Show Output** to reveal that channel directly later.
+Output** without taking focus from the editor and shows elapsed time. Nonempty
+JSON results are formatted, including a literal `null`. Absent and zero-byte
+results complete without a result line. Output with a blank content type is
+shown as raw text. If a failed query returns content, the channel shows it
+under **Partial output** after the failure and diagnostics. Use **Ferret: Show
+Output** to reveal that channel directly later.
 
 The editor action changes to Cancel while the file is running, and **Ferret:
 Cancel Execution** stops the active execution. Runtime and compilation errors

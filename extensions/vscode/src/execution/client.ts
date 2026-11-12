@@ -61,6 +61,7 @@ export class FerretExecutionClient {
           {
             workspaceId: { value: workspaceId },
             relativePath,
+            runtimeName: '',
           },
           callback,
         ),

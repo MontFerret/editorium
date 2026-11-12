@@ -181,6 +181,7 @@ suite('Ferret execution client', () => {
     assert.deepStrictEqual(service.createSessionRequest, {
       workspaceId: { value: 'workspace-1' },
       relativePath: 'queries/example.fql',
+      runtimeName: '',
     });
     assert.deepStrictEqual(service.createExecutionRequest, {
       sessionId: { value: 'session-1' },

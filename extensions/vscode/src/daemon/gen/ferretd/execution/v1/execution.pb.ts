@@ -43,6 +43,7 @@ export enum ResourceKind {
   RESOURCE_KIND_SESSION = 3,
   RESOURCE_KIND_EXECUTION = 4,
   RESOURCE_KIND_WATCHER = 5,
+  RESOURCE_KIND_RUNTIME = 6,
   UNRECOGNIZED = -1,
 }
 
@@ -54,6 +55,7 @@ export enum ResourceCondition {
   RESOURCE_CONDITION_INVALID_PARAMETERS = 4,
   RESOURCE_CONDITION_LAGGED = 5,
   RESOURCE_CONDITION_INVALID_OPTIONS = 6,
+  RESOURCE_CONDITION_UNAVAILABLE = 7,
   UNRECOGNIZED = -1,
 }
 
@@ -76,6 +78,7 @@ export interface Session {
   id?: SessionId | undefined;
   source?: SourceSnapshot | undefined;
   parameters: string[];
+  runtimeName: string;
 }
 
 export interface ExecutionOptions {
@@ -175,6 +178,7 @@ export interface WatchExecutionResponse {
 export interface CreateSessionRequest {
   workspaceId?: WorkspaceId | undefined;
   relativePath: string;
+  runtimeName: string;
 }
 
 export interface CreateSessionResponse {
@@ -418,7 +422,7 @@ export const SourceSnapshot: MessageFns<SourceSnapshot> = {
 };
 
 function createBaseSession(): Session {
-  return { id: undefined, source: undefined, parameters: [] };
+  return { id: undefined, source: undefined, parameters: [], runtimeName: "" };
 }
 
 export const Session: MessageFns<Session> = {
@@ -431,6 +435,9 @@ export const Session: MessageFns<Session> = {
     }
     for (const v of message.parameters) {
       writer.uint32(26).string(v!);
+    }
+    if (message.runtimeName !== "") {
+      writer.uint32(34).string(message.runtimeName);
     }
     return writer;
   },
@@ -466,6 +473,14 @@ export const Session: MessageFns<Session> = {
           message.parameters.push(reader.string());
           continue;
         }
+        case 4: {
+          if (tag !== 34) {
+            break;
+          }
+
+          message.runtimeName = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -485,6 +500,7 @@ export const Session: MessageFns<Session> = {
       ? SourceSnapshot.fromPartial(object.source)
       : undefined;
     message.parameters = object.parameters?.map((e) => e) || [];
+    message.runtimeName = object.runtimeName ?? "";
     return message;
   },
 };
@@ -1623,7 +1639,7 @@ export const WatchExecutionResponse: MessageFns<WatchExecutionResponse> = {
 };
 
 function createBaseCreateSessionRequest(): CreateSessionRequest {
-  return { workspaceId: undefined, relativePath: "" };
+  return { workspaceId: undefined, relativePath: "", runtimeName: "" };
 }
 
 export const CreateSessionRequest: MessageFns<CreateSessionRequest> = {
@@ -1633,6 +1649,9 @@ export const CreateSessionRequest: MessageFns<CreateSessionRequest> = {
     }
     if (message.relativePath !== "") {
       writer.uint32(18).string(message.relativePath);
+    }
+    if (message.runtimeName !== "") {
+      writer.uint32(26).string(message.runtimeName);
     }
     return writer;
   },
@@ -1660,6 +1679,14 @@ export const CreateSessionRequest: MessageFns<CreateSessionRequest> = {
           message.relativePath = reader.string();
           continue;
         }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.runtimeName = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1678,6 +1705,7 @@ export const CreateSessionRequest: MessageFns<CreateSessionRequest> = {
       ? WorkspaceId.fromPartial(object.workspaceId)
       : undefined;
     message.relativePath = object.relativePath ?? "";
+    message.runtimeName = object.runtimeName ?? "";
     return message;
   },
 };

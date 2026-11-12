@@ -97,6 +97,21 @@ suite('Ferret execution error normalization', () => {
     }
   });
 
+  test('retains runtime lookup and acquisition causes, including deadlines', () => {
+    for (const [condition, code, summary] of [
+      [ResourceCondition.RESOURCE_CONDITION_NOT_FOUND, status.NOT_FOUND, 'Ferret runtime was not found'],
+      [ResourceCondition.RESOURCE_CONDITION_UNAVAILABLE, status.UNAVAILABLE, 'Ferret runtime is unavailable'],
+      [ResourceCondition.RESOURCE_CONDITION_UNAVAILABLE, status.DEADLINE_EXCEEDED, 'Ferret runtime is unavailable'],
+    ] as const) {
+      const cause = resourceServiceError(ResourceKind.RESOURCE_KIND_RUNTIME, condition, code);
+      const error = normalizeExecutionError(cause, 'create-session');
+      assert.strictEqual(error.resource, 'runtime');
+      assert.strictEqual(error.code, code === status.NOT_FOUND ? 'not-found' : 'execution-rejected');
+      assert.strictEqual(error.message, summary + ': structured failure');
+      assert.strictEqual(error.cause, cause);
+    }
+  });
+
   test('normalizes daemon, local cancellation, and rejection failures', () => {
     const incompatible = normalizeExecutionError(
       new DaemonError('incompatible-daemon', 'wrong API'),
@@ -179,9 +194,10 @@ suite('Ferret execution error normalization', () => {
 function resourceServiceError(
   resource: ResourceKind,
   condition: ResourceCondition,
+  code: status = status.FAILED_PRECONDITION,
 ): ServiceError {
   return detailedServiceError(
-    status.FAILED_PRECONDITION,
+    code,
     anyDetail(
       'ferretd.execution.v1.ResourceErrorDetail',
       ResourceErrorDetail.encode({ resource, condition }).finish(),

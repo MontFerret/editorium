@@ -1,5 +1,37 @@
 # JetBrains debugger validation
 
+## November 12, 2026 ferretd alpha.11 migration
+
+The shared pin moved from `1.0.0-alpha.9` to `1.0.0-alpha.11`. Both clients
+were generated from the public tagged source. All four synchronized schemas
+matched the files at commit `638bea6b502d682e0bd8fbc9c6880a50bf4cc156`.
+GitHub listed the checksum manifest and six archives on the draft release.
+Every public release download URL returned HTTP 404.
+
+Local checks ran on macOS arm64 with Go 1.26.5, Temurin JDK 25.0.4.1+1,
+Node.js 26.13.0, and VS Code 1.95.0 for the extension-host tests.
+
+| Check | Result |
+| --- | --- |
+| `make proto-sync FORCE=1`, both `proto-generate` and both `proto-check` targets | Passed for the pinned tag. |
+| Go tooling tests, formatting check, and vet | Passed. |
+| JetBrains Gradle wrapper `test` | 181 unit/platform tests passed with zero skips. |
+| VS Code `npm run compile`, `make lint vscode`, and `vscode-test --label unit` | Compilation, bundling, lint, and all 142 extension-host tests passed. |
+| `make test` and `make test vscode` | Both stopped at native daemon acquisition. |
+| `make lint`, `make package jetbrains`, and `make package vscode` | The public checksum download returned 404 before a verified plugin ZIP or VSIX could be built. |
+
+The tests cover API 1.3 negotiation for existing operations, the default session
+selector, runtime error details, output presence, raw untyped text, and partial
+JSON alongside failure diagnostics. The real-daemon suites now also check the
+runtime name returned for a default native session.
+
+**Pending publication.** Run the native LSP, execution, and DAP suites against
+the checksum-verified release. Rebuild and run `make package-check jetbrains`
+for the six-target ZIP, `make package-check vscode` for the target-specific VSIX,
+and `make test-installed vscode` for the installed extension. The four-target
+IDEA/GoLand verifier run and interactive packaged-plugin smoke also remain
+outstanding for this pin. Hosted CI and foreign-host execution were not run.
+
 ## November 11, 2026: IDEA and GoLand 2026.3 compatibility
 
 The plugin continues to compile against IDEA `2026.2.0.1`

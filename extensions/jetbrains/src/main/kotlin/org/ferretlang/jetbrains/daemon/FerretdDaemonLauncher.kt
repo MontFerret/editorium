@@ -78,11 +78,11 @@ internal class FerretdDaemonLauncher private constructor(
                 info.version != installation.version ||
                 info.instanceId.isBlank() ||
                 info.apiMajor != GrpcFerretdRpc.API_MAJOR ||
-                info.apiMinor != GrpcFerretdRpc.API_MINOR
+                info.apiMinor < GrpcFerretdRpc.API_MINOR
             ) {
                 throw FerretdConnectionException(
                     "Incompatible Ferret daemon: expected ${installation.version} API " +
-                        "${GrpcFerretdRpc.API_MAJOR}.${GrpcFerretdRpc.API_MINOR}, got ${info.version} API " +
+                        "${GrpcFerretdRpc.API_MAJOR}.${GrpcFerretdRpc.API_MINOR} or a compatible newer minor, got ${info.version} API " +
                         "${info.apiMajor}.${info.apiMinor}.",
                 )
             }

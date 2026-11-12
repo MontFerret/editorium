@@ -124,6 +124,7 @@ class FerretExecutionIntegrationTest {
             try {
                 assertEquals(workspaceId, session.workspaceId)
                 assertEquals(relativePath, session.relativePath)
+                assertEquals("local", session.runtimeName)
                 assertEquals(source.toRealPath(), Path.of(java.net.URI(session.uri)))
             } finally {
                 generation.rpc.closeSession(session.id)

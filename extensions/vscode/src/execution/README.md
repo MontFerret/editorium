@@ -38,7 +38,7 @@ document can have only one extension-managed active Execution, while different
 documents may run concurrently.
 
 `ExecutionFeedbackController` is the only user-interface observer of manager
-events. It renders daemon-provided JSON output in the **Ferret Execution**
-channel, derives the global running count from the manager, and owns the one
-transient status-bar item. It never opens a daemon watch. Detailed transport
+events. It renders the terminal result and any partial output accompanying a
+failure in the **Ferret Execution** channel, derives the global running count
+from the manager, and owns the one transient status-bar item. It never opens a daemon watch. Detailed transport
 and rendering failures remain in the separate **Ferret** diagnostic channel.

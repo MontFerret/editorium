@@ -15,6 +15,7 @@ import type {
 import type {
   FerretDiagnostic,
   FerretExecutionFailure,
+  FerretExecutionOutput,
   FerretRelatedInformation,
 } from './types';
 
@@ -153,6 +154,7 @@ export class ExecutionFeedbackController implements vscode.Disposable {
             message: 'Ferret execution failed.',
             diagnostics: [],
           },
+          execution.execution.output,
         );
         this.output.show(true);
         this.showTerminalStatus('failed');
@@ -181,17 +183,13 @@ export class ExecutionFeedbackController implements vscode.Disposable {
   }
 
   private completed(execution: ManagedExecution): void {
-    let rendered = renderFailureFallback;
+    const lines: string[] = [];
     const output = execution.execution.output;
-    if (output === undefined) {
-      this.diagnosticOutput.error(
-        'Rendering the Ferret execution result failed',
-        new Error('Completed execution did not contain output'),
-      );
-    } else {
+    if (output !== undefined && output.data.length > 0) {
       try {
-        rendered = renderExecutionOutput(output);
+        lines.push(renderExecutionOutput(output));
       } catch (error) {
+        lines.push(renderFailureFallback);
         this.diagnosticOutput.error(
           'Rendering the Ferret execution result failed',
           error,
@@ -199,13 +197,10 @@ export class ExecutionFeedbackController implements vscode.Disposable {
       }
     }
 
-    this.output.appendLine(
-      [
-        rendered,
-        `Completed ${this.path(execution.documentUri)} ` +
-          `in ${this.elapsed(execution.startedAt)}`,
-      ].join('\n'),
+    lines.push(
+      `Completed ${this.path(execution.documentUri)} in ${this.elapsed(execution.startedAt)}`,
     );
+    this.output.appendLine(lines.join('\n'));
     this.output.show(true);
     this.showTerminalStatus('completed');
   }
@@ -214,12 +209,21 @@ export class ExecutionFeedbackController implements vscode.Disposable {
     documentUri: vscode.Uri,
     startedAt: number,
     failure: FerretExecutionFailure,
+    output?: FerretExecutionOutput,
   ): void {
     const lines = [
       `[${this.timestamp()}] Execution failed: ${this.path(documentUri)}`,
       ...this.failureLines(failure),
-      `Failed in ${this.elapsed(startedAt)}`,
     ];
+    if (output !== undefined && output.data.length > 0) {
+      lines.push('Partial output:');
+      try {
+        lines.push(renderExecutionOutput(output));
+      } catch {
+        lines.push(Buffer.from(output.data).toString('utf8'));
+      }
+    }
+    lines.push(`Failed in ${this.elapsed(startedAt)}`);
     this.output.appendLine(lines.join('\n'));
   }
 

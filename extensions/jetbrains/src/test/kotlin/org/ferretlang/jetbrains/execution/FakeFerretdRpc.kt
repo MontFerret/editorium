@@ -36,8 +36,10 @@ internal class FakeFerretdRpc(
     var terminalGate: CompletableDeferred<Unit>? = null
     var serverInfo = FerretdServerInfo(version, "instance", 1, 1)
     var getInfoFailure: Throwable? = null
+    var createSessionFailure: FerretdRpcException? = null
     var closeExecutionFailure: Throwable? = null
     var closeSessionFailure: Throwable? = null
+    var terminalSnapshot: (FerretdExecutionSnapshot) -> FerretdExecutionSnapshot = { it }
     var executionOptionsOverride: FerretdExecutionOptions? = null
     val requestedExecutionOptions = Collections.synchronizedList(mutableListOf<FerretdExecutionOptions>())
     private val nextSession = AtomicInteger()
@@ -70,7 +72,8 @@ internal class FakeFerretdRpc(
         calls += "createSession:$id"
         createSessionEntered.complete(Unit)
         createSessionGate?.await()
-        return FerretdSession(id, workspaceId, relativePath, root.resolve(relativePath).toUri().toString(), 1)
+        createSessionFailure?.let { throw it }
+        return FerretdSession(id, workspaceId, relativePath, root.resolve(relativePath).toUri().toString(), 1, "")
     }
 
     override suspend fun createExecution(
@@ -132,8 +135,9 @@ internal class FakeFerretdRpc(
                 ),
             ).getOrThrow()
             if (record.outcome == Outcome.COMPLETED) {
-                record.state = FerretdExecutionState.COMPLETED
-                record.events.trySend(record.event(3, FerretdExecutionState.COMPLETED)).getOrThrow()
+                val terminal = terminalSnapshot(record.snapshot(FerretdExecutionState.COMPLETED))
+                record.state = terminal.state
+                record.events.trySend(FerretdExecutionEvent(record.id, 3, terminal.state, terminal)).getOrThrow()
                 record.events.close()
             }
             return record.snapshot(FerretdExecutionState.RUNNING)

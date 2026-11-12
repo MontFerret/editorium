@@ -36,4 +36,16 @@ public interface CreateSessionRequestOrBuilder extends
    */
   com.google.protobuf.ByteString
       getRelativePathBytes();
+
+  /**
+   * <code>string runtime_name = 3 [json_name = "runtimeName"];</code>
+   * @return The runtimeName.
+   */
+  java.lang.String getRuntimeName();
+  /**
+   * <code>string runtime_name = 3 [json_name = "runtimeName"];</code>
+   * @return The bytes for runtimeName.
+   */
+  com.google.protobuf.ByteString
+      getRuntimeNameBytes();
 }

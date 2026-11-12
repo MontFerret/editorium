@@ -84,6 +84,7 @@ internal object GrpcFerretdMapper {
             source.relativePath,
             source.uri,
             source.revision,
+            value.runtimeName,
         )
     }
 
@@ -99,14 +100,8 @@ internal object GrpcFerretdMapper {
             protocol(operation, "The Ferret daemon returned an incomplete execution.")
         }
         val state = state(value.state, operation)
-        if (state == FerretdExecutionState.COMPLETED && !value.hasOutput()) {
-            protocol(operation, "The Ferret daemon returned a completed execution without output.")
-        }
-        if (state != FerretdExecutionState.COMPLETED && value.hasOutput()) {
-            protocol(operation, "The Ferret daemon returned output for a non-completed execution.")
-        }
-        if (value.hasOutput() && value.output.contentType.isBlank()) {
-            protocol(operation, "The Ferret daemon returned output without a content type.")
+        if (value.hasOutput() && (state == FerretdExecutionState.CREATED || state == FerretdExecutionState.RUNNING)) {
+            protocol(operation, "The Ferret daemon returned output before execution finished.")
         }
         if (state == FerretdExecutionState.FAILED && !value.hasFailure()) {
             protocol(operation, "The Ferret daemon returned a failed execution without failure details.")
@@ -203,7 +198,7 @@ internal object GrpcFerretdMapper {
                                 val resource = ResourceErrorDetail.parseFrom(detail.value)
                                 return FerretdRpcException(
                                     operation,
-                                    resourceMessage(resource),
+                                    resourceMessage(resource, status.message.ifBlank { error.status.description.orEmpty() }),
                                     cause = error,
                                 )
                             }
@@ -279,7 +274,7 @@ internal object GrpcFerretdMapper {
             protocol(operation, "The Ferret daemon returned an unknown execution state.")
     }
 
-    private fun resourceMessage(detail: ResourceErrorDetail): String {
+    private fun resourceMessage(detail: ResourceErrorDetail, statusMessage: String): String {
         if (
             detail.resource == ResourceKind.RESOURCE_KIND_UNSPECIFIED ||
             detail.resource == ResourceKind.UNRECOGNIZED ||
@@ -288,6 +283,14 @@ internal object GrpcFerretdMapper {
         ) {
             protocol("rpc-status", "The Ferret daemon returned malformed resource error details.")
         }
+        if (detail.resource == ResourceKind.RESOURCE_KIND_RUNTIME) {
+            val message = when (detail.condition) {
+                ResourceCondition.RESOURCE_CONDITION_NOT_FOUND -> "Ferret runtime was not found"
+                ResourceCondition.RESOURCE_CONDITION_UNAVAILABLE -> "Ferret runtime is unavailable"
+                else -> protocol("rpc-status", "The Ferret daemon returned malformed runtime error details.")
+            }
+            return if (statusMessage.isBlank()) "$message." else "$message: $statusMessage"
+        }
         val resource = detail.resource.name.removePrefix("RESOURCE_KIND_").lowercase().replace('_', ' ')
         val condition = when (detail.condition) {
             ResourceCondition.RESOURCE_CONDITION_NOT_FOUND -> "was not found"
@@ -295,6 +298,7 @@ internal object GrpcFerretdMapper {
             ResourceCondition.RESOURCE_CONDITION_INVALID_STATE -> "is in an invalid state"
             ResourceCondition.RESOURCE_CONDITION_INVALID_PARAMETERS -> "has invalid parameters"
             ResourceCondition.RESOURCE_CONDITION_LAGGED -> "watch lagged"
+            ResourceCondition.RESOURCE_CONDITION_UNAVAILABLE -> protocol("rpc-status", "Unexpected unavailable resource condition.")
             ResourceCondition.RESOURCE_CONDITION_INVALID_OPTIONS -> "has invalid execution options"
             ResourceCondition.RESOURCE_CONDITION_UNSPECIFIED, ResourceCondition.UNRECOGNIZED -> error("unreachable")
         }

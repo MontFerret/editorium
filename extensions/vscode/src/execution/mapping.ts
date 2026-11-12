@@ -55,6 +55,7 @@ export function mapSession(value: Session | undefined): FerretSession {
   return {
     id: value.id.value,
     source: mapSourceSnapshot(value.source),
+    runtimeName: value.runtimeName,
     parameters: [...value.parameters],
   };
 }
@@ -113,22 +114,12 @@ export function mapExecution(
     throw error;
   }
   const status = mapStatus(value.state);
-  if (status === 'completed' && value.output === undefined) {
-    throw new ProtocolMappingError(
-      'daemon returned a completed execution without output',
-    );
-  }
   if (
     (status === 'created' || status === 'running') &&
     value.output !== undefined
   ) {
     throw new ProtocolMappingError(
       `daemon returned output for ${status} execution`,
-    );
-  }
-  if (value.output !== undefined && value.output.contentType === '') {
-    throw new ProtocolMappingError(
-      'daemon returned execution output without a content type',
     );
   }
   if (status === 'failed' && value.failure === undefined) {

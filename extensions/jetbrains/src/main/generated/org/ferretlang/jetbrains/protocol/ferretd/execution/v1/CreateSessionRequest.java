@@ -29,6 +29,7 @@ private static final long serialVersionUID = 0L;
   }
   private CreateSessionRequest() {
     relativePath_ = "";
+    runtimeName_ = "";
   }
 
   public static final com.google.protobuf.Descriptors.Descriptor
@@ -115,6 +116,45 @@ private static final long serialVersionUID = 0L;
     }
   }
 
+  public static final int RUNTIME_NAME_FIELD_NUMBER = 3;
+  @SuppressWarnings("serial")
+  private volatile java.lang.Object runtimeName_ = "";
+  /**
+   * <code>string runtime_name = 3 [json_name = "runtimeName"];</code>
+   * @return The runtimeName.
+   */
+  @java.lang.Override
+  public java.lang.String getRuntimeName() {
+    java.lang.Object ref = runtimeName_;
+    if (ref instanceof java.lang.String) {
+      return (java.lang.String) ref;
+    } else {
+      com.google.protobuf.ByteString bs = 
+          (com.google.protobuf.ByteString) ref;
+      java.lang.String s = bs.toStringUtf8();
+      runtimeName_ = s;
+      return s;
+    }
+  }
+  /**
+   * <code>string runtime_name = 3 [json_name = "runtimeName"];</code>
+   * @return The bytes for runtimeName.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getRuntimeNameBytes() {
+    java.lang.Object ref = runtimeName_;
+    if (ref instanceof java.lang.String) {
+      com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString.copyFromUtf8(
+              (java.lang.String) ref);
+      runtimeName_ = b;
+      return b;
+    } else {
+      return (com.google.protobuf.ByteString) ref;
+    }
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -135,6 +175,9 @@ private static final long serialVersionUID = 0L;
     if (!com.google.protobuf.GeneratedMessage.isStringEmpty(relativePath_)) {
       com.google.protobuf.GeneratedMessage.writeString(output, 2, relativePath_);
     }
+    if (!com.google.protobuf.GeneratedMessage.isStringEmpty(runtimeName_)) {
+      com.google.protobuf.GeneratedMessage.writeString(output, 3, runtimeName_);
+    }
     getUnknownFields().writeTo(output);
   }
   private int computeSerializedSize_0() {
@@ -145,6 +188,9 @@ private static final long serialVersionUID = 0L;
     }
     if (!com.google.protobuf.GeneratedMessage.isStringEmpty(relativePath_)) {
       size += com.google.protobuf.GeneratedMessage.computeStringSize(2, relativePath_);
+    }
+    if (!com.google.protobuf.GeneratedMessage.isStringEmpty(runtimeName_)) {
+      size += com.google.protobuf.GeneratedMessage.computeStringSize(3, runtimeName_);
     }
     return size;
   }
@@ -177,6 +223,8 @@ private static final long serialVersionUID = 0L;
     }
     if (!getRelativePath()
         .equals(other.getRelativePath())) return false;
+    if (!getRuntimeName()
+        .equals(other.getRuntimeName())) return false;
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -194,6 +242,8 @@ private static final long serialVersionUID = 0L;
     }
     hash = (37 * hash) + RELATIVE_PATH_FIELD_NUMBER;
     hash = (53 * hash) + getRelativePath().hashCode();
+    hash = (37 * hash) + RUNTIME_NAME_FIELD_NUMBER;
+    hash = (53 * hash) + getRuntimeName().hashCode();
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -337,6 +387,7 @@ private static final long serialVersionUID = 0L;
         workspaceIdBuilder_ = null;
       }
       relativePath_ = "";
+      runtimeName_ = "";
       return this;
     }
 
@@ -380,6 +431,9 @@ private static final long serialVersionUID = 0L;
       if (((from_bitField0_ & 0x00000002) != 0)) {
         result.relativePath_ = relativePath_;
       }
+      if (((from_bitField0_ & 0x00000004) != 0)) {
+        result.runtimeName_ = runtimeName_;
+      }
       result.bitField0_ |= to_bitField0_;
     }
 
@@ -401,6 +455,11 @@ private static final long serialVersionUID = 0L;
       if (!other.getRelativePath().isEmpty()) {
         relativePath_ = other.relativePath_;
         bitField0_ |= 0x00000002;
+        onChanged();
+      }
+      if (!other.getRuntimeName().isEmpty()) {
+        runtimeName_ = other.runtimeName_;
+        bitField0_ |= 0x00000004;
         onChanged();
       }
       this.mergeUnknownFields(other.getUnknownFields());
@@ -439,6 +498,11 @@ private static final long serialVersionUID = 0L;
               bitField0_ |= 0x00000002;
               break;
             } // case 18
+            case 26: {
+              runtimeName_ = input.readStringRequireUtf8();
+              bitField0_ |= 0x00000004;
+              break;
+            } // case 26
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -643,6 +707,78 @@ private static final long serialVersionUID = 0L;
       checkByteStringIsUtf8(value);
       relativePath_ = value;
       bitField0_ |= 0x00000002;
+      onChanged();
+      return this;
+    }
+
+    private java.lang.Object runtimeName_ = "";
+    /**
+     * <code>string runtime_name = 3 [json_name = "runtimeName"];</code>
+     * @return The runtimeName.
+     */
+    public java.lang.String getRuntimeName() {
+      java.lang.Object ref = runtimeName_;
+      if (!(ref instanceof java.lang.String)) {
+        com.google.protobuf.ByteString bs =
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        runtimeName_ = s;
+        return s;
+      } else {
+        return (java.lang.String) ref;
+      }
+    }
+    /**
+     * <code>string runtime_name = 3 [json_name = "runtimeName"];</code>
+     * @return The bytes for runtimeName.
+     */
+    public com.google.protobuf.ByteString
+        getRuntimeNameBytes() {
+      java.lang.Object ref = runtimeName_;
+      if (ref instanceof String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        runtimeName_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+    /**
+     * <code>string runtime_name = 3 [json_name = "runtimeName"];</code>
+     * @param value The runtimeName to set.
+     * @return This builder for chaining.
+     */
+    public Builder setRuntimeName(
+        java.lang.String value) {
+      java.util.Objects.requireNonNull(value);
+      runtimeName_ = value;
+      bitField0_ |= 0x00000004;
+      onChanged();
+      return this;
+    }
+    /**
+     * <code>string runtime_name = 3 [json_name = "runtimeName"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearRuntimeName() {
+      runtimeName_ = getDefaultInstance().getRuntimeName();
+      bitField0_ = (bitField0_ & ~0x00000004);
+      onChanged();
+      return this;
+    }
+    /**
+     * <code>string runtime_name = 3 [json_name = "runtimeName"];</code>
+     * @param value The bytes for runtimeName to set.
+     * @return This builder for chaining.
+     */
+    public Builder setRuntimeNameBytes(
+        com.google.protobuf.ByteString value) {
+      java.util.Objects.requireNonNull(value);
+      checkByteStringIsUtf8(value);
+      runtimeName_ = value;
+      bitField0_ |= 0x00000004;
       onChanged();
       return this;
     }

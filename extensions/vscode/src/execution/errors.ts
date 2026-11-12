@@ -1,4 +1,4 @@
-import { status } from '@grpc/grpc-js';
+import { status, type ServiceError } from '@grpc/grpc-js';
 
 import {
   DaemonDisposedError,
@@ -40,7 +40,8 @@ export type FerretExecutionResource =
   | 'source'
   | 'session'
   | 'execution'
-  | 'watcher';
+  | 'watcher'
+  | 'runtime';
 
 export type FerretExecutionErrorCode =
   | 'daemon-unavailable'
@@ -210,7 +211,7 @@ export function normalizeExecutionError(
 }
 
 function detailedError(
-  error: Parameters<typeof decodeStatusDetails>[0],
+  error: ServiceError,
   operation: FerretExecutionOperation,
 ): FerretExecutionClientError | undefined {
   const statusDetails = decodeStatusDetails(error);
@@ -239,6 +240,7 @@ function detailedError(
             ResourceErrorDetail.decode(detail.value),
             operation,
             error,
+            statusDetails.message || error.details,
           );
       }
     } catch {
@@ -258,6 +260,7 @@ function resourceError(
   detail: ResourceErrorDetail,
   operation: FerretExecutionOperation,
   cause: unknown,
+  statusMessage: string,
 ): FerretExecutionClientError {
   const resource = mapResource(detail.resource);
   if (!isKnownResourceCondition(detail.resource, detail.condition)) {
@@ -265,6 +268,18 @@ function resourceError(
       'protocol',
       operation,
       `invalid ${resource} condition ${String(detail.condition)}`,
+      cause,
+      resource,
+    );
+  }
+
+  if (resource === 'runtime') {
+    const missing = detail.condition === ResourceCondition.RESOURCE_CONDITION_NOT_FOUND;
+    const summary = missing ? 'Ferret runtime was not found' : 'Ferret runtime is unavailable';
+    return clientError(
+      missing ? 'not-found' : 'execution-rejected',
+      operation,
+      statusMessage ? `${summary}: ${statusMessage}` : summary,
       cause,
       resource,
     );
@@ -329,6 +344,11 @@ function isKnownResourceCondition(
   condition: ResourceCondition,
 ): boolean {
   switch (resource) {
+    case ResourceKind.RESOURCE_KIND_RUNTIME:
+      return (
+        condition === ResourceCondition.RESOURCE_CONDITION_NOT_FOUND ||
+        condition === ResourceCondition.RESOURCE_CONDITION_UNAVAILABLE
+      );
     case ResourceKind.RESOURCE_KIND_WORKSPACE:
     case ResourceKind.RESOURCE_KIND_SOURCE:
     case ResourceKind.RESOURCE_KIND_SESSION:
@@ -355,6 +375,8 @@ function isKnownResourceCondition(
 
 function mapResource(value: ResourceKind): FerretExecutionResource {
   switch (value) {
+    case ResourceKind.RESOURCE_KIND_RUNTIME:
+      return 'runtime';
     case ResourceKind.RESOURCE_KIND_WORKSPACE:
       return 'workspace';
     case ResourceKind.RESOURCE_KIND_SOURCE:

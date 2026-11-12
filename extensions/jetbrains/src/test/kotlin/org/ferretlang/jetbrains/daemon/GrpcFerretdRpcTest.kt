@@ -9,6 +9,14 @@ import java.nio.file.Files
 
 class GrpcFerretdRpcTest {
     @Test
+    fun createsSessionUsingDaemonDefault() {
+        val request = GrpcFerretdRpc.toProtocolCreateSessionRequest("workspace", "query.fql")
+        assertEquals("workspace", request.workspaceId.value)
+        assertEquals("query.fql", request.relativePath)
+        assertEquals("", request.runtimeName)
+    }
+
+    @Test
     fun mapsWorkingDirectoryOnlyWhenPresent() {
         val absent = GrpcFerretdRpc.toProtocolExecutionOptions(
             FerretdExecutionOptions("application/json", null),

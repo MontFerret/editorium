@@ -90,7 +90,14 @@ and the daemon's nested-symlink restrictions still apply.
 
 [`ferretd.json`](ferretd.json) is the sole version pin for both the daemon
 bundled in distributions and the ferretd protocol schemas used to generate
-editor clients. The pinned `proto/ferretd/` tree is cached under
+editor clients. The current pin is `1.0.0-alpha.11`, which advertises API 1.3.
+Both editors request API 1.1 for local execution and accept API major 1 with
+minor 1 or later. Run and Debug use the daemon’s default runtime. Application
+runtime selection is planned for a subsequent update. See the
+[alpha.11 validation record](extensions/jetbrains/docs/debugger-validation.md#november-12-2026-ferretd-alpha11-migration)
+for release availability and integration checks.
+
+The pinned `proto/ferretd/` tree is cached under
 `shared/proto/ferretd/`; its files and `.ferretd-version` marker are ignored by
 Git. `shared/proto/google/rpc/status.proto` is a separately owned, committed
 third-party input.

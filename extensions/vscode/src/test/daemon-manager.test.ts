@@ -100,7 +100,7 @@ suite('Ferret daemon lifecycle', () => {
       async () => endpoint,
       (_target, signal) => {
         observedSignal = signal;
-        return successfulConnection(process, signal, state);
+        return successfulConnection(process, signal, state, { major: 1, minor: 3 });
       },
       timing,
     );
@@ -207,53 +207,40 @@ suite('Ferret daemon lifecycle', () => {
     workspaceListener.dispose();
   });
 
-  test('cleans partial startup after incompatible API', async () => {
-    const process = new FakeProcess();
-    const endpoint = fakeEndpoint();
-    const state = rpcState();
-    const controller = new DaemonController(
-      configuration,
-      new FakeOutput(),
-      () => process,
-      async () => endpoint,
-      (_target, signal) =>
-        connection(
-          signal,
-          state,
-          process,
-          (_request, _metadata, _options, callback) => {
-            callback(null, {
-              serverInfo: {
-                version: '2.0.0-alpha.2',
-                instanceId: 'daemon-1',
-                apiVersion: { major: 1, minor: 0 },
-              },
-            });
-            return fakeCall;
-          },
-        ),
-      timing,
-    );
+  for (const apiVersion of [{ major: 1, minor: 0 }, { major: 2, minor: 3 }]) {
+    test(`cleans partial startup after incompatible API ${apiVersion.major}.${apiVersion.minor}`, async () => {
+      const process = new FakeProcess();
+      const endpoint = fakeEndpoint();
+      const state = rpcState();
+      const controller = new DaemonController(
+        configuration,
+        new FakeOutput(),
+        () => process,
+        async () => endpoint,
+        (_target, signal) => successfulConnection(process, signal, state, apiVersion),
+        timing,
+      );
 
-    await assert.rejects(
-      controller.start(),
-      (error: unknown) =>
-        error instanceof DaemonError &&
-        error.code === 'incompatible-daemon',
-    );
+      await assert.rejects(
+        controller.start(),
+        (error: unknown) =>
+          error instanceof DaemonError &&
+          error.code === 'incompatible-daemon',
+      );
 
-    assert.throws(
-      () => controller.requireConnection(),
-      (error: unknown) =>
-        error instanceof Error &&
-        'code' in error &&
-        error.code === 'incompatible-daemon',
-    );
-    assert.strictEqual(state.channelCloseCalls, 1);
-    assert.strictEqual(endpoint.disposeCalls, 1);
-    assert.strictEqual(process.killCalls, 1);
-    assert.deepStrictEqual(process.killSignals, ['SIGKILL']);
-  });
+      assert.throws(
+        () => controller.requireConnection(),
+        (error: unknown) =>
+          error instanceof Error &&
+          'code' in error &&
+          error.code === 'incompatible-daemon',
+      );
+      assert.strictEqual(state.channelCloseCalls, 1);
+      assert.strictEqual(endpoint.disposeCalls, 1);
+      assert.strictEqual(process.killCalls, 1);
+      assert.deepStrictEqual(process.killSignals, ['SIGKILL']);
+    });
+  }
 
   test('decodes structured API incompatibility details', async () => {
     const process = new FakeProcess();
@@ -400,17 +387,19 @@ function successfulConnection(
   process: FakeProcess,
   signal: AbortSignal,
   state: FakeRpcState,
+  apiVersion = { major: 1, minor: 1 },
 ): DaemonConnection {
   return connection(
     signal,
     state,
     process,
-    (_request, _metadata, _options, callback) => {
+    (request, _metadata, _options, callback) => {
+      assert.deepStrictEqual(request.clientApi, { major: 1, minor: 1 });
       callback(null, {
         serverInfo: {
           version: '2.0.0-alpha.2',
           instanceId: 'daemon-1',
-          apiVersion: { major: 1, minor: 1 },
+          apiVersion,
         },
       });
       return fakeCall;

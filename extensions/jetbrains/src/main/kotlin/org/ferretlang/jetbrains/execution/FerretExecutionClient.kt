@@ -233,11 +233,9 @@ internal class FerretExecutionClient(
             }
             return when (event.kind) {
                 FerretdExecutionState.COMPLETED -> {
-                    val output = event.execution.output
-                        ?: throw FerretdRpcException("watch-execution", "The completed Ferret execution has no output.")
-                    val formatted = FerretExecutionOutputFormatter.format(output)
+                    val formatted = event.execution.output?.let(FerretExecutionOutputFormatter::format)
                     val code = handle.commit(0)
-                    if (code == 0) {
+                    if (code == 0 && !formatted.isNullOrEmpty()) {
                         sink.stdout(formatted)
                     }
                     code
@@ -246,6 +244,16 @@ internal class FerretExecutionClient(
                     val code = handle.commit(1)
                     if (code == 1) {
                         renderFailure(event.execution.failure, sink)
+                        val output = event.execution.output
+                        if (output != null && output.data.isNotEmpty()) {
+                            sink.system("Partial output:")
+                            val text = try {
+                                FerretExecutionOutputFormatter.format(output)
+                            } catch (_: Exception) {
+                                output.data.toString(Charsets.UTF_8)
+                            }
+                            sink.stdout(text)
+                        }
                     }
                     code
                 }

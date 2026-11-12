@@ -14,6 +14,8 @@ internal object FerretExecutionOutputFormatter {
     private val gson = GsonBuilder().disableHtmlEscaping().serializeNulls().setPrettyPrinting().create()
 
     fun format(output: FerretdExecutionOutput): String {
+        if (output.data.isEmpty()) return ""
+        if (output.contentType.isBlank()) return output.data.toString(Charsets.UTF_8)
         val contentType = output.contentType.substringBefore(';').trim().lowercase()
         if (contentType != "application/json") {
             throw FerretExecutionOutputException("Unsupported Ferret result content type: ${output.contentType}")

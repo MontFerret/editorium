@@ -445,6 +445,16 @@ suite('Ferret execution commands', () => {
         fixture.output.errors.some(({ args }) => args.includes(failure)),
       );
 
+      const runtimeFailure = new FerretExecutionClientError({
+        code: 'execution-rejected',
+        operation: 'create-session',
+        resource: 'runtime',
+        message: 'Ferret runtime is unavailable: worker timed out',
+      });
+      fixture.manager.runError = runtimeFailure;
+      await fixture.host.invoke(runFileCommand);
+      assert.strictEqual(fixture.host.errorMessages.at(-1), runtimeFailure.message);
+
       const compilationFailure = new FerretExecutionClientError({
         code: 'compilation-failed',
         operation: 'create-session',

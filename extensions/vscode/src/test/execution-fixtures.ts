@@ -24,6 +24,7 @@ export function session(): Session {
   return {
     id: { value: 'session-1' },
     source: sourceSnapshot(),
+    runtimeName: '',
     parameters: ['value', 'nested'],
   };
 }

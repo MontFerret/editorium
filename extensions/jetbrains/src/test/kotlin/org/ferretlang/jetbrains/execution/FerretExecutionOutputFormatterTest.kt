@@ -23,6 +23,15 @@ class FerretExecutionOutputFormatterTest {
     }
 
     @Test
+    fun preservesEmptyAndUntypedOutputAndLiteralNull() {
+        assertEquals("", FerretExecutionOutputFormatter.format(FerretdExecutionOutput("application/json", ByteArray(0))))
+        assertEquals("", FerretExecutionOutputFormatter.format(FerretdExecutionOutput("", ByteArray(0))))
+        val raw = """{"raw":1}"""
+        assertEquals(raw, FerretExecutionOutputFormatter.format(FerretdExecutionOutput("", raw.toByteArray())))
+        assertEquals("null", FerretExecutionOutputFormatter.format(FerretdExecutionOutput("application/json", "null".toByteArray())))
+    }
+
+    @Test
     fun rejectsUnsupportedMalformedAndInvalidUtf8Output() {
         assertThrows(FerretExecutionOutputException::class.java) {
             FerretExecutionOutputFormatter.format(FerretdExecutionOutput("text/plain", "1".toByteArray()))
@@ -31,7 +40,7 @@ class FerretExecutionOutputFormatterTest {
             FerretExecutionOutputFormatter.format(FerretdExecutionOutput("application/json", "{]".toByteArray()))
         }
         assertThrows(FerretExecutionOutputException::class.java) {
-            FerretExecutionOutputFormatter.format(FerretdExecutionOutput("application/json", ByteArray(0)))
+            FerretExecutionOutputFormatter.format(FerretdExecutionOutput("application/json", "   ".toByteArray()))
         }
         assertThrows(FerretExecutionOutputException::class.java) {
             FerretExecutionOutputFormatter.format(FerretdExecutionOutput("application/json", "1 2".toByteArray()))

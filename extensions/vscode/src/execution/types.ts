@@ -20,6 +20,7 @@ export interface FerretSourceSnapshot {
 export interface FerretSession {
   readonly id: string;
   readonly source: FerretSourceSnapshot;
+  readonly runtimeName: string;
   readonly parameters: readonly string[];
 }
 

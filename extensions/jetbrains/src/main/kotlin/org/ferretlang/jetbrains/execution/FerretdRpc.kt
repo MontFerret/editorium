@@ -55,6 +55,7 @@ internal data class FerretdSession(
     val relativePath: String,
     val uri: String,
     val revision: Long,
+    val runtimeName: String,
 )
 
 internal enum class FerretdExecutionState {

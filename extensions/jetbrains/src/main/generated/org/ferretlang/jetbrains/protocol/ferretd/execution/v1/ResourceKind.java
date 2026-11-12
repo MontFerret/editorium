@@ -35,6 +35,10 @@ public enum ResourceKind
    * <code>RESOURCE_KIND_WATCHER = 5;</code>
    */
   RESOURCE_KIND_WATCHER(5),
+  /**
+   * <code>RESOURCE_KIND_RUNTIME = 6;</code>
+   */
+  RESOURCE_KIND_RUNTIME(6),
   UNRECOGNIZED(-1),
   ;
 
@@ -71,6 +75,10 @@ public enum ResourceKind
    * <code>RESOURCE_KIND_WATCHER = 5;</code>
    */
   public static final int RESOURCE_KIND_WATCHER_VALUE = 5;
+  /**
+   * <code>RESOURCE_KIND_RUNTIME = 6;</code>
+   */
+  public static final int RESOURCE_KIND_RUNTIME_VALUE = 6;
 
 
   public final int getNumber() {
@@ -103,6 +111,7 @@ public enum ResourceKind
       case 3: return RESOURCE_KIND_SESSION;
       case 4: return RESOURCE_KIND_EXECUTION;
       case 5: return RESOURCE_KIND_WATCHER;
+      case 6: return RESOURCE_KIND_RUNTIME;
       default: return null;
     }
   }
