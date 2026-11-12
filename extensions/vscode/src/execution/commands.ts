@@ -297,6 +297,9 @@ function daemonErrorMessage(error: DaemonError, fallback: string): string {
 function executionClientErrorMessage(
   error: FerretExecutionClientError,
 ): string {
+  if (error.resource === 'runtime') {
+    return error.message;
+  }
   switch (error.code) {
     case 'daemon-unavailable':
       return daemonUnavailableMessage;

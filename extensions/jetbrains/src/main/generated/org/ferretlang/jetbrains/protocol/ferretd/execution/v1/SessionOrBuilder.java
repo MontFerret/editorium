@@ -64,4 +64,16 @@ public interface SessionOrBuilder extends
    */
   com.google.protobuf.ByteString
       getParametersBytes(int index);
+
+  /**
+   * <code>string runtime_name = 4 [json_name = "runtimeName"];</code>
+   * @return The runtimeName.
+   */
+  java.lang.String getRuntimeName();
+  /**
+   * <code>string runtime_name = 4 [json_name = "runtimeName"];</code>
+   * @return The bytes for runtimeName.
+   */
+  com.google.protobuf.ByteString
+      getRuntimeNameBytes();
 }

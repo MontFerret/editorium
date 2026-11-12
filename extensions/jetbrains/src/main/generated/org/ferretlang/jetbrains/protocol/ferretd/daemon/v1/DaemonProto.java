@@ -61,6 +61,21 @@ public final class DaemonProto extends com.google.protobuf.GeneratedFile {
   static final 
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_ferretd_daemon_v1_ShutdownResponse_fieldAccessorTable;
+  static final com.google.protobuf.Descriptors.Descriptor
+    internal_static_ferretd_daemon_v1_RuntimeDescriptor_descriptor;
+  static final 
+    com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      internal_static_ferretd_daemon_v1_RuntimeDescriptor_fieldAccessorTable;
+  static final com.google.protobuf.Descriptors.Descriptor
+    internal_static_ferretd_daemon_v1_ListRuntimesRequest_descriptor;
+  static final 
+    com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      internal_static_ferretd_daemon_v1_ListRuntimesRequest_fieldAccessorTable;
+  static final com.google.protobuf.Descriptors.Descriptor
+    internal_static_ferretd_daemon_v1_ListRuntimesResponse_descriptor;
+  static final 
+    com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      internal_static_ferretd_daemon_v1_ListRuntimesResponse_fieldAccessorTable;
 
   public static com.google.protobuf.Descriptors.FileDescriptor
       getDescriptor() {
@@ -84,18 +99,27 @@ public final class DaemonProto extends com.google.protobuf.GeneratedFile {
       "client_api\030\001 \001(\0132\035.ferretd.daemon.v1.Api" +
       "VersionR\tclientApi\022<\n\nserver_api\030\002 \001(\0132\035" +
       ".ferretd.daemon.v1.ApiVersionR\tserverApi" +
-      "\"\021\n\017ShutdownRequest\"\022\n\020ShutdownResponse2" +
-      "\266\001\n\rDaemonService\022P\n\007GetInfo\022!.ferretd.d" +
-      "aemon.v1.GetInfoRequest\032\".ferretd.daemon" +
-      ".v1.GetInfoResponse\022S\n\010Shutdown\022\".ferret" +
-      "d.daemon.v1.ShutdownRequest\032#.ferretd.da" +
-      "emon.v1.ShutdownResponseB\346\001\n3org.ferretl" +
-      "ang.jetbrains.protocol.ferretd.daemon.v1" +
-      "B\013DaemonProtoP\001Z<github.com/MontFerret/f" +
-      "erretd/gen/ferretd/daemon/v1;daemonv1\242\002\003" +
-      "FDX\252\002\021Ferretd.Daemon.V1\312\002\021Ferretd\\Daemon" +
-      "\\V1\342\002\035Ferretd\\Daemon\\V1\\GPBMetadata\352\002\023Fe" +
-      "rretd::Daemon::V1b\006proto3"
+      "\"\021\n\017ShutdownRequest\"\022\n\020ShutdownResponse\"" +
+      "Y\n\021RuntimeDescriptor\022\022\n\004name\030\001 \001(\tR\004name" +
+      "\022\024\n\005label\030\002 \001(\tR\005label\022\032\n\010provider\030\003 \001(\t" +
+      "R\010provider\"\025\n\023ListRuntimesRequest\"\201\001\n\024Li" +
+      "stRuntimesResponse\022\'\n\017default_runtime\030\001 " +
+      "\001(\tR\016defaultRuntime\022@\n\010runtimes\030\002 \003(\0132$." +
+      "ferretd.daemon.v1.RuntimeDescriptorR\010run" +
+      "times2\227\002\n\rDaemonService\022P\n\007GetInfo\022!.fer" +
+      "retd.daemon.v1.GetInfoRequest\032\".ferretd." +
+      "daemon.v1.GetInfoResponse\022S\n\010Shutdown\022\"." +
+      "ferretd.daemon.v1.ShutdownRequest\032#.ferr" +
+      "etd.daemon.v1.ShutdownResponse\022_\n\014ListRu" +
+      "ntimes\022&.ferretd.daemon.v1.ListRuntimesR" +
+      "equest\032\'.ferretd.daemon.v1.ListRuntimesR" +
+      "esponseB\346\001\n3org.ferretlang.jetbrains.pro" +
+      "tocol.ferretd.daemon.v1B\013DaemonProtoP\001Z<" +
+      "github.com/MontFerret/ferretd/gen/ferret" +
+      "d/daemon/v1;daemonv1\242\002\003FDX\252\002\021Ferretd.Dae" +
+      "mon.V1\312\002\021Ferretd\\Daemon\\V1\342\002\035Ferretd\\Dae" +
+      "mon\\V1\\GPBMetadata\352\002\023Ferretd::Daemon::V1" +
+      "b\006proto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -143,6 +167,24 @@ public final class DaemonProto extends com.google.protobuf.GeneratedFile {
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_ferretd_daemon_v1_ShutdownResponse_descriptor,
         new java.lang.String[] { });
+    internal_static_ferretd_daemon_v1_RuntimeDescriptor_descriptor =
+      getDescriptor().getMessageType(7);
+    internal_static_ferretd_daemon_v1_RuntimeDescriptor_fieldAccessorTable = new
+      com.google.protobuf.GeneratedMessage.FieldAccessorTable(
+        internal_static_ferretd_daemon_v1_RuntimeDescriptor_descriptor,
+        new java.lang.String[] { "Name", "Label", "Provider", });
+    internal_static_ferretd_daemon_v1_ListRuntimesRequest_descriptor =
+      getDescriptor().getMessageType(8);
+    internal_static_ferretd_daemon_v1_ListRuntimesRequest_fieldAccessorTable = new
+      com.google.protobuf.GeneratedMessage.FieldAccessorTable(
+        internal_static_ferretd_daemon_v1_ListRuntimesRequest_descriptor,
+        new java.lang.String[] { });
+    internal_static_ferretd_daemon_v1_ListRuntimesResponse_descriptor =
+      getDescriptor().getMessageType(9);
+    internal_static_ferretd_daemon_v1_ListRuntimesResponse_fieldAccessorTable = new
+      com.google.protobuf.GeneratedMessage.FieldAccessorTable(
+        internal_static_ferretd_daemon_v1_ListRuntimesResponse_descriptor,
+        new java.lang.String[] { "DefaultRuntime", "Runtimes", });
     descriptor.resolveAllFeaturesImmutable();
   }
 

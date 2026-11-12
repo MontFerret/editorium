@@ -55,6 +55,7 @@ class FerretdDaemonLauncherTest {
         val version = "1.0.0-alpha.6"
         val process = FakeDaemonProcess.ready(version)
         val rpc = FakeFerretdRpc(version, root, emptyList())
+        rpc.serverInfo = FerretdServerInfo(version, "instance", 1, 3)
         val starterTokens = mutableListOf<String>()
         val connectorTokens = mutableListOf<String>()
         val launcher = FerretdDaemonLauncher.testing(
@@ -113,7 +114,8 @@ class FerretdDaemonLauncherTest {
         val cases = listOf<(FakeFerretdRpc) -> Unit>(
             { it.getInfoFailure = FerretdRpcException("get-info", "Unauthenticated") },
             { it.serverInfo = FerretdServerInfo("wrong", "instance", 1, 1) },
-            { it.serverInfo = FerretdServerInfo(version, "instance", 1, 2) },
+            { it.serverInfo = FerretdServerInfo(version, "instance", 1, 0) },
+            { it.serverInfo = FerretdServerInfo(version, "instance", 2, 3) },
             { it.serverInfo = FerretdServerInfo(version, "", 1, 1) },
         )
         cases.forEach { configure ->

@@ -50,7 +50,7 @@ type (
 )
 
 var vscodeTargets = []vscodeTarget{
-	{ID: "darwin-arm64", Platform: "darwin", Architecture: "arm64", FerretdTargetID: "darwin-arm64", Runner: "macos-14"},
+	{ID: "darwin-arm64", Platform: "darwin", Architecture: "arm64", FerretdTargetID: "darwin-arm64", Runner: "macos-26"},
 	{ID: "darwin-x64", Platform: "darwin", Architecture: "amd64", FerretdTargetID: "darwin-x64", Runner: "macos-15-intel"},
 	{ID: "linux-x64", Platform: "linux", Architecture: "amd64", FerretdTargetID: "linux-x64", Runner: "ubuntu-24.04"},
 	{ID: "linux-arm64", Platform: "linux", Architecture: "arm64", FerretdTargetID: "linux-arm64", Runner: "ubuntu-24.04-arm"},

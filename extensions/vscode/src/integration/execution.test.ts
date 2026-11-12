@@ -896,6 +896,7 @@ RETURN [first, second, third]`,
       ]);
       assert.notStrictEqual(aExecution.sessionId, bExecution.sessionId);
       const sessions = fixture.client.createdSessions.slice(-2);
+      assert.deepStrictEqual(sessions.map(({ runtimeName }) => runtimeName), ['local', 'local']);
       assert.notStrictEqual(
         sessions[0]?.source.workspaceId,
         sessions[1]?.source.workspaceId,

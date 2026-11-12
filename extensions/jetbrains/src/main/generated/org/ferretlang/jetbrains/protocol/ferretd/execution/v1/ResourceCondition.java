@@ -39,6 +39,10 @@ public enum ResourceCondition
    * <code>RESOURCE_CONDITION_INVALID_OPTIONS = 6;</code>
    */
   RESOURCE_CONDITION_INVALID_OPTIONS(6),
+  /**
+   * <code>RESOURCE_CONDITION_UNAVAILABLE = 7;</code>
+   */
+  RESOURCE_CONDITION_UNAVAILABLE(7),
   UNRECOGNIZED(-1),
   ;
 
@@ -79,6 +83,10 @@ public enum ResourceCondition
    * <code>RESOURCE_CONDITION_INVALID_OPTIONS = 6;</code>
    */
   public static final int RESOURCE_CONDITION_INVALID_OPTIONS_VALUE = 6;
+  /**
+   * <code>RESOURCE_CONDITION_UNAVAILABLE = 7;</code>
+   */
+  public static final int RESOURCE_CONDITION_UNAVAILABLE_VALUE = 7;
 
 
   public final int getNumber() {
@@ -112,6 +120,7 @@ public enum ResourceCondition
       case 4: return RESOURCE_CONDITION_INVALID_PARAMETERS;
       case 5: return RESOURCE_CONDITION_LAGGED;
       case 6: return RESOURCE_CONDITION_INVALID_OPTIONS;
+      case 7: return RESOURCE_CONDITION_UNAVAILABLE;
       default: return null;
     }
   }

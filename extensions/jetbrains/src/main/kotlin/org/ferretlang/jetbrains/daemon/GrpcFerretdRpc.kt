@@ -97,10 +97,7 @@ internal class GrpcFerretdRpc private constructor(
     override suspend fun createSession(workspaceId: String, relativePath: String): FerretdSession {
         val response = unary<CreateSessionResponse>("create-session") { observer ->
             executions.withDeadlineAfter(CONTROL_TIMEOUT_SECONDS, TimeUnit.SECONDS).createSession(
-                CreateSessionRequest.newBuilder()
-                    .setWorkspaceId(WorkspaceId.newBuilder().setValue(workspaceId))
-                    .setRelativePath(relativePath)
-                    .build(),
+                toProtocolCreateSessionRequest(workspaceId, relativePath),
                 observer,
             )
         }
@@ -265,6 +262,12 @@ internal class GrpcFerretdRpc private constructor(
             NettyChannelBuilder.forAddress("127.0.0.1", port).usePlaintext().build(),
             token,
         )
+
+        internal fun toProtocolCreateSessionRequest(workspaceId: String, relativePath: String): CreateSessionRequest =
+            CreateSessionRequest.newBuilder()
+                .setWorkspaceId(WorkspaceId.newBuilder().setValue(workspaceId))
+                .setRelativePath(relativePath)
+                .build()
 
         internal fun toProtocolExecutionOptions(options: FerretdExecutionOptions): ProtocolExecutionOptions =
             ProtocolExecutionOptions.newBuilder()

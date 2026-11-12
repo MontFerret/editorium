@@ -1,6 +1,7 @@
 package org.ferretlang.jetbrains.daemon
 
 import com.google.protobuf.Any
+import com.google.protobuf.ByteString
 import io.grpc.Metadata
 import io.grpc.StatusRuntimeException
 import org.ferretlang.jetbrains.execution.FerretdExecutionState
@@ -21,8 +22,12 @@ import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.Range
 import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.ResourceCondition
 import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.ResourceErrorDetail
 import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.ResourceKind
+import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.Session
 import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.SessionId
+import org.ferretlang.jetbrains.protocol.ferretd.execution.v1.SourceSnapshot
+import org.ferretlang.jetbrains.protocol.ferretd.workspace.v1.WorkspaceId
 import org.ferretlang.jetbrains.protocol.google.rpc.Status
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -64,13 +69,63 @@ class GrpcFerretdMapperTest {
         assertEquals(FerretdExecutionState.FAILED, mapped.state)
         assertEquals(FerretdFailureCategory.RUNTIME, mapped.failure?.category)
 
+        val partial = Output.newBuilder().setData(ByteString.copyFromUtf8("prefix")).build()
+        val failed = GrpcFerretdMapper.execution(
+            execution(ExecutionState.EXECUTION_STATE_FAILED).setFailure(failure).setOutput(partial).build(), "watch",
+        )
+        assertEquals(mapped.failure, failed.failure)
+        assertArrayEquals(partial.data.toByteArray(), failed.output!!.data)
+        val cancelled = GrpcFerretdMapper.execution(execution(ExecutionState.EXECUTION_STATE_CANCELLED).setOutput(partial).build(), "watch")
+        assertEquals(FerretdExecutionState.CANCELLED, cancelled.state)
+        assertArrayEquals(partial.data.toByteArray(), cancelled.output!!.data)
         assertThrows(FerretdRpcException::class.java) {
-            GrpcFerretdMapper.execution(
-                execution(ExecutionState.EXECUTION_STATE_CANCELLED)
-                    .setOutput(Output.newBuilder().setContentType("application/json"))
-                    .build(),
-                "watch",
-            )
+            GrpcFerretdMapper.execution(execution(ExecutionState.EXECUTION_STATE_RUNNING).setOutput(partial).build(), "watch")
+        }
+        assertThrows(FerretdRpcException::class.java) {
+            GrpcFerretdMapper.execution(execution(ExecutionState.EXECUTION_STATE_FAILED).setOutput(partial).build(), "watch")
+        }
+    }
+
+    @Test
+    fun preservesTerminalOutputPresenceAndMetadata() {
+        val completed = execution(ExecutionState.EXECUTION_STATE_COMPLETED)
+        assertEquals(null, GrpcFerretdMapper.execution(completed.build(), "watch").output)
+        for (type in listOf("", "application/json")) {
+            for (content in listOf("", """{"id":1}""")) {
+                completed.setOutput(Output.newBuilder().setContentType(type).setData(ByteString.copyFromUtf8(content)))
+                val output = GrpcFerretdMapper.execution(Execution.parseFrom(completed.build().toByteArray()), "watch").output!!
+                assertEquals(type, output.contentType)
+                assertArrayEquals(content.toByteArray(), output.data)
+            }
+        }
+    }
+
+    @Test
+    fun preservesReportedAndUnreportedSessionRuntimeNames() {
+        val source = SourceSnapshot.newBuilder()
+            .setWorkspaceId(WorkspaceId.newBuilder().setValue("workspace"))
+            .setUri("file:///query.fql")
+            .setRelativePath("query.fql")
+            .setRevision(1)
+        val session = Session.newBuilder()
+            .setId(SessionId.newBuilder().setValue("session"))
+            .setSource(source)
+        assertEquals("", GrpcFerretdMapper.session(session.build()).runtimeName)
+        assertEquals("worker", GrpcFerretdMapper.session(session.setRuntimeName("worker").build()).runtimeName)
+    }
+
+    @Test
+    fun reportsRuntimeDetailsBeforeTransportStatus() {
+        for ((code, condition, message) in listOf(
+            Triple(io.grpc.Status.NOT_FOUND, ResourceCondition.RESOURCE_CONDITION_NOT_FOUND, "was not found"),
+            Triple(io.grpc.Status.UNAVAILABLE, ResourceCondition.RESOURCE_CONDITION_UNAVAILABLE, "is unavailable"),
+            Triple(io.grpc.Status.DEADLINE_EXCEEDED, ResourceCondition.RESOURCE_CONDITION_UNAVAILABLE, "is unavailable"),
+        )) {
+            val detail = ResourceErrorDetail.newBuilder().setResource(ResourceKind.RESOURCE_KIND_RUNTIME).setCondition(condition)
+            val cause = statusError(Any.pack(detail.build()), code, "worker lookup failed")
+            val mapped = GrpcFerretdMapper.error("create-session", cause)
+            assertEquals("Ferret runtime $message: worker lookup failed", mapped.message)
+            assertEquals(cause, mapped.cause)
         }
     }
 
@@ -81,6 +136,11 @@ class GrpcFerretdMapperTest {
             statusError(Any.pack(ResourceErrorDetail.getDefaultInstance())),
         )
         assertTrue(mapped.message.orEmpty().contains("malformed error details"))
+        val invalid = ResourceErrorDetail.newBuilder()
+            .setResource(ResourceKind.RESOURCE_KIND_SOURCE)
+            .setCondition(ResourceCondition.RESOURCE_CONDITION_UNAVAILABLE)
+        assertTrue(GrpcFerretdMapper.error("create-session", statusError(Any.pack(invalid.build())))
+            .message.orEmpty().contains("malformed error details"))
     }
 
     @Test
@@ -143,13 +203,13 @@ class GrpcFerretdMapperTest {
         .setState(state)
         .setOptions(ExecutionOptions.newBuilder().setOutputContentType("application/json"))
 
-    private fun statusError(detail: Any): StatusRuntimeException {
+    private fun statusError(detail: Any, code: io.grpc.Status = io.grpc.Status.INVALID_ARGUMENT, message: String = ""): StatusRuntimeException {
         val trailers = Metadata().apply {
             put(
                 Metadata.Key.of("grpc-status-details-bin", Metadata.BINARY_BYTE_MARSHALLER),
-                Status.newBuilder().addDetails(detail).build().toByteArray(),
+                Status.newBuilder().setCode(code.code.value()).setMessage(message).addDetails(detail).build().toByteArray(),
             )
         }
-        return StatusRuntimeException(io.grpc.Status.INVALID_ARGUMENT, trailers)
+        return StatusRuntimeException(code.withDescription(message), trailers)
     }
 }

@@ -1,6 +1,6 @@
 # M3 T1: JetBrains debugger architecture spike
 
-Current status (September 22, 2026): M3 T2/T3 implement the selected native
+As of September 22, 2026, M3 T2/T3 implement the selected native
 XDebugger → LSP4J Debug → per-launch `ferretd dap` architecture against the sole
 repository pin `1.0.0-alpha.9`. Run and Debug share launch-input resolution;
 breakpoints, control commands, stacks, source navigation, console output, and

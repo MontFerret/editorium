@@ -74,6 +74,37 @@ public final class DaemonServiceGrpc {
     return getShutdownMethod;
   }
 
+  private static volatile io.grpc.MethodDescriptor<org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesRequest,
+      org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesResponse> getListRuntimesMethod;
+
+  @io.grpc.stub.annotations.RpcMethod(
+      fullMethodName = SERVICE_NAME + '/' + "ListRuntimes",
+      requestType = org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesRequest.class,
+      responseType = org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesResponse.class,
+      methodType = io.grpc.MethodDescriptor.MethodType.UNARY)
+  public static io.grpc.MethodDescriptor<org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesRequest,
+      org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesResponse> getListRuntimesMethod() {
+    io.grpc.MethodDescriptor<org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesRequest, org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesResponse> getListRuntimesMethod;
+    if ((getListRuntimesMethod = DaemonServiceGrpc.getListRuntimesMethod) == null) {
+      synchronized (DaemonServiceGrpc.class) {
+        if ((getListRuntimesMethod = DaemonServiceGrpc.getListRuntimesMethod) == null) {
+          DaemonServiceGrpc.getListRuntimesMethod = getListRuntimesMethod =
+              io.grpc.MethodDescriptor.<org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesRequest, org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesResponse>newBuilder()
+              .setType(io.grpc.MethodDescriptor.MethodType.UNARY)
+              .setFullMethodName(generateFullMethodName(SERVICE_NAME, "ListRuntimes"))
+              .setSampledToLocalTracing(true)
+              .setRequestMarshaller(io.grpc.protobuf.ProtoUtils.marshaller(
+                  org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesRequest.getDefaultInstance()))
+              .setResponseMarshaller(io.grpc.protobuf.ProtoUtils.marshaller(
+                  org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesResponse.getDefaultInstance()))
+              .setSchemaDescriptor(new DaemonServiceMethodDescriptorSupplier("ListRuntimes"))
+              .build();
+        }
+      }
+    }
+    return getListRuntimesMethod;
+  }
+
   /**
    * Creates a new async stub that supports all call types for the service
    */
@@ -150,6 +181,13 @@ public final class DaemonServiceGrpc {
         io.grpc.stub.StreamObserver<org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ShutdownResponse> responseObserver) {
       io.grpc.stub.ServerCalls.asyncUnimplementedUnaryCall(getShutdownMethod(), responseObserver);
     }
+
+    /**
+     */
+    default void listRuntimes(org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesRequest request,
+        io.grpc.stub.StreamObserver<org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesResponse> responseObserver) {
+      io.grpc.stub.ServerCalls.asyncUnimplementedUnaryCall(getListRuntimesMethod(), responseObserver);
+    }
   }
 
   /**
@@ -194,6 +232,14 @@ public final class DaemonServiceGrpc {
       io.grpc.stub.ClientCalls.asyncUnaryCall(
           getChannel().newCall(getShutdownMethod(), getCallOptions()), request, responseObserver);
     }
+
+    /**
+     */
+    public void listRuntimes(org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesRequest request,
+        io.grpc.stub.StreamObserver<org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesResponse> responseObserver) {
+      io.grpc.stub.ClientCalls.asyncUnaryCall(
+          getChannel().newCall(getListRuntimesMethod(), getCallOptions()), request, responseObserver);
+    }
   }
 
   /**
@@ -225,6 +271,13 @@ public final class DaemonServiceGrpc {
       return io.grpc.stub.ClientCalls.blockingV2UnaryCall(
           getChannel(), getShutdownMethod(), getCallOptions(), request);
     }
+
+    /**
+     */
+    public org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesResponse listRuntimes(org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesRequest request) throws io.grpc.StatusException {
+      return io.grpc.stub.ClientCalls.blockingV2UnaryCall(
+          getChannel(), getListRuntimesMethod(), getCallOptions(), request);
+    }
   }
 
   /**
@@ -255,6 +308,13 @@ public final class DaemonServiceGrpc {
     public org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ShutdownResponse shutdown(org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ShutdownRequest request) {
       return io.grpc.stub.ClientCalls.blockingUnaryCall(
           getChannel(), getShutdownMethod(), getCallOptions(), request);
+    }
+
+    /**
+     */
+    public org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesResponse listRuntimes(org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesRequest request) {
+      return io.grpc.stub.ClientCalls.blockingUnaryCall(
+          getChannel(), getListRuntimesMethod(), getCallOptions(), request);
     }
   }
 
@@ -289,10 +349,19 @@ public final class DaemonServiceGrpc {
       return io.grpc.stub.ClientCalls.futureUnaryCall(
           getChannel().newCall(getShutdownMethod(), getCallOptions()), request);
     }
+
+    /**
+     */
+    public com.google.common.util.concurrent.ListenableFuture<org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesResponse> listRuntimes(
+        org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesRequest request) {
+      return io.grpc.stub.ClientCalls.futureUnaryCall(
+          getChannel().newCall(getListRuntimesMethod(), getCallOptions()), request);
+    }
   }
 
   private static final int METHODID_GET_INFO = 0;
   private static final int METHODID_SHUTDOWN = 1;
+  private static final int METHODID_LIST_RUNTIMES = 2;
 
   private static final class MethodHandlers<Req, Resp> implements
       io.grpc.stub.ServerCalls.UnaryMethod<Req, Resp>,
@@ -318,6 +387,10 @@ public final class DaemonServiceGrpc {
         case METHODID_SHUTDOWN:
           serviceImpl.shutdown((org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ShutdownRequest) request,
               (io.grpc.stub.StreamObserver<org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ShutdownResponse>) responseObserver);
+          break;
+        case METHODID_LIST_RUNTIMES:
+          serviceImpl.listRuntimes((org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesRequest) request,
+              (io.grpc.stub.StreamObserver<org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesResponse>) responseObserver);
           break;
         default:
           throw new AssertionError();
@@ -351,6 +424,13 @@ public final class DaemonServiceGrpc {
               org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ShutdownRequest,
               org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ShutdownResponse>(
                 service, METHODID_SHUTDOWN)))
+        .addMethod(
+          getListRuntimesMethod(),
+          io.grpc.stub.ServerCalls.asyncUnaryCall(
+            new MethodHandlers<
+              org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesRequest,
+              org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesResponse>(
+                service, METHODID_LIST_RUNTIMES)))
         .build();
   }
 
@@ -401,6 +481,7 @@ public final class DaemonServiceGrpc {
               .setSchemaDescriptor(new DaemonServiceFileDescriptorSupplier())
               .addMethod(getGetInfoMethod())
               .addMethod(getShutdownMethod())
+              .addMethod(getListRuntimesMethod())
               .build();
         }
       }

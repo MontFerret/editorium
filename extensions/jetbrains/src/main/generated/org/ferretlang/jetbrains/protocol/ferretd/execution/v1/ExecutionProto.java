@@ -229,166 +229,169 @@ public final class ExecutionProto extends com.google.protobuf.GeneratedFile {
       "\0132!.ferretd.workspace.v1.WorkspaceIdR\013wo" +
       "rkspaceId\022#\n\rrelative_path\030\002 \001(\tR\014relati" +
       "vePath\022\020\n\003uri\030\003 \001(\tR\003uri\022\032\n\010revision\030\004 \001" +
-      "(\004R\010revision\"\230\001\n\007Session\022/\n\002id\030\001 \001(\0132\037.f" +
+      "(\004R\010revision\"\273\001\n\007Session\022/\n\002id\030\001 \001(\0132\037.f" +
       "erretd.execution.v1.SessionIdR\002id\022<\n\006sou" +
       "rce\030\002 \001(\0132$.ferretd.execution.v1.SourceS" +
       "napshotR\006source\022\036\n\nparameters\030\003 \003(\tR\npar" +
-      "ameters\"\212\001\n\020ExecutionOptions\022.\n\023output_c" +
-      "ontent_type\030\001 \001(\tR\021outputContentType\0220\n\021" +
-      "working_directory\030\002 \001(\tH\000R\020workingDirect" +
-      "ory\210\001\001B\024\n\022_working_directory\"?\n\006Output\022!" +
-      "\n\014content_type\030\001 \001(\tR\013contentType\022\022\n\004dat" +
-      "a\030\002 \001(\014R\004data\"<\n\010Position\022\022\n\004line\030\001 \001(\rR" +
-      "\004line\022\034\n\tcharacter\030\002 \001(\rR\tcharacter\"o\n\005R" +
-      "ange\0224\n\005start\030\001 \001(\0132\036.ferretd.execution." +
-      "v1.PositionR\005start\0220\n\003end\030\002 \001(\0132\036.ferret" +
-      "d.execution.v1.PositionR\003end\"s\n\022RelatedI" +
-      "nformation\022\020\n\003uri\030\001 \001(\tR\003uri\0221\n\005range\030\002 " +
-      "\001(\0132\033.ferretd.execution.v1.RangeR\005range\022" +
-      "\030\n\007message\030\003 \001(\tR\007message\"\270\002\n\nDiagnostic" +
-      "\022\020\n\003uri\030\001 \001(\tR\003uri\0221\n\005range\030\002 \001(\0132\033.ferr" +
-      "etd.execution.v1.RangeR\005range\022D\n\010severit" +
-      "y\030\003 \001(\0162(.ferretd.execution.v1.Diagnosti" +
-      "cSeverityR\010severity\022\022\n\004code\030\004 \001(\tR\004code\022" +
-      "\026\n\006source\030\005 \001(\tR\006source\022\030\n\007message\030\006 \001(\t" +
-      "R\007message\022Y\n\023related_information\030\007 \003(\0132(" +
-      ".ferretd.execution.v1.RelatedInformation" +
-      "R\022relatedInformation\"\252\001\n\007Failure\022A\n\010cate" +
-      "gory\030\001 \001(\0162%.ferretd.execution.v1.Failur" +
-      "eCategoryR\010category\022\030\n\007message\030\002 \001(\tR\007me" +
-      "ssage\022B\n\013diagnostics\030\003 \003(\0132 .ferretd.exe" +
-      "cution.v1.DiagnosticR\013diagnostics\"\244\003\n\tEx" +
-      "ecution\0221\n\002id\030\001 \001(\0132!.ferretd.execution." +
-      "v1.ExecutionIdR\002id\022>\n\nsession_id\030\002 \001(\0132\037" +
-      ".ferretd.execution.v1.SessionIdR\tsession" +
-      "Id\022:\n\005state\030\003 \001(\0162$.ferretd.execution.v1" +
-      ".ExecutionStateR\005state\0227\n\nparameters\030\004 \001" +
-      "(\0132\027.google.protobuf.StructR\nparameters\022" +
-      "@\n\007options\030\005 \001(\0132&.ferretd.execution.v1." +
-      "ExecutionOptionsR\007options\0224\n\006output\030\006 \001(" +
-      "\0132\034.ferretd.execution.v1.OutputR\006output\022" +
-      "7\n\007failure\030\007 \001(\0132\035.ferretd.execution.v1." +
-      "FailureR\007failure\"\226\001\n\022CompilationFailure\022" +
-      "<\n\006source\030\001 \001(\0132$.ferretd.execution.v1.S" +
-      "ourceSnapshotR\006source\022B\n\013diagnostics\030\002 \003" +
-      "(\0132 .ferretd.execution.v1.DiagnosticR\013di" +
-      "agnostics\"\234\001\n\023ResourceErrorDetail\022>\n\010res" +
-      "ource\030\001 \001(\0162\".ferretd.execution.v1.Resou" +
-      "rceKindR\010resource\022E\n\tcondition\030\002 \001(\0162\'.f" +
-      "erretd.execution.v1.ResourceConditionR\tc" +
-      "ondition\"Q\n\020ExecutionCreated\022=\n\texecutio" +
-      "n\030\001 \001(\0132\037.ferretd.execution.v1.Execution" +
-      "R\texecution\"Q\n\020ExecutionStarted\022=\n\texecu" +
+      "ameters\022!\n\014runtime_name\030\004 \001(\tR\013runtimeNa" +
+      "me\"\212\001\n\020ExecutionOptions\022.\n\023output_conten" +
+      "t_type\030\001 \001(\tR\021outputContentType\0220\n\021worki" +
+      "ng_directory\030\002 \001(\tH\000R\020workingDirectory\210\001" +
+      "\001B\024\n\022_working_directory\"?\n\006Output\022!\n\014con" +
+      "tent_type\030\001 \001(\tR\013contentType\022\022\n\004data\030\002 \001" +
+      "(\014R\004data\"<\n\010Position\022\022\n\004line\030\001 \001(\rR\004line" +
+      "\022\034\n\tcharacter\030\002 \001(\rR\tcharacter\"o\n\005Range\022" +
+      "4\n\005start\030\001 \001(\0132\036.ferretd.execution.v1.Po" +
+      "sitionR\005start\0220\n\003end\030\002 \001(\0132\036.ferretd.exe" +
+      "cution.v1.PositionR\003end\"s\n\022RelatedInform" +
+      "ation\022\020\n\003uri\030\001 \001(\tR\003uri\0221\n\005range\030\002 \001(\0132\033" +
+      ".ferretd.execution.v1.RangeR\005range\022\030\n\007me" +
+      "ssage\030\003 \001(\tR\007message\"\270\002\n\nDiagnostic\022\020\n\003u" +
+      "ri\030\001 \001(\tR\003uri\0221\n\005range\030\002 \001(\0132\033.ferretd.e" +
+      "xecution.v1.RangeR\005range\022D\n\010severity\030\003 \001" +
+      "(\0162(.ferretd.execution.v1.DiagnosticSeve" +
+      "rityR\010severity\022\022\n\004code\030\004 \001(\tR\004code\022\026\n\006so" +
+      "urce\030\005 \001(\tR\006source\022\030\n\007message\030\006 \001(\tR\007mes" +
+      "sage\022Y\n\023related_information\030\007 \003(\0132(.ferr" +
+      "etd.execution.v1.RelatedInformationR\022rel" +
+      "atedInformation\"\252\001\n\007Failure\022A\n\010category\030" +
+      "\001 \001(\0162%.ferretd.execution.v1.FailureCate" +
+      "goryR\010category\022\030\n\007message\030\002 \001(\tR\007message" +
+      "\022B\n\013diagnostics\030\003 \003(\0132 .ferretd.executio" +
+      "n.v1.DiagnosticR\013diagnostics\"\244\003\n\tExecuti" +
+      "on\0221\n\002id\030\001 \001(\0132!.ferretd.execution.v1.Ex" +
+      "ecutionIdR\002id\022>\n\nsession_id\030\002 \001(\0132\037.ferr" +
+      "etd.execution.v1.SessionIdR\tsessionId\022:\n" +
+      "\005state\030\003 \001(\0162$.ferretd.execution.v1.Exec" +
+      "utionStateR\005state\0227\n\nparameters\030\004 \001(\0132\027." +
+      "google.protobuf.StructR\nparameters\022@\n\007op" +
+      "tions\030\005 \001(\0132&.ferretd.execution.v1.Execu" +
+      "tionOptionsR\007options\0224\n\006output\030\006 \001(\0132\034.f" +
+      "erretd.execution.v1.OutputR\006output\0227\n\007fa" +
+      "ilure\030\007 \001(\0132\035.ferretd.execution.v1.Failu" +
+      "reR\007failure\"\226\001\n\022CompilationFailure\022<\n\006so" +
+      "urce\030\001 \001(\0132$.ferretd.execution.v1.Source" +
+      "SnapshotR\006source\022B\n\013diagnostics\030\002 \003(\0132 ." +
+      "ferretd.execution.v1.DiagnosticR\013diagnos" +
+      "tics\"\234\001\n\023ResourceErrorDetail\022>\n\010resource" +
+      "\030\001 \001(\0162\".ferretd.execution.v1.ResourceKi" +
+      "ndR\010resource\022E\n\tcondition\030\002 \001(\0162\'.ferret" +
+      "d.execution.v1.ResourceConditionR\tcondit" +
+      "ion\"Q\n\020ExecutionCreated\022=\n\texecution\030\001 \001" +
+      "(\0132\037.ferretd.execution.v1.ExecutionR\texe" +
+      "cution\"Q\n\020ExecutionStarted\022=\n\texecution\030" +
+      "\001 \001(\0132\037.ferretd.execution.v1.ExecutionR\t" +
+      "execution\"S\n\022ExecutionCompleted\022=\n\texecu" +
       "tion\030\001 \001(\0132\037.ferretd.execution.v1.Execut" +
-      "ionR\texecution\"S\n\022ExecutionCompleted\022=\n\t" +
-      "execution\030\001 \001(\0132\037.ferretd.execution.v1.E" +
-      "xecutionR\texecution\"P\n\017ExecutionFailed\022=" +
+      "ionR\texecution\"P\n\017ExecutionFailed\022=\n\texe" +
+      "cution\030\001 \001(\0132\037.ferretd.execution.v1.Exec" +
+      "utionR\texecution\"S\n\022ExecutionCancelled\022=" +
       "\n\texecution\030\001 \001(\0132\037.ferretd.execution.v1" +
-      ".ExecutionR\texecution\"S\n\022ExecutionCancel" +
-      "led\022=\n\texecution\030\001 \001(\0132\037.ferretd.executi" +
-      "on.v1.ExecutionR\texecution\"\342\003\n\026WatchExec" +
-      "utionResponse\022D\n\014execution_id\030\001 \001(\0132!.fe" +
-      "rretd.execution.v1.ExecutionIdR\013executio" +
-      "nId\022\032\n\010sequence\030\002 \001(\004R\010sequence\022B\n\007creat" +
-      "ed\030\003 \001(\0132&.ferretd.execution.v1.Executio" +
-      "nCreatedH\000R\007created\022B\n\007started\030\004 \001(\0132&.f" +
-      "erretd.execution.v1.ExecutionStartedH\000R\007" +
-      "started\022H\n\tcompleted\030\005 \001(\0132(.ferretd.exe" +
-      "cution.v1.ExecutionCompletedH\000R\tcomplete" +
-      "d\022?\n\006failed\030\006 \001(\0132%.ferretd.execution.v1" +
-      ".ExecutionFailedH\000R\006failed\022H\n\tcancelled\030" +
-      "\007 \001(\0132(.ferretd.execution.v1.ExecutionCa" +
-      "ncelledH\000R\tcancelledB\t\n\007payload\"\201\001\n\024Crea" +
-      "teSessionRequest\022D\n\014workspace_id\030\001 \001(\0132!" +
-      ".ferretd.workspace.v1.WorkspaceIdR\013works" +
-      "paceId\022#\n\rrelative_path\030\002 \001(\tR\014relativeP" +
-      "ath\"P\n\025CreateSessionResponse\0227\n\007session\030" +
-      "\001 \001(\0132\035.ferretd.execution.v1.SessionR\007se" +
-      "ssion\"D\n\021GetSessionRequest\022/\n\002id\030\001 \001(\0132\037" +
-      ".ferretd.execution.v1.SessionIdR\002id\"M\n\022G" +
-      "etSessionResponse\0227\n\007session\030\001 \001(\0132\035.fer" +
-      "retd.execution.v1.SessionR\007session\"F\n\023Cl" +
-      "oseSessionRequest\022/\n\002id\030\001 \001(\0132\037.ferretd." +
-      "execution.v1.SessionIdR\002id\"\026\n\024CloseSessi" +
-      "onResponse\"\323\001\n\026CreateExecutionRequest\022>\n" +
-      "\nsession_id\030\001 \001(\0132\037.ferretd.execution.v1" +
-      ".SessionIdR\tsessionId\0227\n\nparameters\030\002 \001(" +
-      "\0132\027.google.protobuf.StructR\nparameters\022@" +
-      "\n\007options\030\003 \001(\0132&.ferretd.execution.v1.E" +
-      "xecutionOptionsR\007options\"X\n\027CreateExecut" +
-      "ionResponse\022=\n\texecution\030\001 \001(\0132\037.ferretd" +
-      ".execution.v1.ExecutionR\texecution\"H\n\023Ru" +
-      "nExecutionRequest\0221\n\002id\030\001 \001(\0132!.ferretd." +
-      "execution.v1.ExecutionIdR\002id\"U\n\024RunExecu" +
-      "tionResponse\022=\n\texecution\030\001 \001(\0132\037.ferret" +
-      "d.execution.v1.ExecutionR\texecution\"H\n\023G" +
-      "etExecutionRequest\0221\n\002id\030\001 \001(\0132!.ferretd" +
-      ".execution.v1.ExecutionIdR\002id\"U\n\024GetExec" +
-      "utionResponse\022=\n\texecution\030\001 \001(\0132\037.ferre" +
-      "td.execution.v1.ExecutionR\texecution\"K\n\026" +
-      "CancelExecutionRequest\0221\n\002id\030\001 \001(\0132!.fer" +
-      "retd.execution.v1.ExecutionIdR\002id\"X\n\027Can" +
-      "celExecutionResponse\022=\n\texecution\030\001 \001(\0132" +
-      "\037.ferretd.execution.v1.ExecutionR\texecut" +
-      "ion\"J\n\025CloseExecutionRequest\0221\n\002id\030\001 \001(\013" +
-      "2!.ferretd.execution.v1.ExecutionIdR\002id\"" +
-      "\030\n\026CloseExecutionResponse\"J\n\025WatchExecut" +
-      "ionRequest\0221\n\002id\030\001 \001(\0132!.ferretd.executi" +
-      "on.v1.ExecutionIdR\002id*\305\001\n\016ExecutionState" +
-      "\022\037\n\033EXECUTION_STATE_UNSPECIFIED\020\000\022\033\n\027EXE" +
-      "CUTION_STATE_CREATED\020\001\022\033\n\027EXECUTION_STAT" +
-      "E_RUNNING\020\002\022\035\n\031EXECUTION_STATE_COMPLETED" +
-      "\020\003\022\032\n\026EXECUTION_STATE_FAILED\020\004\022\035\n\031EXECUT" +
-      "ION_STATE_CANCELLED\020\005*\226\001\n\017FailureCategor" +
-      "y\022 \n\034FAILURE_CATEGORY_UNSPECIFIED\020\000\022%\n!F" +
-      "AILURE_CATEGORY_SESSION_CREATION\020\001\022\034\n\030FA" +
-      "ILURE_CATEGORY_RUNTIME\020\002\022\034\n\030FAILURE_CATE" +
-      "GORY_CLEANUP\020\003*X\n\022DiagnosticSeverity\022#\n\037" +
-      "DIAGNOSTIC_SEVERITY_UNSPECIFIED\020\000\022\035\n\031DIA" +
-      "GNOSTIC_SEVERITY_ERROR\020\001*\267\001\n\014ResourceKin" +
-      "d\022\035\n\031RESOURCE_KIND_UNSPECIFIED\020\000\022\033\n\027RESO" +
-      "URCE_KIND_WORKSPACE\020\001\022\030\n\024RESOURCE_KIND_S" +
-      "OURCE\020\002\022\031\n\025RESOURCE_KIND_SESSION\020\003\022\033\n\027RE" +
-      "SOURCE_KIND_EXECUTION\020\004\022\031\n\025RESOURCE_KIND" +
-      "_WATCHER\020\005*\220\002\n\021ResourceCondition\022\"\n\036RESO" +
-      "URCE_CONDITION_UNSPECIFIED\020\000\022 \n\034RESOURCE" +
-      "_CONDITION_NOT_FOUND\020\001\022\035\n\031RESOURCE_CONDI" +
-      "TION_CLOSED\020\002\022$\n RESOURCE_CONDITION_INVA" +
-      "LID_STATE\020\003\022)\n%RESOURCE_CONDITION_INVALI" +
-      "D_PARAMETERS\020\004\022\035\n\031RESOURCE_CONDITION_LAG" +
-      "GED\020\005\022&\n\"RESOURCE_CONDITION_INVALID_OPTI" +
-      "ONS\020\0062\316\007\n\020ExecutionService\022h\n\rCreateSess" +
-      "ion\022*.ferretd.execution.v1.CreateSession" +
-      "Request\032+.ferretd.execution.v1.CreateSes" +
-      "sionResponse\022_\n\nGetSession\022\'.ferretd.exe" +
-      "cution.v1.GetSessionRequest\032(.ferretd.ex" +
-      "ecution.v1.GetSessionResponse\022e\n\014CloseSe" +
-      "ssion\022).ferretd.execution.v1.CloseSessio" +
-      "nRequest\032*.ferretd.execution.v1.CloseSes" +
-      "sionResponse\022n\n\017CreateExecution\022,.ferret" +
-      "d.execution.v1.CreateExecutionRequest\032-." +
-      "ferretd.execution.v1.CreateExecutionResp" +
-      "onse\022e\n\014RunExecution\022).ferretd.execution" +
-      ".v1.RunExecutionRequest\032*.ferretd.execut" +
-      "ion.v1.RunExecutionResponse\022e\n\014GetExecut" +
-      "ion\022).ferretd.execution.v1.GetExecutionR" +
-      "equest\032*.ferretd.execution.v1.GetExecuti" +
-      "onResponse\022n\n\017CancelExecution\022,.ferretd." +
-      "execution.v1.CancelExecutionRequest\032-.fe" +
-      "rretd.execution.v1.CancelExecutionRespon" +
-      "se\022k\n\016CloseExecution\022+.ferretd.execution" +
-      ".v1.CloseExecutionRequest\032,.ferretd.exec" +
-      "ution.v1.CloseExecutionResponse\022m\n\016Watch" +
-      "Execution\022+.ferretd.execution.v1.WatchEx" +
-      "ecutionRequest\032,.ferretd.execution.v1.Wa" +
-      "tchExecutionResponse0\001B\376\001\n6org.ferretlan" +
-      "g.jetbrains.protocol.ferretd.execution.v" +
-      "1B\016ExecutionProtoP\001ZBgithub.com/MontFerr" +
-      "et/ferretd/gen/ferretd/execution/v1;exec" +
-      "utionv1\242\002\003FEX\252\002\024Ferretd.Execution.V1\312\002\024F" +
-      "erretd\\Execution\\V1\342\002 Ferretd\\Execution\\" +
-      "V1\\GPBMetadata\352\002\026Ferretd::Execution::V1b" +
-      "\006proto3"
+      ".ExecutionR\texecution\"\342\003\n\026WatchExecution" +
+      "Response\022D\n\014execution_id\030\001 \001(\0132!.ferretd" +
+      ".execution.v1.ExecutionIdR\013executionId\022\032" +
+      "\n\010sequence\030\002 \001(\004R\010sequence\022B\n\007created\030\003 " +
+      "\001(\0132&.ferretd.execution.v1.ExecutionCrea" +
+      "tedH\000R\007created\022B\n\007started\030\004 \001(\0132&.ferret" +
+      "d.execution.v1.ExecutionStartedH\000R\007start" +
+      "ed\022H\n\tcompleted\030\005 \001(\0132(.ferretd.executio" +
+      "n.v1.ExecutionCompletedH\000R\tcompleted\022?\n\006" +
+      "failed\030\006 \001(\0132%.ferretd.execution.v1.Exec" +
+      "utionFailedH\000R\006failed\022H\n\tcancelled\030\007 \001(\013" +
+      "2(.ferretd.execution.v1.ExecutionCancell" +
+      "edH\000R\tcancelledB\t\n\007payload\"\244\001\n\024CreateSes" +
+      "sionRequest\022D\n\014workspace_id\030\001 \001(\0132!.ferr" +
+      "etd.workspace.v1.WorkspaceIdR\013workspaceI" +
+      "d\022#\n\rrelative_path\030\002 \001(\tR\014relativePath\022!" +
+      "\n\014runtime_name\030\003 \001(\tR\013runtimeName\"P\n\025Cre" +
+      "ateSessionResponse\0227\n\007session\030\001 \001(\0132\035.fe" +
+      "rretd.execution.v1.SessionR\007session\"D\n\021G" +
+      "etSessionRequest\022/\n\002id\030\001 \001(\0132\037.ferretd.e" +
+      "xecution.v1.SessionIdR\002id\"M\n\022GetSessionR" +
+      "esponse\0227\n\007session\030\001 \001(\0132\035.ferretd.execu" +
+      "tion.v1.SessionR\007session\"F\n\023CloseSession" +
+      "Request\022/\n\002id\030\001 \001(\0132\037.ferretd.execution." +
+      "v1.SessionIdR\002id\"\026\n\024CloseSessionResponse" +
+      "\"\323\001\n\026CreateExecutionRequest\022>\n\nsession_i" +
+      "d\030\001 \001(\0132\037.ferretd.execution.v1.SessionId" +
+      "R\tsessionId\0227\n\nparameters\030\002 \001(\0132\027.google" +
+      ".protobuf.StructR\nparameters\022@\n\007options\030" +
+      "\003 \001(\0132&.ferretd.execution.v1.ExecutionOp" +
+      "tionsR\007options\"X\n\027CreateExecutionRespons" +
+      "e\022=\n\texecution\030\001 \001(\0132\037.ferretd.execution" +
+      ".v1.ExecutionR\texecution\"H\n\023RunExecution" +
+      "Request\0221\n\002id\030\001 \001(\0132!.ferretd.execution." +
+      "v1.ExecutionIdR\002id\"U\n\024RunExecutionRespon" +
+      "se\022=\n\texecution\030\001 \001(\0132\037.ferretd.executio" +
+      "n.v1.ExecutionR\texecution\"H\n\023GetExecutio" +
+      "nRequest\0221\n\002id\030\001 \001(\0132!.ferretd.execution" +
+      ".v1.ExecutionIdR\002id\"U\n\024GetExecutionRespo" +
+      "nse\022=\n\texecution\030\001 \001(\0132\037.ferretd.executi" +
+      "on.v1.ExecutionR\texecution\"K\n\026CancelExec" +
+      "utionRequest\0221\n\002id\030\001 \001(\0132!.ferretd.execu" +
+      "tion.v1.ExecutionIdR\002id\"X\n\027CancelExecuti" +
+      "onResponse\022=\n\texecution\030\001 \001(\0132\037.ferretd." +
+      "execution.v1.ExecutionR\texecution\"J\n\025Clo" +
+      "seExecutionRequest\0221\n\002id\030\001 \001(\0132!.ferretd" +
+      ".execution.v1.ExecutionIdR\002id\"\030\n\026CloseEx" +
+      "ecutionResponse\"J\n\025WatchExecutionRequest" +
+      "\0221\n\002id\030\001 \001(\0132!.ferretd.execution.v1.Exec" +
+      "utionIdR\002id*\305\001\n\016ExecutionState\022\037\n\033EXECUT" +
+      "ION_STATE_UNSPECIFIED\020\000\022\033\n\027EXECUTION_STA" +
+      "TE_CREATED\020\001\022\033\n\027EXECUTION_STATE_RUNNING\020" +
+      "\002\022\035\n\031EXECUTION_STATE_COMPLETED\020\003\022\032\n\026EXEC" +
+      "UTION_STATE_FAILED\020\004\022\035\n\031EXECUTION_STATE_" +
+      "CANCELLED\020\005*\226\001\n\017FailureCategory\022 \n\034FAILU" +
+      "RE_CATEGORY_UNSPECIFIED\020\000\022%\n!FAILURE_CAT" +
+      "EGORY_SESSION_CREATION\020\001\022\034\n\030FAILURE_CATE" +
+      "GORY_RUNTIME\020\002\022\034\n\030FAILURE_CATEGORY_CLEAN" +
+      "UP\020\003*X\n\022DiagnosticSeverity\022#\n\037DIAGNOSTIC" +
+      "_SEVERITY_UNSPECIFIED\020\000\022\035\n\031DIAGNOSTIC_SE" +
+      "VERITY_ERROR\020\001*\322\001\n\014ResourceKind\022\035\n\031RESOU" +
+      "RCE_KIND_UNSPECIFIED\020\000\022\033\n\027RESOURCE_KIND_" +
+      "WORKSPACE\020\001\022\030\n\024RESOURCE_KIND_SOURCE\020\002\022\031\n" +
+      "\025RESOURCE_KIND_SESSION\020\003\022\033\n\027RESOURCE_KIN" +
+      "D_EXECUTION\020\004\022\031\n\025RESOURCE_KIND_WATCHER\020\005" +
+      "\022\031\n\025RESOURCE_KIND_RUNTIME\020\006*\264\002\n\021Resource" +
+      "Condition\022\"\n\036RESOURCE_CONDITION_UNSPECIF" +
+      "IED\020\000\022 \n\034RESOURCE_CONDITION_NOT_FOUND\020\001\022" +
+      "\035\n\031RESOURCE_CONDITION_CLOSED\020\002\022$\n RESOUR" +
+      "CE_CONDITION_INVALID_STATE\020\003\022)\n%RESOURCE" +
+      "_CONDITION_INVALID_PARAMETERS\020\004\022\035\n\031RESOU" +
+      "RCE_CONDITION_LAGGED\020\005\022&\n\"RESOURCE_CONDI" +
+      "TION_INVALID_OPTIONS\020\006\022\"\n\036RESOURCE_CONDI" +
+      "TION_UNAVAILABLE\020\0072\316\007\n\020ExecutionService\022" +
+      "h\n\rCreateSession\022*.ferretd.execution.v1." +
+      "CreateSessionRequest\032+.ferretd.execution" +
+      ".v1.CreateSessionResponse\022_\n\nGetSession\022" +
+      "\'.ferretd.execution.v1.GetSessionRequest" +
+      "\032(.ferretd.execution.v1.GetSessionRespon" +
+      "se\022e\n\014CloseSession\022).ferretd.execution.v" +
+      "1.CloseSessionRequest\032*.ferretd.executio" +
+      "n.v1.CloseSessionResponse\022n\n\017CreateExecu" +
+      "tion\022,.ferretd.execution.v1.CreateExecut" +
+      "ionRequest\032-.ferretd.execution.v1.Create" +
+      "ExecutionResponse\022e\n\014RunExecution\022).ferr" +
+      "etd.execution.v1.RunExecutionRequest\032*.f" +
+      "erretd.execution.v1.RunExecutionResponse" +
+      "\022e\n\014GetExecution\022).ferretd.execution.v1." +
+      "GetExecutionRequest\032*.ferretd.execution." +
+      "v1.GetExecutionResponse\022n\n\017CancelExecuti" +
+      "on\022,.ferretd.execution.v1.CancelExecutio" +
+      "nRequest\032-.ferretd.execution.v1.CancelEx" +
+      "ecutionResponse\022k\n\016CloseExecution\022+.ferr" +
+      "etd.execution.v1.CloseExecutionRequest\032," +
+      ".ferretd.execution.v1.CloseExecutionResp" +
+      "onse\022m\n\016WatchExecution\022+.ferretd.executi" +
+      "on.v1.WatchExecutionRequest\032,.ferretd.ex" +
+      "ecution.v1.WatchExecutionResponse0\001B\376\001\n6" +
+      "org.ferretlang.jetbrains.protocol.ferret" +
+      "d.execution.v1B\016ExecutionProtoP\001ZBgithub" +
+      ".com/MontFerret/ferretd/gen/ferretd/exec" +
+      "ution/v1;executionv1\242\002\003FEX\252\002\024Ferretd.Exe" +
+      "cution.V1\312\002\024Ferretd\\Execution\\V1\342\002 Ferre" +
+      "td\\Execution\\V1\\GPBMetadata\352\002\026Ferretd::E" +
+      "xecution::V1b\006proto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -419,7 +422,7 @@ public final class ExecutionProto extends com.google.protobuf.GeneratedFile {
     internal_static_ferretd_execution_v1_Session_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_ferretd_execution_v1_Session_descriptor,
-        new java.lang.String[] { "Id", "Source", "Parameters", });
+        new java.lang.String[] { "Id", "Source", "Parameters", "RuntimeName", });
     internal_static_ferretd_execution_v1_ExecutionOptions_descriptor =
       getDescriptor().getMessageType(4);
     internal_static_ferretd_execution_v1_ExecutionOptions_fieldAccessorTable = new
@@ -521,7 +524,7 @@ public final class ExecutionProto extends com.google.protobuf.GeneratedFile {
     internal_static_ferretd_execution_v1_CreateSessionRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_ferretd_execution_v1_CreateSessionRequest_descriptor,
-        new java.lang.String[] { "WorkspaceId", "RelativePath", });
+        new java.lang.String[] { "WorkspaceId", "RelativePath", "RuntimeName", });
     internal_static_ferretd_execution_v1_CreateSessionResponse_descriptor =
       getDescriptor().getMessageType(21);
     internal_static_ferretd_execution_v1_CreateSessionResponse_fieldAccessorTable = new

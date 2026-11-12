@@ -7,7 +7,7 @@ tag is `vscode/v<version>`, keeping this integration independently versioned.
 
 | VS Code target | Official ferretd artifact | Native CI runner |
 | --- | --- | --- |
-| `darwin-arm64` | `ferretd_darwin_arm64.tar.gz` | `macos-14` |
+| `darwin-arm64` | `ferretd_darwin_arm64.tar.gz` | `macos-26` |
 | `darwin-x64` | `ferretd_darwin_x86_64.tar.gz` | `macos-15-intel` |
 | `linux-x64` | `ferretd_linux_x86_64.tar.gz` | `ubuntu-24.04` |
 | `linux-arm64` | `ferretd_linux_arm64.tar.gz` | `ubuntu-24.04-arm` |

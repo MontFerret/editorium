@@ -184,12 +184,15 @@ saved during an active run takes effect on the next invocation.
 Running a configuration immediately opens the normal JetBrains Run console.
 Filesystem and daemon work continues off the UI thread. Parameter nulls,
 booleans, finite numbers, strings, arrays, and objects retain their types. The
-console shows formatted JSON results, actionable compile/runtime diagnostics,
-and concise completion or cancellation feedback. Results arrive when the query
-finishes; there is no incremental program output. Startup details and transport
-diagnostics stay in the IDE log.
+console shows formatted JSON results, including a literal `null`. A run with
+absent or zero-byte output completes without a result line. A blank content
+type displays the returned UTF-8 text. Failed runs show their diagnostics and
+label any retained nonempty content **Partial output**. Results arrive when the query
+finishes. Startup details and transport diagnostics stay in the IDE log.
 
 The first Run lazily starts a dedicated execution daemon for that project.
+The plugin verifies the exact bundled binary version and requires API major 1
+with minor 1 or later.
 Opening a Ferret file may start language support but does not start execution
 infrastructure. Subsequent runs reuse the execution daemon; concurrent runs
 have independent parameters, results, working directories, and cancellation.

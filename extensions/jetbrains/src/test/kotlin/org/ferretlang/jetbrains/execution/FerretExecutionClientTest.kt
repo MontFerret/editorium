@@ -70,6 +70,74 @@ class FerretExecutionClientTest {
     }
 
     @Test
+    fun completesWithAbsentEmptyAndUntypedOutput() = runBlocking {
+        val raw = """{"raw":1}"""
+        val cases = listOf(
+            null to emptyList(),
+            FerretdExecutionOutput("application/json", ByteArray(0)) to emptyList(),
+            FerretdExecutionOutput("", ByteArray(0)) to emptyList(),
+            FerretdExecutionOutput("", raw.toByteArray()) to listOf(raw),
+        )
+        for ((output, expected) in cases) {
+            val fixture = fixture(FakeFerretdRpc.Outcome.COMPLETED)
+            try {
+                fixture.rpc.terminalSnapshot = { it.copy(output = output) }
+                val execution = fixture.execute()
+                assertEquals(0, execution.exit.awaitResult())
+                assertEquals(expected, execution.stdout.toList())
+                assertTrue(execution.stderr.isEmpty())
+                assertTrue(execution.system.contains("Ferret execution completed."))
+            } finally {
+                fixture.close()
+            }
+        }
+    }
+
+    @Test
+    fun reportsRuntimeAcquisitionErrorInTheRunConsole() = runBlocking {
+        val fixture = fixture()
+        try {
+            val message = "Ferret runtime is unavailable: worker timed out"
+            fixture.rpc.createSessionFailure = FerretdRpcException("create-session", message)
+            val execution = fixture.execute()
+            assertEquals(1, execution.exit.awaitResult())
+            assertEquals(listOf(message), execution.stderr.toList())
+            assertTrue(execution.stdout.isEmpty())
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun reportsFailureAndDiagnosticWithRetainedPartialJson() = runBlocking {
+        val fixture = fixture(FakeFerretdRpc.Outcome.COMPLETED)
+        val partial = """{"prefix":"""
+        val position = FerretdPosition(1, 2)
+        val diagnostic = FerretdDiagnostic(
+            "file:///query.fql", FerretdRange(position, position), "E1", "ferret", "invalid expression", emptyList(),
+        )
+        try {
+            fixture.rpc.terminalSnapshot = {
+                it.copy(
+                    state = FerretdExecutionState.FAILED,
+                    output = FerretdExecutionOutput("application/json", partial.toByteArray()),
+                    failure = FerretdFailure(FerretdFailureCategory.RUNTIME, "runtime failed", listOf(diagnostic)),
+                )
+            }
+            val execution = fixture.execute()
+            assertEquals(1, execution.exit.awaitResult())
+            assertEquals("runtime failed", execution.stderr.first())
+            assertTrue(execution.stderr.contains("invalid expression"))
+            assertTrue(execution.system.contains("Partial output:"))
+            assertFalse(execution.system.contains("Ferret execution completed."))
+            assertEquals(listOf(partial), execution.stdout.toList())
+            assertTrue(execution.internal.isEmpty())
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
     fun rejectsMalformedLifecycleAndStillCleansExecutionBeforeSession() = runBlocking {
         val fixture = fixture(FakeFerretdRpc.Outcome.MALFORMED_SEQUENCE)
         try {

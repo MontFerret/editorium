@@ -235,6 +235,31 @@ suite('Ferret execution feedback', () => {
     }
   });
 
+  test('completes absent, empty, and untyped results without rendering errors', () => {
+    const uri = vscode.Uri.file('/workspace/query.fql');
+    const cases: readonly [FerretExecution, string][] = [
+      [execution('completed'), ''],
+      [completed(''), ''],
+      [execution('completed', { output: { contentType: '', data: new Uint8Array() } }), ''],
+      [execution('completed', { output: { contentType: '', data: Buffer.from('{"raw":1}') } }), '{"raw":1}\n'],
+    ];
+    for (const [terminal, prefix] of cases) {
+      const fixture = createFixture();
+      try {
+        fixture.manager.fire({
+          kind: 'finished',
+          execution: managedExecution(uri, terminal),
+          event: event('completed', terminal),
+        });
+        assert.deepStrictEqual(fixture.host.output.lines, [prefix + 'Completed root/query.fql in 1 s']);
+        assert.deepStrictEqual(fixture.diagnosticOutput.errors, []);
+        assert.strictEqual(fixture.host.status.text, '$(check) Ferret');
+      } finally {
+        disposeFixture(fixture);
+      }
+    }
+  });
+
   test('pretty-prints structured output and separates later runs', () => {
     const fixture = createFixture();
     const first = vscode.Uri.file('/workspace/first.fql');
@@ -296,6 +321,10 @@ suite('Ferret execution feedback', () => {
       diagnostics: [diagnostic(uri)],
     };
 
+    const terminal = execution('failed', {
+      failure,
+      output: { contentType: 'application/json', data: Buffer.from('{"partial":') },
+    });
     try {
       fixture.manager.activeCount = 1;
       fixture.manager.fire({
@@ -305,8 +334,8 @@ suite('Ferret execution feedback', () => {
       fixture.manager.activeCount = 0;
       fixture.manager.fire({
         kind: 'finished',
-        execution: managedExecution(uri, failed(failure), 900),
-        event: event('failed', failed(failure)),
+        execution: managedExecution(uri, terminal, 900),
+        event: event('failed', terminal),
       });
 
       assert.strictEqual(
@@ -318,6 +347,8 @@ suite('Ferret execution feedback', () => {
           'cannot query number',
           'Related: root/helper.fql:2:2',
           'value declared here',
+          'Partial output:',
+          '{"partial":',
           'Failed in 100 ms',
         ].join('\n'),
       );
@@ -578,10 +609,6 @@ function completed(value: string): FerretExecution {
       data: new TextEncoder().encode(value),
     },
   });
-}
-
-function failed(failure: FerretExecutionFailure): FerretExecution {
-  return execution('failed', { failure });
 }
 
 function event(

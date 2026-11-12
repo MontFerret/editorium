@@ -16,6 +16,12 @@ export class ExecutionResultRenderError extends Error {
 export function renderExecutionOutput(
   output: FerretExecutionOutput,
 ): string {
+  if (output.data.length === 0) {
+    return '';
+  }
+  if (output.contentType.trim() === '') {
+    return Buffer.from(output.data).toString('utf8');
+  }
   const contentType = output.contentType
     .split(';', 1)[0]
     ?.trim()

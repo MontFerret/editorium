@@ -127,10 +127,21 @@ jobs:
       - name: Smoke daemon execution transport
         run: node extensions/vscode/scripts/daemon-smoke.mjs
 
+      - name: Download stable VS Code for the installed test
+        if: matrix.target == 'linux-x64'
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -fsSL --retry 3 --max-time 60 https://update.code.visualstudio.com/api/update/linux-x64/stable/latest -o vscode-release.json
+          url=$(jq -er '.url' vscode-release.json)
+          curl -fsSL --proto '=https' --retry 3 --max-time 180 "$url" -o vscode.tar.gz
+          jq -er '.sha256hash + "  vscode.tar.gz"' vscode-release.json | sha256sum -c -
+          tar -xzf vscode.tar.gz
+
       - name: Test installed Linux x64 VSIX
         if: matrix.target == 'linux-x64'
         env:
           TARGET: ${{ matrix.target }}
+          VSCODE_TEST_EXECUTABLE_PATH: ${{ runner.temp }}/VSCode-linux-x64/code
         run: xvfb-run -a go -C tools/editorium run . test-installed vscode
 
       - name: Upload target VSIX

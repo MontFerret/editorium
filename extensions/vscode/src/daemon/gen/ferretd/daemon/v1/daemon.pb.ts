@@ -40,6 +40,21 @@ export interface ShutdownRequest {
 export interface ShutdownResponse {
 }
 
+/** RuntimeDescriptor describes a configured target, not connectivity or capabilities. */
+export interface RuntimeDescriptor {
+  name: string;
+  label: string;
+  provider: string;
+}
+
+export interface ListRuntimesRequest {
+}
+
+export interface ListRuntimesResponse {
+  defaultRuntime: string;
+  runtimes: RuntimeDescriptor[];
+}
+
 function createBaseApiVersion(): ApiVersion {
   return { major: 0, minor: 0 };
 }
@@ -396,6 +411,168 @@ export const ShutdownResponse: MessageFns<ShutdownResponse> = {
   },
 };
 
+function createBaseRuntimeDescriptor(): RuntimeDescriptor {
+  return { name: "", label: "", provider: "" };
+}
+
+export const RuntimeDescriptor: MessageFns<RuntimeDescriptor> = {
+  encode(message: RuntimeDescriptor, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.name !== "") {
+      writer.uint32(10).string(message.name);
+    }
+    if (message.label !== "") {
+      writer.uint32(18).string(message.label);
+    }
+    if (message.provider !== "") {
+      writer.uint32(26).string(message.provider);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): RuntimeDescriptor {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseRuntimeDescriptor();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.name = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.label = reader.string();
+          continue;
+        }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.provider = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<RuntimeDescriptor>): RuntimeDescriptor {
+    return RuntimeDescriptor.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<RuntimeDescriptor>): RuntimeDescriptor {
+    const message = createBaseRuntimeDescriptor();
+    message.name = object.name ?? "";
+    message.label = object.label ?? "";
+    message.provider = object.provider ?? "";
+    return message;
+  },
+};
+
+function createBaseListRuntimesRequest(): ListRuntimesRequest {
+  return {};
+}
+
+export const ListRuntimesRequest: MessageFns<ListRuntimesRequest> = {
+  encode(_: ListRuntimesRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): ListRuntimesRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseListRuntimesRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<ListRuntimesRequest>): ListRuntimesRequest {
+    return ListRuntimesRequest.fromPartial(base ?? {});
+  },
+  fromPartial(_: DeepPartial<ListRuntimesRequest>): ListRuntimesRequest {
+    const message = createBaseListRuntimesRequest();
+    return message;
+  },
+};
+
+function createBaseListRuntimesResponse(): ListRuntimesResponse {
+  return { defaultRuntime: "", runtimes: [] };
+}
+
+export const ListRuntimesResponse: MessageFns<ListRuntimesResponse> = {
+  encode(message: ListRuntimesResponse, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.defaultRuntime !== "") {
+      writer.uint32(10).string(message.defaultRuntime);
+    }
+    for (const v of message.runtimes) {
+      RuntimeDescriptor.encode(v!, writer.uint32(18).fork()).join();
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): ListRuntimesResponse {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseListRuntimesResponse();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.defaultRuntime = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.runtimes.push(RuntimeDescriptor.decode(reader, reader.uint32()));
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<ListRuntimesResponse>): ListRuntimesResponse {
+    return ListRuntimesResponse.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<ListRuntimesResponse>): ListRuntimesResponse {
+    const message = createBaseListRuntimesResponse();
+    message.defaultRuntime = object.defaultRuntime ?? "";
+    message.runtimes = object.runtimes?.map((e) => RuntimeDescriptor.fromPartial(e)) || [];
+    return message;
+  },
+};
+
 export type DaemonServiceService = typeof DaemonServiceService;
 export const DaemonServiceService = {
   getInfo: {
@@ -416,11 +593,22 @@ export const DaemonServiceService = {
     responseSerialize: (value: ShutdownResponse): Buffer => Buffer.from(ShutdownResponse.encode(value).finish()),
     responseDeserialize: (value: Buffer): ShutdownResponse => ShutdownResponse.decode(value),
   },
+  listRuntimes: {
+    path: "/ferretd.daemon.v1.DaemonService/ListRuntimes" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: ListRuntimesRequest): Buffer => Buffer.from(ListRuntimesRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): ListRuntimesRequest => ListRuntimesRequest.decode(value),
+    responseSerialize: (value: ListRuntimesResponse): Buffer =>
+      Buffer.from(ListRuntimesResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): ListRuntimesResponse => ListRuntimesResponse.decode(value),
+  },
 } as const;
 
 export interface DaemonServiceServer extends UntypedServiceImplementation {
   getInfo: handleUnaryCall<GetInfoRequest, GetInfoResponse>;
   shutdown: handleUnaryCall<ShutdownRequest, ShutdownResponse>;
+  listRuntimes: handleUnaryCall<ListRuntimesRequest, ListRuntimesResponse>;
 }
 
 type Builtin = Date | Function | Uint8Array | string | number | boolean | undefined;

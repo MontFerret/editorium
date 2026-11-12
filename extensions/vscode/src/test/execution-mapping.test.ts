@@ -2,6 +2,7 @@ import * as assert from 'node:assert/strict';
 
 import {
   DiagnosticSeverity,
+  Execution,
   ExecutionState,
   FailureCategory,
   SourceSnapshot,
@@ -33,7 +34,10 @@ suite('Ferret execution protocol mapping', () => {
         revision: 1,
       },
       parameters: ['value', 'nested'],
+      runtimeName: '',
     });
+
+    assert.strictEqual(mapSession({ ...session(), runtimeName: 'worker' }).runtimeName, 'worker');
 
     const completed = mapExecution(completedExecution());
     assert.strictEqual(completed.status, 'completed');
@@ -52,6 +56,24 @@ suite('Ferret execution protocol mapping', () => {
       failed.failure?.diagnostics[0]?.relatedInformation[0]?.message,
       'related source',
     );
+  });
+
+  test('retains output presence, bytes, and failures in terminal snapshots', () => {
+    const completed = execution(ExecutionState.EXECUTION_STATE_COMPLETED);
+    assert.strictEqual(mapExecution(completed).output, undefined);
+    for (const contentType of ['', 'application/json']) {
+      const output = { contentType, data: Buffer.alloc(0) };
+      const snapshot = Execution.decode(Execution.encode({ ...completed, output }).finish());
+      assert.deepStrictEqual(mapExecution(snapshot).output, { contentType, data: new Uint8Array() });
+    }
+    const output = { contentType: '', data: Buffer.from('{"item":') };
+    const expected = { contentType: '', data: new Uint8Array(output.data) };
+    const failed = mapExecution({ ...failedExecution(), output });
+    assert.deepStrictEqual(failed.output, expected);
+    assert.strictEqual(failed.failure?.message, 'runtime failed');
+    assert.strictEqual(failed.failure?.diagnostics[0]?.code, 'FQL1001');
+    const cancelled = execution(ExecutionState.EXECUTION_STATE_CANCELLED, { output });
+    assert.deepStrictEqual(mapExecution(cancelled).output, expected);
   });
 
   test('maps all current statuses and event kinds', () => {
@@ -156,7 +178,7 @@ suite('Ferret execution protocol mapping', () => {
     assert.throws(
       () =>
         mapExecution(
-          execution(ExecutionState.EXECUTION_STATE_COMPLETED),
+          execution(ExecutionState.EXECUTION_STATE_RUNNING, { output: completedExecution().output! }),
         ),
       ProtocolMappingError,
     );
