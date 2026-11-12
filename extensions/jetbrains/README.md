@@ -20,11 +20,41 @@ evaluation, native watches, and inspection lifecycle hardening.
 - enough disk space for the IntelliJ Platform development distribution and six
   native daemon artifacts.
 
-IntelliJ Platform 2026.2 compiles and runs on Java 25. The Gradle build uses the
-Foojay resolver to provision that toolchain automatically when it is not
+IntelliJ Platform 2026.2 and 2026.3 compile and run on Java 25. The Gradle build
+uses the Foojay resolver to provision that toolchain automatically when it is not
 installed locally. Ferret plugin bytecode also targets Java 25.
 
 Use the checked-in Gradle wrapper; a system Gradle installation is not needed.
+
+## IDE compatibility
+
+The supported products are IntelliJ IDEA and GoLand on the 2026.2 and 2026.3
+release lines. The plugin compiles against IDEA `2026.2.0.1`, targets Java 25,
+and retains `sinceBuild = "262"`. Its descriptor has no upper build bound;
+this does not establish compatibility with untested future releases or other
+JetBrains products.
+
+Plugin Verifier uses these explicit, stable distributions:
+
+| Product | Version | Build |
+| --- | --- | --- |
+| IntelliJ IDEA | `2026.2.0.1` | `IU-262.8665.337` |
+| IntelliJ IDEA | `2026.3` | `IU-263.7307.200` |
+| GoLand | `2026.2.4` | `GO-262.11879.101` |
+| GoLand | `2026.3` | `GO-263.7307.211` |
+
+These versions are independently listed in
+[JetBrains release metadata](https://data.services.jetbrains.com/products/releases?code=II%2CGO&latest=false&type=release).
+Both release lines require Java 25 according to the
+[JetBrains platform version table](https://plugins.jetbrains.com/docs/intellij/build-number-ranges.html#platform-versions).
+The existing `intellij.platform.debugger` build dependency covers the debugger
+module extraction described in the
+[2026.3 API changes](https://plugins.jetbrains.com/docs/intellij/api-changes-list-2026.html).
+
+Verification rejects incompatible, deprecated, internal, override-only, and
+scheduled-for-removal API usage. It checks binary compatibility; installed IDE
+workflows require a separate interactive smoke test. See the
+[validation report](docs/debugger-validation.md) for actual results.
 
 ## Daemon distribution
 
@@ -281,9 +311,41 @@ current-host daemon, runs unit tests, and then runs `ferretdIntegrationTest` wit
 `FERRETD_TEST_PATH`. Running that Gradle task directly without an executable
 `FERRETD_TEST_PATH` is an error, not a skip.
 
-`verifyPlugin` checks the archive against IntelliJ Platform 2026.2. The root
-package check additionally verifies every bundled daemon's bytes, version, and
-Unix executable mode and runs the native daemon's `--version` smoke check.
+`make lint jetbrains` and `make package jetbrains` both invoke `verifyPlugin`
+against all four distributions in the compatibility matrix. Reports are written
+under `build/reports/pluginVerifier/`; the JetBrains CI packaging job uploads
+them even after a failed check. The root package check additionally verifies
+every bundled daemon's bytes, version, and Unix executable mode and runs the
+native daemon's `--version` smoke check.
+
+## Smoke-test the packaged plugin
+
+Use GoLand `2026.3` (`GO-263.7307.211`) with disposable configuration, system,
+plugin, and project directories. Build with `make package jetbrains`, install
+the resulting ZIP through **Settings | Plugins | Install Plugin from Disk**,
+and restart that isolated IDE. Confirm the loaded Ferret plugin and all launched
+daemon paths belong to that installation, with the version from `ferretd.json`.
+
+1. Open a local `.fql` file and confirm Ferret recognition and lazy LSP startup.
+   Check diagnostics for invalid source, completion, and **Reformat Code**.
+2. Create a native Ferret configuration for the query below, save/reopen its
+   configuration, and Run it. Confirm the Run console result is `[2, 4, 6]`.
+3. Set a line breakpoint on the final `RETURN` (line 3), Debug, step, inspect a
+   local binding, and evaluate `value + 1` or add it as a watch while suspended.
+4. Stop, then successfully Run or Debug again.
+5. Close the project and confirm its LSP, execution-daemon, and DAP processes
+   terminate. Other projects' processes must remain independent.
+
+```fql
+RETURN FOR value IN 1..3
+    LET doubled = value * 2
+    RETURN doubled
+```
+
+Record the exact IDE build and observed result for each step. A successful
+build, Plugin Verifier run, or IDE launch alone does not complete this smoke
+test. Its actual status and any remaining manual steps are recorded in the
+[validation report](docs/debugger-validation.md).
 
 ## Launch a development IDE
 

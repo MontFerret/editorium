@@ -52,7 +52,7 @@ run repository preparation. The VS Code manifest and lockfile own that Node
 toolchain locally; the repository root has no npm metadata. JetBrains plugin
 development additionally requires a JDK 21 or newer to run Gradle. The isolated
 Gradle project automatically provisions the Java 25 toolchain required by
-IntelliJ Platform 2026.2. Use Make for normal repository operations.
+IntelliJ Platform 2026.2 and 2026.3. Use Make for normal repository operations.
 
 Target an individual integration with the same public commands:
 
@@ -135,6 +135,15 @@ output. Downloads live under `.dist/`; staged executables live under
 target matrix and release contract.
 
 ## JetBrains distribution
+
+The Ferret plugin supports IntelliJ IDEA and GoLand on the 2026.2 and 2026.3
+release lines. It compiles against IDEA 2026.2.0.1 with Java 25 bytecode and
+retains minimum build `262`. The plugin descriptor has no upper build bound;
+future IDE releases are not thereby verified. Plugin Verifier explicitly checks
+IDEA 2026.2.0.1 and 2026.3, and GoLand 2026.2.4 and 2026.3. See the
+[JetBrains compatibility matrix](extensions/jetbrains/README.md#ide-compatibility)
+and [validation evidence](extensions/jetbrains/docs/debugger-validation.md)
+for exact builds and the separate packaged-plugin smoke-test status.
 
 The target-neutral JetBrains archive bundles the pinned daemon for macOS,
 Linux, and Windows on arm64 and x64. Gradle invokes the shared Editorium

@@ -101,3 +101,10 @@ jobs:
 
       - name: Recheck package contents
         run: make package-check jetbrains
+
+      - name: Upload Plugin Verifier reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jetbrains-plugin-verifier
+          path: extensions/jetbrains/build/reports/pluginVerifier/

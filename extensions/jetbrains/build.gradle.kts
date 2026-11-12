@@ -1,3 +1,4 @@
+import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask
 import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginStructureTask
@@ -46,7 +47,10 @@ intellijPlatform {
             VerifyPluginTask.FailureLevel.SCHEDULED_FOR_REMOVAL_API_USAGES,
         )
         ides {
-            current()
+            create(IntelliJPlatformType.IntellijIdea, "2026.2.0.1")
+            create(IntelliJPlatformType.IntellijIdea, "2026.3")
+            create(IntelliJPlatformType.GoLand, "2026.2.4")
+            create(IntelliJPlatformType.GoLand, "2026.3")
         }
     }
 }

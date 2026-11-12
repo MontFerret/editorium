@@ -1,5 +1,110 @@
 # JetBrains debugger validation
 
+## November 11, 2026: IDEA and GoLand 2026.3 compatibility
+
+The plugin continues to compile against IDEA `2026.2.0.1`
+(`IU-262.8665.337`), with Java 25 bytecode, minimum build `262`, and no upper
+build bound. Plugin Verifier now explicitly targets IDEA `2026.2.0.1` and
+`2026.3`, and GoLand `2026.2.4` and `2026.3`. An absent upper bound does not
+mean future versions or additional products were verified.
+
+The four distributions were confirmed in
+[JetBrains release metadata](https://data.services.jetbrains.com/products/releases?code=II%2CGO&latest=false&type=release);
+their Linux download URLs and GoLand 2026.3's macOS arm64 installer returned
+HTTP 200. The
+[2026 API changes](https://plugins.jetbrains.com/docs/intellij/api-changes-list-2026.html)
+were reviewed against the integration. The existing explicit debugger module
+dependency is retained. Kotlin `2.4.0`, IntelliJ Platform Gradle plugin
+`2.18.1`, Gradle `9.7.1`, and all runtime dependencies are unchanged. The sole
+daemon pin remains `1.0.0-alpha.9`; schemas and generated clients are unchanged.
+
+Local validation uses macOS arm64, Go `1.26.5`, and Temurin JDK `25.0.4.1+1`.
+Commands below run from the repository root with `GOTOOLCHAIN=go1.26.5` and
+`JAVA_HOME` set to the cached Temurin JDK 25 installation. They do not establish
+Linux/Windows host execution or a hosted CI pass.
+
+### Automated validation
+
+| Command | Result |
+| --- | --- |
+| `make test jetbrains` | PASS; generated-client drift check and 29 real-daemon integration tests, zero failures, errors, or skips. The unit/platform task was initially up-to-date. |
+| `extensions/jetbrains/gradlew -p extensions/jetbrains test --rerun-tasks` | PASS; fresh execution of 173 unit/platform tests, zero failures, errors, or skips. |
+| `make lint jetbrains` | PASS; Kotlin compilation, project/structure validation, and all four Plugin Verifier targets. |
+| `make package jetbrains` | PASS; all four verifier targets checked again, universal ZIP built, and package-content validation passed. |
+| `make package-check jetbrains` | PASS; independent recheck of six daemon targets, version marker, verified staged bytes, Unix executable modes, and native daemon `--version`. |
+| Complete diff/self-review | PASS; all five changed files reviewed for scope, compatibility, ownership, packaging, generated-file boundaries, and documentation. `git diff --check`, 21 local Markdown links, and workflow YAML/upload configuration checks passed. |
+
+JUnit results are under `build/test-results/test/` and
+`build/test-results/ferretdIntegrationTest/`, with HTML reports under
+`build/reports/tests/`, relative to `extensions/jetbrains/`.
+
+Plugin Verifier `1.411` reported:
+
+| Product | Version | Actual build | Verdict |
+| --- | --- | --- | --- |
+| IntelliJ IDEA | `2026.2.0.1` | `IU-262.8665.337` | Compatible |
+| IntelliJ IDEA | `2026.3` | `IU-263.7307.200` | Compatible |
+| GoLand | `2026.2.4` | `GO-262.11879.101` | Compatible |
+| GoLand | `2026.3` | `GO-263.7307.211` | Compatible |
+
+Each target has a `report.html` and
+`plugins/org.ferretlang.jetbrains/0.1.0/verification-verdict.txt` under
+`build/reports/pluginVerifier/<actual-build>/`. All five existing API failure
+categories and strict structure validation remain enabled. The verifier logged
+nonexistent classpath entries from IDE layout metadata; the final plugin
+verdicts above contain no compatibility or API-usage findings. No checks were
+disabled or findings suppressed. No production API fix or new behavior
+regression test was necessary.
+
+The packaged descriptor was inspected: plugin ID `org.ferretlang.jetbrains`,
+version `0.1.0`, `since-build="262"`, and no `until-build`. Plugin class-file
+major version is `69` (Java 25).
+
+The artifact is
+`extensions/jetbrains/build/distributions/ferret-jetbrains-0.1.0.zip`, with SHA-256
+`03e30d318ae30bcf6147142f224756ad54de2f0fbe73d82607acd8ea50980ab6`.
+The hash was unchanged between lint verification and normal packaging. The six
+embedded daemon binaries were checked as package contents; only the native
+macOS arm64 executable was run on this host. Hosted CI has not been run for
+these local changes. The existing Make/Go/Gradle routing remains unchanged;
+the CI packaging job now always attempts to upload generated verifier reports
+as `jetbrains-plugin-verifier`.
+
+### Packaged-plugin interactive smoke test: NOT RUN
+
+An isolated GoLand launch reached startup on `GO-263.7307.211`, confirmed in
+its log. Configuration, system, plugin, log, temporary, and fixture-project
+directories were created beneath `/private/tmp/editorium-263-xbqfv2ud/`.
+Computer control returned **"Computer Use permissions are not granted"** when
+selecting GoLand. The owned launch was interrupted and exited with code 130.
+The subsequent process inventory contained no GoLand or `ferretd` processes.
+No plugin installation or interactive Ferret workflow was performed, and the
+IDE launch is not a smoke-test pass.
+
+Remaining manual steps are the
+[packaged-plugin smoke procedure](../README.md#smoke-test-the-packaged-plugin):
+install the normal ZIP into an isolated GoLand 2026.3 profile; confirm bundled
+daemon selection and `.fql` recognition; exercise LSP diagnostics, completion,
+and formatting; create/persist a configuration and confirm `[2, 4, 6]` in the
+Run console; hit a breakpoint, step, inspect a local, and evaluate/watch an
+expression; Stop and relaunch; then close the project and verify owned-process
+termination. Every one of these interactive checks remains **NOT RUN**.
+
+### Historical user-reported smoke evidence
+
+The user reported successful JetBrains testing on September 28, 2026.
+This is user-reported smoke-test evidence; the exact IDE/build and individual
+manual cases were not supplied. It does not establish that every historical
+manual checklist item was performed or validate the new 2026.3 targets.
+The earlier reports below retain their original outcomes and limitations.
+
+### Final review
+
+Final review clarified the smoke fixture's array result and the breakpoint on
+the final `RETURN` line. No runtime or lifecycle correction was required.
+Shared Go tooling, public commands, plugin identifiers, and protocol inputs
+remain unchanged; no additional Go tests or client regeneration were needed.
+
 ## September 22, 2026: alpha.9 explicit-file admission
 
 The sole repository pin is now `1.0.0-alpha.9`. The
