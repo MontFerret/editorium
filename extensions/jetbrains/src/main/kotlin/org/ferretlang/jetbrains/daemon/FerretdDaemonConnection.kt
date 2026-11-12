@@ -14,6 +14,7 @@ import org.ferretlang.jetbrains.runtime.FerretRuntimeSettings
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
@@ -23,6 +24,8 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
@@ -309,7 +312,7 @@ internal class FerretdDaemonConnection private constructor(
                 generation.rpc.listRuntimes()
             }.also { generation.catalog = it }
         }
-        return pending.await().also { ensureCurrent(generation) }
+        return awaitOnGeneration(generation, pending)
     }
 
     internal suspend fun workspace(generation: Generation, root: Path): String {
@@ -330,7 +333,20 @@ internal class FerretdDaemonConnection private constructor(
                 }
             }.also { generation.workspaces[root] = it }
         }
-        return pending.await().also { ensureCurrent(generation) }
+        return awaitOnGeneration(generation, pending)
+    }
+
+    private suspend fun <T> awaitOnGeneration(generation: Generation, pending: Deferred<T>): T {
+        val result = try {
+            pending.await()
+        } catch (cancelled: CancellationException) {
+            // Teardown cancels shared requests. An active waiter should see the daemon's exit.
+            currentCoroutineContext().ensureActive()
+            ensureCurrent(generation)
+            throw cancelled
+        }
+        ensureCurrent(generation)
+        return result
     }
 
     internal suspend fun shutdown() {

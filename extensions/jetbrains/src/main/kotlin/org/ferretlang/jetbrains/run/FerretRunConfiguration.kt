@@ -11,7 +11,6 @@ import com.intellij.openapi.options.SettingsEditor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.util.io.FileUtil
-import com.intellij.openapi.util.JDOMExternalizerUtil
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFileSystemItem
 import com.intellij.refactoring.listeners.RefactoringElementListener
@@ -42,15 +41,16 @@ class FerretRunConfiguration(
 
     override fun writeExternal(element: Element) {
         super.writeExternal(element)
-        // XMLB filters surrogate pairs from string options. JDOM attributes preserve the full code point.
-        preserveSupplementaryCharacters(element, "runtimeName", runtimeName)
-        preserveSupplementaryCharacters(element, "workingDirectory", workingDirectory)
+        FerretLiteralRunOption.write(element, "runtimeName", runtimeName)
+        FerretLiteralRunOption.write(element, "workingDirectory", workingDirectory)
     }
 
-    private fun preserveSupplementaryCharacters(element: Element, option: String, value: String) {
-        if (value.any(Char::isHighSurrogate)) {
-            JDOMExternalizerUtil.readOption(element, option)?.setAttribute("value", value)
-        }
+    override fun readExternal(element: Element) {
+        val name = FerretLiteralRunOption.readEncoded(element, "runtimeName")
+        val directory = FerretLiteralRunOption.readEncoded(element, "workingDirectory")
+        super.readExternal(element)
+        if (name != null) runtimeName = name
+        if (directory != null) workingDirectory = directory
     }
 
     var workingDirectory: String

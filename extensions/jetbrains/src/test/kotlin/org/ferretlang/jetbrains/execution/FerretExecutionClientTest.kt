@@ -470,6 +470,68 @@ class FerretExecutionClientTest {
     }
 
     @Test
+    fun daemonLossDuringCatalogLookupFailsTheAdmittedRun() = runBlocking {
+        val fixture = fixture()
+        val entered = CompletableDeferred<Unit>()
+        try {
+            fixture.configureWire()
+            fixture.rpc.discover = { entered.complete(Unit); awaitCancellation() }
+            val run = fixture.execute()
+            entered.awaitResult()
+            fixture.assertCrashFailsPreparation(run)
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun daemonLossDuringWorkspaceOpenFailsTheAdmittedRun() = runBlocking {
+        val fixture = fixture()
+        try {
+            fixture.rpc.workspaceGate = CompletableDeferred()
+            val run = fixture.execute()
+            fixture.rpc.workspaceEntered.awaitResult()
+            fixture.assertCrashFailsPreparation(run)
+        } finally {
+            fixture.close()
+        }
+    }
+
+    private suspend fun Fixture.assertCrashFailsPreparation(run: RecordingSink) {
+        (connection.generation().process as FakeDaemonProcess).crash(7)
+        assertEquals(1, run.exit.awaitResult())
+        assertTrue(run.stderr.single().contains("exited unexpectedly with code 7"))
+        assertEquals(1, rpc.calls.count { it == "getInfo" })
+        assertTrue(rpc.requestedRuntimeNames.isEmpty())
+        assertFalse(connection.catalogState.value.busy)
+    }
+
+    @Test
+    fun stopDuringSharedCatalogLookupLeavesItAvailableForAnotherRun() = runBlocking {
+        val fixture = fixture(FakeFerretdRpc.Outcome.COMPLETED)
+        val entered = CompletableDeferred<Unit>()
+        val proceed = CompletableDeferred<Unit>()
+        try {
+            fixture.configureWire()
+            val discover = fixture.rpc.discover
+            fixture.rpc.discover = { entered.complete(Unit); proceed.await(); discover() }
+            val stopped = fixture.execute()
+            entered.awaitResult()
+            val continuing = fixture.execute("second.fql", runtimeName = "WireApp")
+            stopped.handle.cancel()
+            assertEquals(130, stopped.exit.awaitResult())
+            assertTrue(stopped.stderr.isEmpty())
+            proceed.complete(Unit)
+            assertEquals(0, continuing.exit.awaitResult())
+            assertEquals(1, fixture.rpc.calls.count { it == "listRuntimes" })
+            assertEquals(listOf("WireApp"), fixture.rpc.requestedRuntimeNames.toList())
+        } finally {
+            proceed.complete(Unit)
+            fixture.close()
+        }
+    }
+
+    @Test
     fun stopDuringSharedWorkspaceOpenDoesNotDiscardItsResult() = runBlocking {
         val fixture = fixture(FakeFerretdRpc.Outcome.COMPLETED)
         val gate = CompletableDeferred<Unit>()

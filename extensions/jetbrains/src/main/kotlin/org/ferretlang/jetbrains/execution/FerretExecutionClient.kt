@@ -58,7 +58,7 @@ internal class FerretExecutionClient(
                 if (handle.isCancellationRequested()) {
                     handle.commit(FerretExecutionHandle.CANCELLED_EXIT_CODE)
                 } else {
-                    run(request, handle, sink, generation, runtime.name)
+                    run(request, handle, sink, generation, selector = launch.runtimeName, expectedRuntime = runtime.name)
                 }
             } catch (error: Throwable) {
                 if (error is CancellationException || !connection.isProjectActive) handle.cancel()
@@ -86,6 +86,7 @@ internal class FerretExecutionClient(
         handle: FerretExecutionHandle,
         sink: FerretExecutionSink,
         generation: FerretdDaemonConnection.Generation,
+        selector: String,
         expectedRuntime: String,
     ): Int {
         var sessionId: String? = null
@@ -100,7 +101,7 @@ internal class FerretExecutionClient(
             // The daemon can publish before gRPC delivers its reply. Drain the bounded call and
             // capture the ID inside the protected context so Stop cannot discard a late session.
             val session = withContext(NonCancellable) {
-                generation.rpc.createSession(workspaceId, request.relativeSourcePath, request.runtimeName).also { sessionId = it.id }
+                generation.rpc.createSession(workspaceId, request.relativeSourcePath, selector).also { sessionId = it.id }
             }
             if (handle.isCancellationRequested() || !connection.isProjectActive) {
                 handle.cancel()

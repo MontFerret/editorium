@@ -105,21 +105,24 @@ internal class GrpcFerretdRpc private constructor(
     }
 
     override suspend fun createSession(workspaceId: String, relativePath: String, runtimeName: String): FerretdSession {
-        val response = unary<CreateSessionResponse>("create-session") { observer ->
-            executions.withDeadlineAfter(SESSION_ACQUISITION_TIMEOUT_SECONDS, TimeUnit.SECONDS).createSession(
-                toProtocolCreateSessionRequest(workspaceId, relativePath, runtimeName),
-                observer,
-            )
-        }
-        if (!response.hasSession()) {
-            throw FerretdRpcException("create-session", "The Ferret daemon returned no session.")
-        }
-        val id = response.session.id.value
+        var observedId: String? = null
         try {
+            // A message can carry a published ID even when the final gRPC status is an error.
+            val response = unary<CreateSessionResponse>("create-session", onMessage = { message ->
+                if (observedId == null) observedId = message.session.id.value.takeIf(String::isNotBlank)
+            }) { observer ->
+                executions.withDeadlineAfter(SESSION_ACQUISITION_TIMEOUT_SECONDS, TimeUnit.SECONDS).createSession(
+                    toProtocolCreateSessionRequest(workspaceId, relativePath, runtimeName),
+                    observer,
+                )
+            }
+            if (!response.hasSession()) {
+                throw FerretdRpcException("create-session", "The Ferret daemon returned no session.")
+            }
             return GrpcFerretdMapper.session(response.session)
-        } catch (error: FerretdRpcException) {
-            // Decoding can reject the response before the Run client receives its ownership handle.
-            if (id.isNotBlank()) withContext(NonCancellable) {
+        } catch (error: Exception) {
+            val id = observedId ?: throw error
+            withContext(NonCancellable) {
                 try {
                     closeSession(id)
                 } catch (cleanup: Exception) {
@@ -221,6 +224,7 @@ internal class GrpcFerretdRpc private constructor(
 
     private suspend fun <Response> unary(
         operation: String,
+        onMessage: ((Response) -> Unit)? = null,
         invoke: (StreamObserver<Response>) -> Unit,
     ): Response = suspendCancellableCoroutine { continuation ->
         val completed = AtomicBoolean()
@@ -231,6 +235,7 @@ internal class GrpcFerretdRpc private constructor(
             }
 
             override fun onNext(value: Response) {
+                onMessage?.invoke(value)
                 if (response != null) {
                     if (completed.compareAndSet(false, true)) {
                         continuation.resumeWithException(

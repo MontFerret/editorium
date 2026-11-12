@@ -11,7 +11,6 @@ internal data class FerretExecutionRequest(
     val workspaceRoot: Path,
     val relativeSourcePath: String,
     val workingDirectory: String?,
-    val runtimeName: String,
     val bindings: FerretParameterBindings,
 ) {
     companion object {
@@ -31,7 +30,7 @@ internal data class FerretExecutionRequest(
                 throw FerretLaunchException("The Ferret source path is not protocol-safe: $protocolPath")
             }
 
-            return FerretExecutionRequest(source, workspaceRoot, protocolPath, resolved.workingDirectory, input.runtimeName, input.bindings)
+            return FerretExecutionRequest(source, workspaceRoot, protocolPath, resolved.workingDirectory, resolved.bindings)
         }
     }
 }

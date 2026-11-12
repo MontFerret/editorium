@@ -223,8 +223,12 @@ application interprets that value. In both cases the source and compilation
 workspace stay on the plugin host. A remote working directory does not transfer
 workspace files or change the source’s workspace-relative identity.
 
-Run configurations use JetBrains' normal project persistence and survive IDE
-restart, project reopen, and configuration duplication. IDE rename/move
+Run configurations survive IDE restart, project reopen, and duplication.
+Runtime names and working-directory overrides preserve literal text, including
+`$PROJECT_DIR$`. In shared Run configuration XML, simple names and relative
+directories stay readable. Other values use a marked Base64URL encoding.
+Older configurations retain the IDE's usual path-macro interpretation on load.
+Source paths continue to use JetBrains path macros. IDE rename/move
 refactorings of the source or its parent directories update the stored source
 path and generated name, including undo. Custom names, working directories,
 parameters, and relative versus absolute path choices are preserved. External
