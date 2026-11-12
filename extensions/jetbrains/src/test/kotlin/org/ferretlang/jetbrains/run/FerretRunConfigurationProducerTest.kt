@@ -1,7 +1,6 @@
 package org.ferretlang.jetbrains.run
 
 import com.intellij.execution.executors.DefaultDebugExecutor
-import com.intellij.execution.executors.DefaultRunExecutor
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder
 import com.intellij.execution.runners.ProgramRunner
 import com.intellij.execution.ui.RunContentDescriptor
@@ -56,7 +55,7 @@ class FerretRunConfigurationProducerTest : BasePlatformTestCase() {
         val configuration = produced?.configuration as FerretRunConfiguration
 
         assertEquals(file.toNioPath().toAbsolutePath().normalize().toString(), configuration.sourcePath)
-        assertEquals(project.basePath.orEmpty(), configuration.workingDirectory)
+        assertEquals("", configuration.workingDirectory)
         assertSame(FerretParameterBindings.EMPTY, configuration.parameters)
         assertEquals("query.fql", configuration.name)
         assertTrue(configuration.isGeneratedName)
@@ -79,7 +78,7 @@ class FerretRunConfigurationProducerTest : BasePlatformTestCase() {
         }
     }
 
-    fun testContextLaunchesRejectConfiguredFilesAndEveryExplicitRuntime() {
+    fun testDebugContextLaunchesRejectConfiguredFilesAndEveryExplicitRuntime() {
         val root = Files.createDirectories(Path.of(requireNotNull(project.basePath)))
         val source = Files.createTempFile(root, "runtime-", ".fql")
         val file = createLocalFile(source.toString())
@@ -101,28 +100,25 @@ class FerretRunConfigurationProducerTest : BasePlatformTestCase() {
                 error("Restricted launch started a DAP process")
             })
         }, testRootDisposable)
-        val executors = listOf(DefaultRunExecutor.getRunExecutorInstance(), DefaultDebugExecutor.getDebugExecutorInstance())
         try {
             for ((path, name) in listOf("" to "local", "" to "App", configurationFile.toString() to "")) {
                 config.runtimeName = name
                 connection.applyConfigPath(path)
-                for (executor in executors) {
-                    val failure = java.util.concurrent.atomic.AtomicReference<Throwable>()
-                    val environment = ExecutionEnvironmentBuilder.create(executor, config).build(object : ProgramRunner.Callback {
-                        override fun processStarted(descriptor: RunContentDescriptor) { fail("Restricted launch started") }
-                        override fun processNotStarted(error: Throwable?) {
-                            failure.set(error ?: AssertionError("Missing launch error"))
-                        }
-                    })
-                    val reported = com.intellij.testFramework.LoggedErrorProcessor.executeAndReturnLoggedError {
-                        environment.runner.execute(environment)
-                        PlatformTestUtil.waitWithEventsDispatching("Expected a rejected launch", { failure.get() != null }, 10)
+                val failure = java.util.concurrent.atomic.AtomicReference<Throwable>()
+                val environment = ExecutionEnvironmentBuilder.create(DefaultDebugExecutor.getDebugExecutorInstance(), config).build(object : ProgramRunner.Callback {
+                    override fun processStarted(descriptor: RunContentDescriptor) { fail("Restricted launch started") }
+                    override fun processNotStarted(error: Throwable?) {
+                        failure.set(error ?: AssertionError("Missing launch error"))
                     }
-                    assertTrue(reported.toString(), reported.message.orEmpty().contains("Daemon default"))
-                    assertFalse(connection.catalogState.value.busy)
-                    assertEquals(0, rpc.calls.count { it.startsWith("createSession:") })
-                    assertEquals(0, dapStarts.get())
+                })
+                val reported = com.intellij.testFramework.LoggedErrorProcessor.executeAndReturnLoggedError {
+                    environment.runner.execute(environment)
+                    PlatformTestUtil.waitWithEventsDispatching("Expected a rejected launch", { failure.get() != null }, 10)
                 }
+                assertTrue(reported.toString(), reported.message.orEmpty().contains("Daemon default"))
+                assertFalse(connection.catalogState.value.busy)
+                assertEquals(0, rpc.calls.count { it.startsWith("createSession:") })
+                assertEquals(0, dapStarts.get())
             }
         } finally {
             runBlocking { connection.closeForTest() }

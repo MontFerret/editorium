@@ -8,6 +8,6 @@ internal object FerretDapLaunchArguments {
         put("cwd", input.workspaceRoot.toString())
         put("parameters", input.bindings)
         put("stopOnEntry", false)
-        input.workingDirectory?.let { put("workingDirectory", it.toString()) }
+        input.workingDirectory?.let { put("workingDirectory", it) }
     }
 }

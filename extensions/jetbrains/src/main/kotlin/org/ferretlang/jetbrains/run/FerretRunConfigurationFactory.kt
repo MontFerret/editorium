@@ -12,9 +12,7 @@ class FerretRunConfigurationFactory(
     override fun getId(): String = FerretRunConfigurationType.ID
 
     override fun createTemplateConfiguration(project: Project): RunConfiguration =
-        FerretRunConfiguration(project, this, FerretRunConfigurationType.DISPLAY_NAME).apply {
-            workingDirectory = project.basePath.orEmpty()
-        }
+        FerretRunConfiguration(project, this, FerretRunConfigurationType.DISPLAY_NAME)
 
     override fun getOptionsClass(): Class<out BaseState> = FerretRunConfigurationOptions::class.java
 

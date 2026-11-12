@@ -131,6 +131,7 @@ intellijPlatformTesting.testIde.register("ferretdIntegrationTest") {
     task {
         group = "verification"
         description = "Runs JetBrains execution tests against the pinned current-host ferretd binary."
+        inputs.property("wireTestEndpoint", providers.environmentVariable("FERRETD_TEST_WIRE_ENDPOINT").orElse(""))
         useJUnit {
             includeCategories("org.ferretlang.jetbrains.integration.FerretdIntegrationTest")
         }

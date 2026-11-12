@@ -47,6 +47,7 @@ class FerretRunConfigurationPersistenceTest : BasePlatformTestCase() {
             val settings = manager.createConfiguration("runtime", factory) as RunnerAndConfigurationSettingsImpl
             val config = settings.configuration as FerretRunConfiguration
             config.runtimeName = name
+            config.workingDirectory = """  C:\Runtime 🦦 Host\data  """
             val editor = FerretRunConfigurationEditor(project)
             try {
                 editor.resetFrom(config)
@@ -60,6 +61,7 @@ class FerretRunConfigurationPersistenceTest : BasePlatformTestCase() {
             val copy = RunnerAndConfigurationSettingsImpl(manager)
             copy.readExternal(JDOMUtil.load(JDOMUtil.writeElement(xml)), false)
             val restored = copy.configuration as FerretRunConfiguration
+            assertEquals("""  C:\Runtime 🦦 Host\data  """, restored.workingDirectory)
             assertEquals(name, restored.runtimeName)
             assertEquals(name, (restored.clone() as FerretRunConfiguration).runtimeName)
         }

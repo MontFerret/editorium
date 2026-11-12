@@ -9,7 +9,10 @@ import javax.swing.DefaultComboBoxModel
 import javax.swing.event.PopupMenuEvent
 import javax.swing.event.PopupMenuListener
 
-internal class FerretRuntimePicker(private val connection: FerretdDaemonConnection) : Disposable {
+internal class FerretRuntimePicker(
+    private val connection: FerretdDaemonConnection,
+    private val onProviderChanged: (String?) -> Unit,
+) : Disposable {
     private data class Choice(val name: String, val text: String) {
         override fun toString() = text
     }
@@ -26,11 +29,12 @@ internal class FerretRuntimePicker(private val connection: FerretdDaemonConnecti
 
     private var displayed: FerretRuntimeCatalog? = null
     private val controls = FerretCatalogControls(connection, showReload = false) { state ->
-        if (combo.itemCount == 0 || displayed !== state.catalog) populate(state.catalog, runtimeName)
+        if (combo.itemCount == 0 || displayed !== state.catalog) populate(state.catalog, runtimeName) else notifyProvider()
     }
     val actions get() = controls.panel
 
     init {
+        combo.addActionListener { notifyProvider() }
         combo.addPopupMenuListener(object : PopupMenuListener {
             override fun popupMenuWillBecomeVisible(event: PopupMenuEvent) = controls.request()
             override fun popupMenuWillBecomeInvisible(event: PopupMenuEvent) = Unit
@@ -52,6 +56,16 @@ internal class FerretRuntimePicker(private val connection: FerretdDaemonConnecti
         combo.model = DefaultComboBoxModel(choices.toTypedArray()).apply {
             selectedItem = choices.first { it.name == name }
         }
+        notifyProvider()
+    }
+
+    private fun notifyProvider() {
+        val name = runtimeName
+        val catalog = displayed
+        val provider = if (catalog != null) {
+            catalog.runtimes.firstOrNull { it.name == name.ifEmpty { catalog.defaultRuntime } }?.provider
+        } else if (name == "local" || (name.isEmpty() && connection.configPath.isEmpty())) "native" else null
+        onProviderChanged(provider)
     }
 
     override fun dispose() = controls.dispose()

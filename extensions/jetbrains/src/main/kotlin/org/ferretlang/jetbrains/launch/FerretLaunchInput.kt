@@ -14,7 +14,7 @@ internal data class FerretLaunchInput(
 internal data class FerretResolvedLaunchInput(
     val source: Path,
     val workspaceRoot: Path,
-    val workingDirectory: Path?,
+    val workingDirectory: String?,
     val bindings: FerretParameterBindings,
 )
 

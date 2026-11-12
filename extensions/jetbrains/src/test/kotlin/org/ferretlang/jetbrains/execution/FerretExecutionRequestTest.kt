@@ -33,7 +33,7 @@ class FerretExecutionRequestTest {
         assertEquals(source.toRealPath(), request.source)
         assertEquals(project.toRealPath(), request.workspaceRoot)
         assertEquals("queries space/query ü.fql", request.relativeSourcePath)
-        assertEquals(runtime.toRealPath(), request.workingDirectory)
+        assertEquals(runtime.toRealPath().toString(), request.workingDirectory)
     }
 
     @Test
@@ -73,7 +73,7 @@ class FerretExecutionRequestTest {
         )
 
         assertEquals(project.toRealPath(), request.workspaceRoot)
-        assertEquals(runtime.toRealPath(), request.workingDirectory)
+        assertEquals(runtime.toRealPath().toString(), request.workingDirectory)
     }
 
     @Test
@@ -176,7 +176,7 @@ class FerretExecutionRequestTest {
             FerretLaunchInput(source.toString(), link.toString(), project.toString(), FerretParameterBindings.EMPTY),
         )
 
-        assertEquals(runtime.toRealPath(), request.workingDirectory)
+        assertEquals(runtime.toRealPath().toString(), request.workingDirectory)
     }
 
     @Test

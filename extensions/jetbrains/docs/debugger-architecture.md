@@ -9,6 +9,11 @@ values, selected-frame expression evaluation, and native watches. Inspection
 shares the ordered session queue, is invalidated per stop, and reports request
 failures locally while transport loss remains session-fatal. Null launch bindings
 are preserved by a parameter-specific DAP serializer.
+As of November 12, 2026, Run resolves the selected runtime through its project
+daemon generation and binds it at gRPC session creation. A Wire Run passes an
+explicit working directory to the application host. Native Run and Debug
+resolve that directory on the plugin host. Debug still requires an unconfigured
+daemon default and uses its own DAP process.
 See the [current README](../README.md#debugging) for supported
 behavior and source-snapshot limitations. The original spike text below is
 historical evidence, including its alpha.6 blockers and then-future task lists;

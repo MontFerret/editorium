@@ -23,7 +23,7 @@ internal class FerretExecutionClient(
 ) {
     fun start(input: FerretLaunchInput, sink: FerretExecutionSink): FerretExecutionHandle {
         val launch = try {
-            connection.admitLocalLaunch(input.runtimeName)
+            connection.admitRun(input.runtimeName)
         } catch (error: org.ferretlang.jetbrains.daemon.FerretdConnectionException) {
             if (connection.isProjectActive) throw error
             return FerretExecutionHandle().also {
@@ -37,24 +37,28 @@ internal class FerretExecutionClient(
     fun start(
         input: FerretLaunchInput,
         sink: FerretExecutionSink,
-        launch: FerretdDaemonConnection.LocalLaunch,
+        launch: FerretdDaemonConnection.Launch,
     ): FerretExecutionHandle {
         val handle = FerretExecutionHandle()
         val job = connection.launchRun {
             try {
+                val generation = untilCancelled(handle) { launch.generation() }
+                val runtime = untilCancelled(handle) { launch.resolveRuntime(generation) }
+                sink.system("Preparing Ferret runtime '${runtime.name}' (${runtime.provider}).")
                 val request = withContext(Dispatchers.IO) {
-                    FerretExecutionRequest.resolve(input)
+                    FerretExecutionRequest.resolve(input, runtime.provider)
                 }
                 sink.debug("Source: ${request.source}")
                 sink.debug("Workspace root: ${request.workspaceRoot}")
                 sink.debug(
                     request.workingDirectory?.let { "Working directory: $it" }
-                        ?: "Working directory: ${request.workspaceRoot} (daemon default)",
+                        ?: if (runtime.provider == "native") "Working directory: ${request.workspaceRoot} (daemon default)"
+                        else "Working directory: runtime host default",
                 )
                 if (handle.isCancellationRequested()) {
                     handle.commit(FerretExecutionHandle.CANCELLED_EXIT_CODE)
                 } else {
-                    run(request, handle, sink, launch)
+                    run(request, handle, sink, generation, runtime.name)
                 }
             } catch (error: Throwable) {
                 if (error is CancellationException || !connection.isProjectActive) handle.cancel()
@@ -81,22 +85,34 @@ internal class FerretExecutionClient(
         request: FerretExecutionRequest,
         handle: FerretExecutionHandle,
         sink: FerretExecutionSink,
-        launch: FerretdDaemonConnection.LocalLaunch,
+        generation: FerretdDaemonConnection.Generation,
+        expectedRuntime: String,
     ): Int {
         var sessionId: String? = null
         var executionId: String? = null
         var watch: FerretdExecutionWatch? = null
         var cancellationJob: Job? = null
-        val generation = untilCancelled(handle) { launch.generation() }
         return try {
             val workspaceId = untilCancelled(handle) { connection.workspace(generation, request.workspaceRoot) }
             if (handle.isCancellationRequested()) {
                 return handle.commit(FerretExecutionHandle.CANCELLED_EXIT_CODE)
             }
-            // Capture resource IDs inside the protected context: cancellation during
-            // its return must not discard a newly acquired daemon resource.
+            // The daemon can publish before gRPC delivers its reply. Drain the bounded call and
+            // capture the ID inside the protected context so Stop cannot discard a late session.
             val session = withContext(NonCancellable) {
-                generation.rpc.createSession(workspaceId, request.relativeSourcePath).also { sessionId = it.id }
+                generation.rpc.createSession(workspaceId, request.relativeSourcePath, request.runtimeName).also { sessionId = it.id }
+            }
+            if (handle.isCancellationRequested() || !connection.isProjectActive) {
+                handle.cancel()
+                return handle.commit(FerretExecutionHandle.CANCELLED_EXIT_CODE)
+            }
+            val validateRuntime = generation.info.supportsRuntimeSelection || session.runtimeName.isNotEmpty()
+            if (validateRuntime && session.runtimeName != expectedRuntime) {
+                val acknowledgment = session.runtimeName.ifEmpty { "<missing>" }
+                throw FerretdRpcException(
+                    "create-session",
+                    "Expected Ferret runtime '$expectedRuntime', but the daemon acknowledged '$acknowledgment'.",
+                )
             }
             if (
                 session.workspaceId != workspaceId ||

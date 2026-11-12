@@ -136,9 +136,10 @@ If replacement startup fails, correct the error and reload.
 The Run/Debug **Runtime** picker saves **Daemon default** as an empty selection,
 or saves an exact, case-sensitive runtime name, including explicit `local`.
 A saved name stays selected if the catalog changes or the application definition
-disappears. Run and Debug currently support the unconfigured local runtime. To launch,
-clear the **Runtime configuration file** field, apply the change, reload when
-prompted, and select **Daemon default**.
+disappears. Run can use the configured default, a named Wire application, or
+explicit `local` even when the default is Wire. If a saved runtime is missing,
+correct the definition and reload, or choose another runtime. Debug currently
+requires an empty **Runtime configuration file** and **Daemon default**.
 
 ## Language intelligence
 
@@ -176,9 +177,9 @@ To create a configuration manually, open **Run | Edit Configurations**, select
   files, while a path entered by hand may be absolute or relative to the
   project base directory.
 - **Working directory**: the root used by Ferret runtime filesystem operations.
-  It defaults to the project base directory when one exists, may be overridden
-  with an absolute or project-relative path anywhere on the local filesystem,
-  and may be left empty to use the daemon's workspace-root default.
+  New configurations leave it blank to use the selected runtime’s default.
+  Native uses the compilation workspace by default. Wire uses the remote
+  application’s own filesystem default. Changing the runtime preserves this field.
 - **Parameters (JSON object)**: named FQL bind parameter values. Keys omit the
   `@` prefix: `"limit": 10` binds `@limit` in the query. For example:
 
@@ -198,11 +199,12 @@ To create a configuration manually, open **Run | Edit Configurations**, select
   parameters, including when the Run configuration template contains values.
 
 The source file is required; the working directory is optional. At every Run,
-the plugin snapshots the configuration and resolves existing paths to their
-canonical locations. The compilation workspace is the project base directory
-when one exists, otherwise the canonical source parent. A present project base
+the plugin snapshots the configuration and resolves the local source and
+compilation workspace to their canonical locations. The compilation workspace
+is the project base directory when one exists, otherwise the canonical source
+parent. A present project base
 must be a readable directory containing the source; the plugin does not fall
-back when it is invalid. Relative configured paths require a project base.
+back when it is invalid. Relative local paths require a project base.
 
 The bundled daemon accepts explicitly selected lowercase `.fql` regular files
 inside discovery-excluded directories such as `.tmp`, `testdata`, and nested Go
@@ -213,11 +215,13 @@ and the daemon's nested-symlink restrictions are unchanged. Plugins bundled with
 `ferretd 1.0.0-alpha.8` require updating to a build containing alpha.9 or later
 to use this capability.
 
-The runtime working directory is resolved and validated independently. It may
-be outside the workspace and does not participate in source containment or
-relative source identity. Leaving it blank omits the execution option, causing
-the daemon to use the workspace root. These execution-time checks do not
-rewrite the saved configuration.
+For native execution, an explicit working directory must resolve to a readable
+local directory. It can be project-relative or absolute and may lie outside the
+workspace. Wire forwards a nonblank override exactly as entered, including
+relative paths, runtime-host path syntax, and surrounding spaces. The embedded
+application interprets that value. In both cases the source and compilation
+workspace stay on the plugin host. A remote working directory does not transfer
+workspace files or change the source’s workspace-relative identity.
 
 Run configurations use JetBrains' normal project persistence and survive IDE
 restart, project reopen, and configuration duplication. IDE rename/move
@@ -235,6 +239,8 @@ fails with a request to save it rather than using older disk contents. A source
 saved during an active run takes effect on the next invocation.
 
 Running a configuration immediately opens the normal JetBrains Run console.
+The console identifies the effective runtime and provider before session acquisition.
+The daemon acquires the binding and compiles the saved source on that runtime.
 Filesystem and daemon work continues off the UI thread. Parameter nulls,
 booleans, finite numbers, strings, arrays, and objects retain their types. The
 console shows formatted JSON results, including a literal `null`. A run with
@@ -247,23 +253,35 @@ also appear in the catalog view.
 The first Run or runtime discovery request lazily starts a dedicated execution
 daemon for that project.
 The plugin verifies the exact bundled binary version and requires API major 1
-with minor 1 or later.
+with minor 1 or later. A configured catalog or any explicit runtime name requires
+API 1.3 or newer within major 1. Run uses the catalog from the daemon it borrowed
+and checks the returned session name before starting a query. Applying a new
+configuration during preparation takes effect for new launches after Reload.
 Opening a Ferret file may start language support but does not start execution
 infrastructure. Subsequent runs reuse the execution daemon; concurrent runs
 have independent parameters, results, working directories, and cancellation.
 Different projects own separate execution daemons.
 
 **Stop**, detach, and Run-tab closure cancel only that invocation. Successful
-runs exit 0, failures exit 1, and a locally requested cancellation exits 130. A
-daemon crash fails current runs and invalidates its workspaces and runtime
-catalog. A later Run or discovery request can start a fresh daemon. Closing a project cancels its active runs and shuts down its
-execution daemon.
+runs exit 0, failures exit 1, and a locally requested cancellation exits 130.
+Session acquisition has a 30-second deadline covering runtime connection and
+compilation. If you press Stop during acquisition, the console enters its
+cancelling state immediately. It waits for the bounded reply and closes any
+returned session before releasing the Run and allowing Reload. Short control
+RPCs have five-second deadlines. Running queries have no overall time limit.
+
+Stopping a Wire Run releases its owned query, session and binding. The external
+application and Wire server stay running. A lost binding fails that Run. A later
+explicit Run can acquire a new binding. A project daemon crash fails current
+runs and invalidates its workspaces and catalog. Closing the project cancels
+its Runs and shuts down the project daemon.
 
 ## Debugging
 
 Use **Debug** on the same Ferret configuration or current local `.fql` file.
-Source, typed parameters, compilation workspace, and optional independent
-working directory follow the Run rules above. JetBrains saves the source before
+Debug requires the unconfigured daemon default. Source, typed parameters,
+compilation workspace, and the optional native working directory follow the
+local Run rules above. JetBrains saves the source before
 launch; an unsaved document is rejected. Every Debug launch starts its own
 bundled `ferretd dap` process, independently of Run, LSP, and other Debug sessions.
 
@@ -368,6 +386,13 @@ Ordinary `./gradlew test` remains offline and excludes real-daemon tests. Root
 current-host daemon, runs unit tests, and then runs `ferretdIntegrationTest` with
 `FERRETD_TEST_PATH`. Running that Gradle task directly without an executable
 `FERRETD_TEST_PATH` is an error, not a skip.
+
+For the optional live Wire check, start `go run ./examples/wire-host` in a
+MontFerret CLI checkout. Set `FERRETD_TEST_WIRE_ENDPOINT` to its printed
+loopback endpoint when running `make test jetbrains`. The test invokes the
+host’s `DEMO::IDENTITY` function, stops another hosted Run, and invokes the
+function again. The standard suite exercises offline Wire and explicit local
+selection with the pinned daemon.
 
 `make lint jetbrains` and `make package jetbrains` both invoke `verifyPlugin`
 against all four distributions in the compatibility matrix. Reports are written

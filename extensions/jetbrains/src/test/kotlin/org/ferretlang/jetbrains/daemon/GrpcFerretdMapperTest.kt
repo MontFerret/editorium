@@ -60,6 +60,12 @@ class GrpcFerretdMapperTest {
     }
 
     @Test
+    fun preservesRemoteCompilationMessageWhenThereAreNoDiagnostics() {
+        val error = statusError(Any.pack(CompilationFailure.getDefaultInstance()), message = "remote plan preparation failed")
+        assertEquals("remote plan preparation failed", GrpcFerretdMapper.error("create-session", error).message)
+    }
+
+    @Test
     fun mapsRuntimeFailuresAndRejectsContradictoryTerminalSnapshots() {
         val failure = Failure.newBuilder()
             .setCategory(FailureCategory.FAILURE_CATEGORY_RUNTIME)
@@ -162,13 +168,27 @@ class GrpcFerretdMapperTest {
                 .build(),
             "create-execution",
         )
-        assertEquals(runtime, present.options.workingDirectory)
+        assertEquals(runtime.toString(), present.options.workingDirectory)
     }
 
     @Test
-    fun rejectsBlankRelativeAndNonNormalizedSnapshotDirectories() {
-        val root = Files.createTempDirectory("ferret-mapper-root-").toRealPath()
-        val invalid = listOf("", "relative", root.resolve("child").resolve("..").toString())
+    fun roundTripsRuntimeHostOptionsInExecutionAndWatchResponses() {
+        for (directory in listOf(null, " relative/../data ", """C:\service\data""")) {
+            val expected = org.ferretlang.jetbrains.execution.FerretdExecutionOptions("application/json", directory)
+            val options = GrpcFerretdRpc.toProtocolExecutionOptions(expected)
+            assertEquals(directory != null, options.hasWorkingDirectory())
+            val value = execution(ExecutionState.EXECUTION_STATE_CREATED).setOptions(options).build()
+            assertEquals(expected, GrpcFerretdMapper.execution(value, "create-execution").options)
+            val event = org.ferretlang.jetbrains.protocol.ferretd.execution.v1.WatchExecutionResponse.newBuilder()
+                .setExecutionId(value.id).setSequence(1)
+            event.createdBuilder.execution = value
+            assertEquals(expected, GrpcFerretdMapper.event(event.build()).execution.options)
+        }
+    }
+
+    @Test
+    fun rejectsPresentBlankSnapshotDirectories() {
+        val invalid = listOf("", "  ")
         invalid.forEach { workingDirectory ->
             assertThrows(FerretdRpcException::class.java) {
                 GrpcFerretdMapper.execution(

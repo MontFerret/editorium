@@ -25,7 +25,7 @@ import org.ferretlang.jetbrains.launch.FerretLaunchInput
 internal class FerretDebugProcess(
     session: XDebugSession,
     input: FerretLaunchInput,
-    launch: FerretdDaemonConnection.LocalLaunch,
+    launch: FerretdDaemonConnection.Launch,
 ) : XDebugProcess(session), FerretDapListener {
     private val launcher = session.project.service<FerretDebugLauncher>()
     internal val dap = launcher.createSession(input, this)

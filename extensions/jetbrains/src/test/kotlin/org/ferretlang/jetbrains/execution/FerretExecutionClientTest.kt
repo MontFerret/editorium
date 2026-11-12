@@ -1,5 +1,10 @@
 package org.ferretlang.jetbrains.execution
 
+import com.intellij.execution.ExecutionException
+import org.ferretlang.jetbrains.runtime.CatalogStatus
+import org.ferretlang.jetbrains.runtime.FerretRuntimeCatalog
+import org.ferretlang.jetbrains.runtime.FerretRuntimeDescriptor
+import org.junit.Assert.assertThrows
 import org.ferretlang.jetbrains.launch.FerretLaunchInput
 
 import kotlinx.coroutines.CompletableDeferred
@@ -56,6 +61,109 @@ class FerretExecutionClientTest {
     }
 
     @Test
+    fun bindsExactSelectorsAndPreservesWireOptionsAcrossSnapshots() = runBlocking {
+        val fixture = fixture(*Array(4) { FakeFerretdRpc.Outcome.COMPLETED })
+        try {
+            fixture.configureWire()
+            fixture.connection.ensureCatalog()!!.join()
+            for ((selector, directory) in listOf("" to " ", "WireApp" to " relative/../app ", "WireApp" to """C:\service\data""", "local" to "")) {
+                val run = fixture.execute(workingDirectory = directory, runtimeName = selector)
+                assertEquals(0, run.exit.awaitResult())
+                assertEquals(directory.takeUnless(String::isBlank), fixture.rpc.requestedExecutionOptions.last().workingDirectory)
+                val target = if (selector == "local") "'local' (native)" else "'WireApp' (wire)"
+                assertTrue(run.system.contains("Preparing Ferret runtime $target."))
+            }
+            assertEquals(listOf("", "WireApp", "WireApp", "local"), fixture.rpc.requestedRuntimeNames.toList())
+            assertEquals(1, fixture.rpc.calls.count { it == "getInfo" })
+            assertEquals(1, fixture.rpc.calls.count { it == "listRuntimes" })
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun missingUnsupportedAndMisacknowledgedRuntimesCannotStartExecutions() = runBlocking {
+        val fixture = fixture()
+        try {
+            fixture.configureWire()
+            for ((name, message) in listOf("wireapp" to "unavailable", "Unknown" to "Unsupported Ferret runtime provider")) {
+                val run = fixture.execute(runtimeName = name)
+                assertEquals(1, run.exit.awaitResult())
+                assertTrue(run.stderr.single(), run.stderr.single().contains(message))
+            }
+            assertTrue(fixture.rpc.requestedRuntimeNames.isEmpty())
+            for ((selector, ack) in listOf("WireApp" to "", "" to "local", "local" to "WireApp", "" to "absent")) {
+                fixture.rpc.sessionRuntime = { ack }
+                val run = fixture.execute(runtimeName = selector)
+                assertEquals(1, run.exit.awaitResult())
+                assertTrue(run.stderr.single(), run.stderr.single().contains("acknowledged"))
+            }
+            assertEquals(listOf("WireApp", "", "local", ""), fixture.rpc.requestedRuntimeNames.toList())
+            assertEquals((1..4).map { "closeSession:session-$it" }, fixture.rpc.calls.filter { it.startsWith("closeSession:") })
+            assertTrue(fixture.rpc.calls.none { it.startsWith("createExecution:") })
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun olderDaemonSupportsOnlyTheUnconfiguredDefault() = runBlocking {
+        for ((minor, path, name) in listOf(Triple(1, false, ""), Triple(2, false, ""), Triple(1, false, "local"),
+            Triple(2, true, ""), Triple(2, false, "WireApp"))) {
+            val fixture = fixture(FakeFerretdRpc.Outcome.COMPLETED)
+            try {
+                if (path) fixture.connection.applyConfigPath(Files.createFile(fixture.root.resolve("config.json")).toString())
+                fixture.rpc.serverInfo = fixture.rpc.serverInfo.copy(apiMinor = minor)
+                val run = fixture.execute(runtimeName = name)
+                if (!path && name.isEmpty()) {
+                    assertEquals(0, run.exit.awaitResult())
+                    assertEquals(listOf(""), fixture.rpc.requestedRuntimeNames.toList())
+                } else {
+                    assertEquals(1, run.exit.awaitResult())
+                    assertTrue(run.stderr.single().contains("requires Ferret daemon API 1.3"))
+                    assertTrue(fixture.rpc.requestedRuntimeNames.isEmpty())
+                }
+                assertFalse(fixture.rpc.calls.contains("listRuntimes"))
+            } finally {
+                fixture.close()
+            }
+        }
+    }
+
+    @Test
+    fun applyDuringCatalogLookupPreservesTheAdmittedDefault(): Unit = runBlocking {
+        val fixture = fixture(FakeFerretdRpc.Outcome.COMPLETED)
+        val entered = CompletableDeferred<Unit>()
+        val proceed = CompletableDeferred<Unit>()
+        try {
+            fixture.configureWire()
+            val discover = fixture.rpc.discover
+            fixture.rpc.discover = { entered.complete(Unit); proceed.await(); discover() }
+            val ui = fixture.connection.ensureCatalog()!!
+            entered.awaitResult()
+            val admitted = fixture.execute(workingDirectory = "remote/only")
+            fixture.connection.applyConfigPath("replacement.json")
+            assertEquals(CatalogStatus.RELOAD_REQUIRED, fixture.connection.catalogState.value.status)
+            assertEquals(null, fixture.connection.catalogState.value.catalog)
+            val error = assertThrows(ExecutionException::class.java) { fixture.execute(runtimeName = "local") }
+            assertTrue(error.message.orEmpty().contains("Reload"))
+            assertFalse(error.message.orEmpty().contains("clear"))
+            assertThrows(ExecutionException::class.java) { fixture.connection.reloadRuntimes() }
+            proceed.complete(Unit)
+            ui.join()
+            assertEquals(0, admitted.exit.awaitResult())
+            assertEquals(listOf(""), fixture.rpc.requestedRuntimeNames.toList())
+            assertTrue(admitted.system.contains("Preparing Ferret runtime 'WireApp' (wire)."))
+            assertEquals(1, fixture.rpc.calls.count { it == "listRuntimes" })
+            assertEquals(CatalogStatus.RELOAD_REQUIRED, fixture.connection.catalogState.value.status)
+            assertThrows(ExecutionException::class.java) { fixture.execute() }
+        } finally {
+            proceed.complete(Unit)
+            fixture.close()
+        }
+    }
+
+    @Test
     fun ordersRpcCallsRegistersWatchEagerlyAndRendersTerminalJson() = runBlocking {
         val fixture = fixture(FakeFerretdRpc.Outcome.COMPLETED)
         try {
@@ -63,12 +171,12 @@ class FerretExecutionClientTest {
             assertEquals(0, execution.exit.awaitResult())
             assertTrue(execution.stdout.single().contains("\"id\": \"execution-1\""))
             assertEquals(
-                FerretdExecutionOptions("application/json", fixture.root.toRealPath()),
+                FerretdExecutionOptions("application/json", fixture.root.toRealPath().toString()),
                 fixture.rpc.requestedExecutionOptions.single(),
             )
             assertTrue(execution.debug.any { it == "Workspace root: ${fixture.root.toRealPath()}" })
             assertTrue(execution.debug.any { it == "Working directory: ${fixture.root.toRealPath()}" })
-            assertEquals(listOf("Ferret execution completed."), execution.system.toList())
+            assertEquals(listOf("Preparing Ferret runtime 'local' (native).", "Ferret execution completed."), execution.system.toList())
             assertEquals(listOf("output", "terminated:0"), execution.events.toList())
             assertEquals(
                 listOf(
@@ -208,12 +316,21 @@ class FerretExecutionClientTest {
     fun stopBeforeExecutionIdAbortsSetupAndClosesTheSession() = runBlocking {
         val fixture = fixture(FakeFerretdRpc.Outcome.COMPLETED)
         val gate = CompletableDeferred<Unit>()
+        val cleanup = CompletableDeferred<Unit>()
+        fixture.configureWire()
+        fixture.rpc.closeSessionGate = cleanup
         fixture.rpc.createSessionGate = gate
         try {
             val execution = fixture.execute()
             fixture.rpc.createSessionEntered.awaitResult()
             assertTrue(execution.handle.cancel())
+            assertFalse(execution.exit.isCompleted)
+            assertThrows(ExecutionException::class.java) { fixture.connection.reloadRuntimes() }
             gate.complete(Unit)
+            fixture.rpc.closeSessionEntered.awaitResult()
+            assertThrows(ExecutionException::class.java) { fixture.connection.reloadRuntimes() }
+            assertFalse(execution.exit.isCompleted)
+            cleanup.complete(Unit)
 
             assertEquals(130, execution.exit.awaitResult())
             assertTrue(fixture.rpc.calls.none { it.startsWith("createExecution:") })
@@ -221,6 +338,7 @@ class FerretExecutionClientTest {
             assertTrue(fixture.rpc.calls.any { it == "closeSession:session-1" })
         } finally {
             gate.complete(Unit)
+            cleanup.complete(Unit)
             fixture.close()
         }
     }
@@ -319,7 +437,7 @@ class FerretExecutionClientTest {
             assertEquals(0, first.exit.awaitResult())
             assertEquals(0, second.exit.awaitResult())
             assertEquals(
-                setOf(firstRoot.toRealPath(), secondRoot.toRealPath()),
+                setOf(firstRoot.toRealPath().toString(), secondRoot.toRealPath().toString()),
                 fixture.rpc.requestedExecutionOptions.mapNotNull { it.workingDirectory }.toSet(),
             )
         } finally {
@@ -367,6 +485,28 @@ class FerretExecutionClientTest {
             assertEquals(1, fixture.rpc.calls.count { it == "openWorkspace" })
         } finally {
             gate.complete(Unit)
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun projectDisposalDuringAcquisitionReleasesLaunchAfterSettlement() = runBlocking {
+        val fixture = fixture()
+        val reply = CompletableDeferred<Unit>()
+        fixture.configureWire()
+        fixture.rpc.createSessionGate = reply
+        try {
+            val run = fixture.execute()
+            fixture.rpc.createSessionEntered.awaitResult()
+            fixture.scope.cancel()
+            assertTrue(fixture.connection.catalogState.value.busy)
+            reply.complete(Unit)
+            assertEquals(130, run.exit.awaitResult())
+            assertFalse(fixture.connection.catalogState.value.busy)
+            assertTrue(fixture.rpc.calls.none { it.startsWith("createExecution:") })
+            withTimeout(5_000) { fixture.scope.coroutineContext[kotlinx.coroutines.Job]!!.join() }
+        } finally {
+            reply.complete(Unit)
             fixture.close()
         }
     }
@@ -493,9 +633,23 @@ class FerretExecutionClientTest {
         val rpc: FakeFerretdRpc,
         val connection: FerretdDaemonConnection,
     ) {
+        fun configureWire() {
+            connection.applyConfigPath(Files.createFile(root.resolve("application.json")).toString())
+            rpc.serverInfo = rpc.serverInfo.copy(apiMinor = 4)
+            rpc.discover = {
+                FerretRuntimeCatalog("WireApp", listOf(
+                    FerretRuntimeDescriptor("local", "Built-in", "native"),
+                    FerretRuntimeDescriptor("WireApp", "Application", "wire"),
+                    FerretRuntimeDescriptor("Unknown", "Other provider", "future"),
+                ))
+            }
+            rpc.sessionRuntime = { it.ifEmpty { "WireApp" } }
+        }
+
         fun execute(
             relativePath: String = "main.fql",
             workingDirectory: String = root.toString(),
+            runtimeName: String = "",
         ): RecordingSink {
             val source = Files.writeString(root.resolve(relativePath), "RETURN 1")
             val sink = RecordingSink()
@@ -505,6 +659,7 @@ class FerretExecutionClientTest {
                     workingDirectory,
                     null,
                     FerretParameterBindings.EMPTY,
+                    runtimeName,
                 ),
                 sink,
             )

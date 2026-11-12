@@ -6,6 +6,8 @@ import com.intellij.openapi.components.Service
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.ferretlang.jetbrains.runtime.CatalogStatus
+import org.ferretlang.jetbrains.runtime.FerretRuntimeCatalog
+import org.ferretlang.jetbrains.runtime.FerretRuntimeDescriptor
 import org.ferretlang.jetbrains.runtime.FerretCatalogState
 import org.ferretlang.jetbrains.runtime.FerretRuntimeConfigFile
 import org.ferretlang.jetbrains.runtime.FerretRuntimeSettings
@@ -104,7 +106,11 @@ internal class FerretdDaemonConnection private constructor(
         publish(if (pendingReload) CatalogStatus.RELOAD_REQUIRED else CatalogStatus.UNLOADED)
     }
 
-    fun admitLocalLaunch(runtimeName: String): LocalLaunch = synchronized(lock) {
+    fun admitRun(runtimeName: String): Launch = admit(runtimeName, debug = false)
+
+    fun admitDebug(runtimeName: String): Launch = admit(runtimeName, debug = true)
+
+    private fun admit(runtimeName: String, debug: Boolean): Launch = synchronized(lock) {
         checkOpen()
         if (pendingReload) {
             val action = when (state.value.status) {
@@ -112,10 +118,10 @@ internal class FerretdDaemonConnection private constructor(
                 CatalogStatus.DISCOVERY_FAILED -> "Retry discovery for the saved runtime configuration."
                 else -> "Reload runtimes for the saved runtime configuration."
             }
-            throw ExecutionException("$action $LOCAL_LIMITATION")
+            throw ExecutionException(action)
         }
-        if (saved.path.isNotEmpty() || runtimeName.isNotEmpty()) throw ExecutionException(LOCAL_LIMITATION)
-        val launch = LocalLaunch(this, adoptSaved())
+        if (debug && (saved.path.isNotEmpty() || runtimeName.isNotEmpty())) throw ExecutionException(DEBUG_LIMITATION)
+        val launch = Launch(this, adoptSaved(), runtimeName)
         launches++
         state.value = state.value.copy(busy = true)
         launch
@@ -131,12 +137,31 @@ internal class FerretdDaemonConnection private constructor(
 
     internal class Configuration(val path: String)
 
-    internal class LocalLaunch internal constructor(
+    internal class Launch internal constructor(
         private val owner: FerretdDaemonConnection,
         private val config: Configuration,
+        val runtimeName: String,
     ) : AutoCloseable {
         private val closed = AtomicBoolean()
         suspend fun generation(): Generation = owner.generation(config)
+        suspend fun resolveRuntime(generation: Generation): FerretRuntimeDescriptor {
+            if (!generation.info.supportsRuntimeSelection) {
+                if (config.path.isNotEmpty() || runtimeName.isNotEmpty()) {
+                    throw ExecutionException(
+                        "Runtime selection requires Ferret daemon API 1.3 or newer in major 1. " +
+                            "The daemon reported API ${generation.info.apiMajor}.${generation.info.apiMinor}.",
+                    )
+                }
+                return FerretRuntimeDescriptor("local", "Built-in Ferret", "native")
+            }
+            val catalog = owner.catalog(generation)
+            val name = runtimeName.ifEmpty { catalog.defaultRuntime }
+            return catalog.runtimes.firstOrNull { it.name == name }
+                ?: throw ExecutionException(
+                    "Ferret runtime '$name' is unavailable. Choose another runtime or correct its definition and reload runtimes.",
+                )
+        }
+
         override fun close() {
             if (closed.compareAndSet(false, true)) owner.releaseLaunch()
         }
@@ -202,7 +227,7 @@ internal class FerretdDaemonConnection private constructor(
                 if (replace) retireGeneration(config)
                 val generation = source ?: generation(config)
                 source = generation
-                val catalog = generation.rpc.listRuntimes()
+                val catalog = catalog(generation)
                 synchronized(lock) {
                     if (!ownsDiscovery(config, request)) return@launch
                     if (!isLive(generation)) throw FerretdConnectionException("The Ferret daemon exited during runtime discovery.")
@@ -273,6 +298,18 @@ internal class FerretdDaemonConnection private constructor(
             }
         }
         return pending.await().also { ensureCurrent(it) }
+    }
+
+    // Applying settings or closing a picker only detaches its observer from this generation's request.
+    private suspend fun catalog(generation: Generation): FerretRuntimeCatalog {
+        ensureCurrent(generation)
+        val pending = synchronized(lock) {
+            checkOpen()
+            generation.catalog?.takeUnless { it.isCancelled } ?: coroutineScope.async(Dispatchers.IO, start = CoroutineStart.LAZY) {
+                generation.rpc.listRuntimes()
+            }.also { generation.catalog = it }
+        }
+        return pending.await().also { ensureCurrent(generation) }
     }
 
     internal suspend fun workspace(generation: Generation, root: Path): String {
@@ -369,6 +406,7 @@ internal class FerretdDaemonConnection private constructor(
             return
         }
         try {
+            synchronized(lock) { generation.catalog?.cancel() }
             generation.workspaceMutex.withLock {
                 generation.workspaces.values.forEach { it.cancel() }
                 generation.workspaces.clear()
@@ -427,6 +465,8 @@ internal class FerretdDaemonConnection private constructor(
         val number: Long,
         daemon: StartedFerretdDaemon,
     ) {
+        val info = daemon.info
+        var catalog: Deferred<FerretRuntimeCatalog>? = null
         val process: Process = daemon.process
         val rpc: FerretdRpc = daemon.rpc
         val lost: CompletableDeferred<Throwable> = daemon.lost
@@ -441,7 +481,7 @@ internal class FerretdDaemonConnection private constructor(
     }
 
     companion object {
-        const val LOCAL_LIMITATION = "To run or debug, clear the Runtime configuration file field and select Daemon default."
+        const val DEBUG_LIMITATION = "To debug, clear the Runtime configuration file field and select Daemon default."
         private val LOG = Logger.getInstance(FerretdDaemonConnection::class.java)
         private const val SHUTDOWN_TIMEOUT_SECONDS = 5L
 

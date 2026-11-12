@@ -91,7 +91,7 @@ internal class FerretdDaemonLauncher private constructor(
                 )
             }
             LOG.info("Project Ferret execution daemon started (${installation.version})")
-            return StartedFerretdDaemon(process, rpc, lost, stopping, stderr, stdout, processWaiter)
+            return StartedFerretdDaemon(process, rpc, info, lost, stopping, stderr, stdout, processWaiter)
         } catch (error: Throwable) {
             withContext(NonCancellable) {
                 stopping.set(true)
