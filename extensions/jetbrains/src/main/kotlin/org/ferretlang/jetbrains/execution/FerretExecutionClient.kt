@@ -22,6 +22,23 @@ internal class FerretExecutionClient(
     private val connection: FerretdDaemonConnection,
 ) {
     fun start(input: FerretLaunchInput, sink: FerretExecutionSink): FerretExecutionHandle {
+        val launch = try {
+            connection.admitLocalLaunch(input.runtimeName)
+        } catch (error: org.ferretlang.jetbrains.daemon.FerretdConnectionException) {
+            if (connection.isProjectActive) throw error
+            return FerretExecutionHandle().also {
+                it.cancel()
+                sink.terminate(it.commit(FerretExecutionHandle.CANCELLED_EXIT_CODE))
+            }
+        }
+        return start(input, sink, launch)
+    }
+
+    fun start(
+        input: FerretLaunchInput,
+        sink: FerretExecutionSink,
+        launch: FerretdDaemonConnection.LocalLaunch,
+    ): FerretExecutionHandle {
         val handle = FerretExecutionHandle()
         val job = connection.launchRun {
             try {
@@ -37,7 +54,7 @@ internal class FerretExecutionClient(
                 if (handle.isCancellationRequested()) {
                     handle.commit(FerretExecutionHandle.CANCELLED_EXIT_CODE)
                 } else {
-                    run(request, handle, sink)
+                    run(request, handle, sink, launch)
                 }
             } catch (error: Throwable) {
                 if (error is CancellationException || !connection.isProjectActive) handle.cancel()
@@ -48,6 +65,7 @@ internal class FerretExecutionClient(
             }
         }
         job.invokeOnCompletion { error ->
+            launch.close()
             if (error is CancellationException || !connection.isProjectActive) handle.cancel()
             val code = handle.commit(1)
             when (code) {
@@ -63,12 +81,13 @@ internal class FerretExecutionClient(
         request: FerretExecutionRequest,
         handle: FerretExecutionHandle,
         sink: FerretExecutionSink,
+        launch: FerretdDaemonConnection.LocalLaunch,
     ): Int {
         var sessionId: String? = null
         var executionId: String? = null
         var watch: FerretdExecutionWatch? = null
         var cancellationJob: Job? = null
-        val generation = untilCancelled(handle) { connection.generation() }
+        val generation = untilCancelled(handle) { launch.generation() }
         return try {
             val workspaceId = untilCancelled(handle) { connection.workspace(generation, request.workspaceRoot) }
             if (handle.isCancellationRequested()) {

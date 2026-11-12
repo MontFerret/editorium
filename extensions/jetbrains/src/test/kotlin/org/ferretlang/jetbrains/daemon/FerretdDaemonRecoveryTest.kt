@@ -72,7 +72,7 @@ class FerretdDaemonRecoveryTest {
         val starts = AtomicInteger()
         val launcher = FerretdDaemonLauncher.testing(scope,
             { FerretdInstallation(Path.of("/installed/ferretd"), version) },
-            { _, _ -> processes[starts.getAndIncrement()] },
+            { _, _, _ -> processes[starts.getAndIncrement()] },
             { _, _ -> rpcs[starts.get() - 1] },
         )
         val connection = FerretdDaemonConnection.testing(scope, launcher)
@@ -145,7 +145,7 @@ class FerretdDaemonRecoveryTest {
         val starts = AtomicInteger()
         val launcher = FerretdDaemonLauncher.testing(scope,
             { FerretdInstallation(Path.of("/installed/ferretd"), version) },
-            { _, _ -> processes[starts.getAndIncrement()] },
+            { _, _, _ -> processes[starts.getAndIncrement()] },
             { _, _ -> rpcs[starts.get() - 1] },
         )
         val connection = FerretdDaemonConnection.testing(scope, launcher)
@@ -196,7 +196,7 @@ class FerretdDaemonRecoveryTest {
         val rpc = FakeFerretdRpc(version, root, emptyList(), onShutdown = process::destroy)
         val launcher = FerretdDaemonLauncher.testing(scope,
             { FerretdInstallation(Path.of("/installed/ferretd"), version) },
-            { _, _ -> process },
+            { _, _, _ -> process },
             { _, _ -> rpc },
         )
         return Fixture(scope, root, rpc, FerretdDaemonConnection.testing(scope, launcher))

@@ -10,29 +10,49 @@ import com.intellij.xdebugger.XDebugSession
 import com.intellij.xdebugger.breakpoints.XBreakpointHandler
 import com.intellij.xdebugger.evaluation.XDebuggerEditorsProvider
 import com.intellij.xdebugger.frame.XSuspendContext
+import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.eclipse.lsp4j.debug.Breakpoint
 import org.ferretlang.jetbrains.launch.FerretLaunchInput
 
-internal class FerretDebugProcess(session: XDebugSession, input: FerretLaunchInput) : XDebugProcess(session), FerretDapListener {
+internal class FerretDebugProcess(
+    session: XDebugSession,
+    input: FerretLaunchInput,
+    launch: FerretdDaemonConnection.LocalLaunch,
+) : XDebugProcess(session), FerretDapListener {
     private val launcher = session.project.service<FerretDebugLauncher>()
-    private val scope = launcher.newLaunchScope()
-    internal val dap = launcher.session(input, this)
+    internal val dap = launcher.createSession(input, this)
     private val handler = FerretDebugProcessHandler(dap::stop)
     private val console = TextConsoleBuilderFactory.getInstance().createBuilder(session.project).console.apply {
         attachToProcess(handler)
     }
     private val breakpoints = FerretBreakpointHandler(session, dap)
     private val editors = FerretDebuggerEditorsProvider()
+    private val scope = launcher.newLaunchScope()
+
+    init {
+        scope.coroutineContext.job.invokeOnCompletion {
+            try {
+                // Startup can abort before XDebugger initializes the process or DAP reports an exit code.
+                handler.complete(130)
+            } finally {
+                launch.close()
+            }
+        }
+    }
+
+    fun abortStartup() = scope.cancel()
 
     override fun sessionInitialized() {
-        // Enter the ownership/finally boundary even if project cancellation already won.
-        scope.launch(start = CoroutineStart.UNDISPATCHED) { dap.run() }
+        if (!scope.isActive) return
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { dap.run() }.invokeOnCompletion { scope.cancel() }
     }
 
     override fun doGetProcessHandler(): ProcessHandler = handler
@@ -97,7 +117,6 @@ internal class FerretDebugProcess(session: XDebugSession, input: FerretLaunchInp
 
     override suspend fun terminated(exitCode: Int) = withContext(Dispatchers.EDT) {
         handler.complete(exitCode)
-        scope.cancel()
     }
 
     private fun control(command: FerretDapCommand, context: XSuspendContext?) {

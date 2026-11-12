@@ -4,6 +4,7 @@ import com.intellij.execution.RunManager
 import com.intellij.execution.configurations.RuntimeConfigurationError
 import com.intellij.execution.impl.RunManagerImpl
 import com.intellij.execution.impl.RunnerAndConfigurationSettingsImpl
+import com.intellij.openapi.util.JDOMUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.jdom.Element
 import org.junit.Assert
@@ -27,6 +28,7 @@ class FerretRunConfigurationPersistenceTest : BasePlatformTestCase() {
         restoredSettings.readExternal(serialized, false)
         val restored = restoredSettings.configuration as FerretRunConfiguration
 
+        assertEquals("", restored.runtimeName)
         assertEquals("Scrape API", restoredSettings.name)
         assertEquals(original.sourcePath, restored.sourcePath)
         assertEquals(original.workingDirectory, restored.workingDirectory)
@@ -36,6 +38,31 @@ class FerretRunConfigurationPersistenceTest : BasePlatformTestCase() {
             setOf("sourcePath", "workingDirectory", "parametersJson"),
             serialized.getChildren("option").mapNotNull { it.getAttributeValue("name") }.toSet(),
         )
+    }
+
+    fun testRuntimeSelectionRoundTripsThroughEditorSerializationAndDuplication() {
+        val manager = RunManager.getInstance(project) as RunManagerImpl
+        val factory = FerretRunConfigurationType.getInstance().configurationFactories.single()
+        for (name in listOf("", "local", "MyApplication", "removed", "应用 🦦 <&\"", "🦦")) {
+            val settings = manager.createConfiguration("runtime", factory) as RunnerAndConfigurationSettingsImpl
+            val config = settings.configuration as FerretRunConfiguration
+            config.runtimeName = name
+            val editor = FerretRunConfigurationEditor(project)
+            try {
+                editor.resetFrom(config)
+                editor.applyTo(config)
+                assertEquals(name, config.launchInput().runtimeName)
+            } finally {
+                com.intellij.openapi.util.Disposer.dispose(editor)
+            }
+            val xml = Element("configuration")
+            settings.writeExternal(xml)
+            val copy = RunnerAndConfigurationSettingsImpl(manager)
+            copy.readExternal(JDOMUtil.load(JDOMUtil.writeElement(xml)), false)
+            val restored = copy.configuration as FerretRunConfiguration
+            assertEquals(name, restored.runtimeName)
+            assertEquals(name, (restored.clone() as FerretRunConfiguration).runtimeName)
+        }
     }
 
     fun testConfigurationDuplicationPreservesNameAndOptions() {

@@ -1,5 +1,10 @@
 package org.ferretlang.jetbrains.daemon
 
+import org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesResponse
+import org.jdom.Verifier
+import org.ferretlang.jetbrains.runtime.FerretRuntimeCatalog
+import org.ferretlang.jetbrains.runtime.FerretRuntimeDescriptor
+
 import io.grpc.Metadata
 import io.grpc.StatusRuntimeException
 import org.ferretlang.jetbrains.execution.FerretdDiagnostic
@@ -35,6 +40,25 @@ import java.nio.file.Path
 
 internal object GrpcFerretdMapper {
     private val statusDetailsKey = Metadata.Key.of("grpc-status-details-bin", Metadata.BINARY_BYTE_MARSHALLER)
+
+    fun runtimeCatalog(response: ListRuntimesResponse): FerretRuntimeCatalog {
+        val names = mutableSetOf<String>()
+        val entries = response.runtimesList.map {
+            if (!it.name.codePoints().allMatch(Verifier::isXMLCharacter)) {
+                protocol("list-runtimes", "A runtime name contains a character that cannot be saved in project XML. Rename that runtime.")
+            }
+            if (it.name.isBlank() || it.name != it.name.trim() || !names.add(it.name) ||
+                it.label.isEmpty() || it.provider.isEmpty()
+            ) {
+                protocol("list-runtimes", "The Ferret daemon returned an incomplete or duplicate runtime descriptor.")
+            }
+            FerretRuntimeDescriptor(it.name, it.label, it.provider)
+        }
+        if (response.defaultRuntime !in names) {
+            protocol("list-runtimes", "The Ferret daemon's default runtime is missing from its catalog.")
+        }
+        return FerretRuntimeCatalog(response.defaultRuntime, java.util.List.copyOf(entries))
+    }
 
     fun serverInfo(response: GetInfoResponse): FerretdServerInfo {
         if (!response.hasServerInfo() || !response.serverInfo.hasApiVersion()) {
@@ -211,6 +235,9 @@ internal object GrpcFerretdMapper {
                         cause = parseError,
                     )
                 }
+            }
+            if (operation == "list-runtimes" && error.status.code == io.grpc.Status.Code.UNIMPLEMENTED) {
+                return FerretdRpcException(operation, "This Ferret daemon does not support runtime discovery.", cause = error)
             }
             val message = when (error.status.code) {
                 io.grpc.Status.Code.UNAVAILABLE -> "The Ferret daemon is unavailable. Run again to reconnect."

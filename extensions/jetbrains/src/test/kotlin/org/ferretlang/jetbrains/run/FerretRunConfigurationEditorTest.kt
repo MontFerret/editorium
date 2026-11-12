@@ -21,7 +21,7 @@ class FerretRunConfigurationEditorTest : BasePlatformTestCase() {
             assertTrue(field.width > original.width)
             assertTrue(field.height > original.height)
         } finally {
-            editor.dispose()
+            com.intellij.openapi.util.Disposer.dispose(editor)
         }
     }
 
@@ -42,7 +42,7 @@ class FerretRunConfigurationEditorTest : BasePlatformTestCase() {
             assertEquals(FerretParameterValue.NumberValue(10.0), configuration.parameters.entries["limit"])
             assertEquals(parametersField.text, configuration.parametersJson)
         } finally {
-            editor.dispose()
+            com.intellij.openapi.util.Disposer.dispose(editor)
         }
     }
 
@@ -72,7 +72,7 @@ class FerretRunConfigurationEditorTest : BasePlatformTestCase() {
                 configuration.parameters.entries["value"],
             )
         } finally {
-            editor.dispose()
+            com.intellij.openapi.util.Disposer.dispose(editor)
         }
     }
 

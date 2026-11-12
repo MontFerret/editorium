@@ -88,6 +88,58 @@ descriptor constructs the `ferretd lsp` command line, and the JetBrains LSP
 subsystem owns that process and protocol lifecycle. Run configurations use a
 separate project service; the LSP process is never reused for execution.
 
+## Project runtimes
+
+Open **Settings → Languages & Frameworks → Ferret** to choose a **Runtime
+configuration file**. The project saves the entered path. Relative paths use
+the project base directory. A project without a base directory requires an
+absolute path. An empty setting uses the daemon's built-in configuration.
+
+This development file defines an application on loopback.
+
+```json
+{
+  "defaultRuntime": "local",
+  "runtimes": [
+    {
+      "name": "application",
+      "label": "Embedded application",
+      "provider": "wire",
+      "endpoint": "tcp://127.0.0.1:9000",
+      "insecure": true,
+      "connectTimeout": "5s"
+    }
+  ]
+}
+```
+
+The daemon defines `local` implicitly. Leave it out of the runtimes array.
+This loopback example explicitly opts into a plaintext Wire connection through
+`insecure: true`.
+
+Expand **Runtime catalog** or open the **Runtime** picker in a Ferret Run/Debug
+configuration to load the applied settings. Each entry shows the exact name,
+label and provider. Discovery also identifies the configured default. These are
+configuration metadata. An offline application can appear in the catalog.
+
+**Apply** saves the path. Before any launch or discovery has adopted a
+configuration, first use loads the latest saved path. Once a launch or discovery
+has used a configuration, changing or clearing its path requires **Reload runtimes**,
+even after the session ends or daemon startup fails. Edits to the file at the same path also
+require **Reload runtimes**. Reload starts a fresh project execution daemon
+and reads its catalog. Finish or stop active Run and Debug sessions and wait
+for cleanup before reloading. Pending changes block new launches. If the
+replacement started but its catalog request failed, **Retry discovery** reads
+that same daemon. If the replacement exits, use **Reload runtimes** to start another.
+If replacement startup fails, correct the error and reload.
+
+The Run/Debug **Runtime** picker saves **Daemon default** as an empty selection,
+or saves an exact, case-sensitive runtime name, including explicit `local`.
+A saved name stays selected if the catalog changes or the application definition
+disappears. Run and Debug currently support the unconfigured local runtime. To launch,
+clear the **Runtime configuration file** field, apply the change, reload when
+prompted, and select **Daemon default**.
+
 ## Language intelligence
 
 Ferret language intelligence is implemented by `ferretd` and exposed to the
@@ -119,6 +171,7 @@ configuration in the selector continues to run its configured source.
 To create a configuration manually, open **Run | Edit Configurations**, select
 **Add New Configuration**, and choose **Ferret**. Each configuration contains:
 
+- **Runtime** follows the daemon default or saves an exact catalog name.
 - **Source file**: the `.fql` file to execute. The chooser filters for Ferret
   files, while a path entered by hand may be absolute or relative to the
   project base directory.
@@ -188,9 +241,11 @@ console shows formatted JSON results, including a literal `null`. A run with
 absent or zero-byte output completes without a result line. A blank content
 type displays the returned UTF-8 text. Failed runs show their diagnostics and
 label any retained nonempty content **Partial output**. Results arrive when the query
-finishes. Startup details and transport diagnostics stay in the IDE log.
+finishes. The IDE log records process and transport details. Runtime configuration failures
+also appear in the catalog view.
 
-The first Run lazily starts a dedicated execution daemon for that project.
+The first Run or runtime discovery request lazily starts a dedicated execution
+daemon for that project.
 The plugin verifies the exact bundled binary version and requires API major 1
 with minor 1 or later.
 Opening a Ferret file may start language support but does not start execution
@@ -200,8 +255,8 @@ Different projects own separate execution daemons.
 
 **Stop**, detach, and Run-tab closure cancel only that invocation. Successful
 runs exit 0, failures exit 1, and a locally requested cancellation exits 130. A
-daemon crash fails current runs and clears its workspace cache; only a later Run
-starts a new daemon. Closing a project cancels its active runs and shuts down its
+daemon crash fails current runs and invalidates its workspaces and runtime
+catalog. A later Run or discovery request can start a fresh daemon. Closing a project cancels its active runs and shuts down its
 execution daemon.
 
 ## Debugging

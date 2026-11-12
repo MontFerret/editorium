@@ -33,7 +33,7 @@ class FerretdDaemonConnectionTest {
         val launcher = FerretdDaemonLauncher.testing(
             scope,
             { FerretdInstallation(Path.of("/installed/ferretd"), version) },
-            { _, token ->
+            { _, token, _ ->
                 starts.incrementAndGet()
                 startupTokens += token
                 process
@@ -81,7 +81,7 @@ class FerretdDaemonConnectionTest {
         val launcher = FerretdDaemonLauncher.testing(
             scope,
             { FerretdInstallation(Path.of("/installed/ferretd"), version) },
-            { _, _ -> daemons.first().first },
+            { _, _, _ -> daemons.first().first },
             { _, _ -> daemons.removeFirst().second.also(rpcs::add) },
         )
         val connection = FerretdDaemonConnection.testing(scope, launcher)
@@ -119,7 +119,7 @@ class FerretdDaemonConnectionTest {
         val launcher = FerretdDaemonLauncher.testing(
             scope,
             { FerretdInstallation(Path.of("/installed/ferretd"), version) },
-            { _, _ -> process },
+            { _, _, _ -> process },
             { _, _ -> rpc },
         )
         val connection = FerretdDaemonConnection.testing(scope, launcher)

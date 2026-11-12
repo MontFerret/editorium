@@ -10,6 +10,8 @@
     <depends>com.intellij.modules.xdebugger</depends>
 
     <extensions defaultExtensionNs="com.intellij">
+        <projectConfigurable parentId="language" id="org.ferretlang.jetbrains.runtime" displayName="Ferret"
+            instance="org.ferretlang.jetbrains.runtime.FerretRuntimeConfigurable" />
         <programRunner implementation="org.ferretlang.jetbrains.debugger.FerretDebugRunner" />
         <xdebugger.breakpointType implementation="org.ferretlang.jetbrains.debugger.FerretBreakpointType" />
         <fileType

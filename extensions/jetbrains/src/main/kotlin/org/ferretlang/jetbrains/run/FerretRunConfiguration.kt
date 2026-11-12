@@ -11,10 +11,12 @@ import com.intellij.openapi.options.SettingsEditor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.util.io.FileUtil
+import com.intellij.openapi.util.JDOMExternalizerUtil
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFileSystemItem
 import com.intellij.refactoring.listeners.RefactoringElementListener
 import org.ferretlang.jetbrains.launch.FerretLaunchInput
+import org.jdom.Element
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
 
@@ -31,6 +33,20 @@ class FerretRunConfiguration(
         set(value) {
             options.sourcePath = value
         }
+
+    var runtimeName: String
+        get() = options.runtimeName.orEmpty()
+        set(value) {
+            options.runtimeName = value
+        }
+
+    override fun writeExternal(element: Element) {
+        super.writeExternal(element)
+        // XMLB filters surrogate pairs from string options. JDOM attributes preserve the full code point.
+        if (runtimeName.any(Char::isHighSurrogate)) {
+            JDOMExternalizerUtil.readOption(element, "runtimeName")?.setAttribute("value", runtimeName)
+        }
+    }
 
     var workingDirectory: String
         get() = options.workingDirectory.orEmpty()
@@ -119,6 +135,7 @@ class FerretRunConfiguration(
         workingDirectory = workingDirectory,
         projectBasePath = project.basePath,
         bindings = parameters,
+        runtimeName = runtimeName,
     )
 
     internal fun resolvedSourcePathOrNull(): Path? = resolvePathOrNull(sourcePath)

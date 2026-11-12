@@ -1,5 +1,7 @@
 package org.ferretlang.jetbrains.execution
 
+import org.ferretlang.jetbrains.runtime.FerretRuntimeCatalog
+import org.ferretlang.jetbrains.runtime.FerretRuntimeDescriptor
 import com.google.protobuf.Struct
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
@@ -38,6 +40,8 @@ internal class FakeFerretdRpc(
     var getInfoFailure: Throwable? = null
     var createSessionFailure: FerretdRpcException? = null
     var closeExecutionFailure: Throwable? = null
+    val closeSessionEntered = CompletableDeferred<Unit>()
+    var closeSessionGate: CompletableDeferred<Unit>? = null
     var closeSessionFailure: Throwable? = null
     var terminalSnapshot: (FerretdExecutionSnapshot) -> FerretdExecutionSnapshot = { it }
     var executionOptionsOverride: FerretdExecutionOptions? = null
@@ -53,6 +57,15 @@ internal class FakeFerretdRpc(
         getInfoGate?.await()
         getInfoFailure?.let { throw it }
         return serverInfo
+    }
+
+    var discover: suspend () -> FerretRuntimeCatalog = {
+        FerretRuntimeCatalog("local", listOf(FerretRuntimeDescriptor("local", "Built-in Ferret", "native")))
+    }
+
+    override suspend fun listRuntimes(): FerretRuntimeCatalog {
+        calls += "listRuntimes"
+        return discover()
     }
 
     override suspend fun shutdown() {
@@ -166,6 +179,8 @@ internal class FakeFerretdRpc(
 
     override suspend fun closeSession(sessionId: String) {
         calls += "closeSession:$sessionId"
+        closeSessionEntered.complete(Unit)
+        closeSessionGate?.await()
         closeSessionFailure?.let { throw it }
     }
 

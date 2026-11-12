@@ -1,10 +1,13 @@
 package org.ferretlang.jetbrains.execution
 
+import org.ferretlang.jetbrains.runtime.FerretRuntimeCatalog
 import com.google.protobuf.Struct
 import java.nio.file.Path
 
 internal interface FerretdRpc {
     suspend fun getInfo(): FerretdServerInfo
+
+    suspend fun listRuntimes(): FerretRuntimeCatalog
 
     suspend fun shutdown()
 

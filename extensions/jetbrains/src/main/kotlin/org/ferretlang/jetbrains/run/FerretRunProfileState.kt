@@ -22,13 +22,20 @@ class FerretRunProfileState internal constructor(
         executor: Executor,
         runner: ProgramRunner<*>,
     ): ExecutionResult {
-        FerretLaunchInputResolver.checkSavedSource(input)
-        val process = FerretExecutionProcessHandler()
-        val console = TextConsoleBuilderFactory.getInstance().createBuilder(project).console
-        console.attachToProcess(process)
-        process.startNotify()
-        val handle = FerretExecutionClient(project.service<FerretdDaemonConnection>()).start(input, process)
-        process.attach(handle)
-        return DefaultExecutionResult(console, process)
+        val connection = project.service<FerretdDaemonConnection>()
+        val launch = connection.admitLocalLaunch(input.runtimeName)
+        try {
+            FerretLaunchInputResolver.checkSavedSource(input)
+            val process = FerretExecutionProcessHandler()
+            val console = TextConsoleBuilderFactory.getInstance().createBuilder(project).console
+            console.attachToProcess(process)
+            process.startNotify()
+            val handle = FerretExecutionClient(connection).start(input, process, launch)
+            process.attach(handle)
+            return DefaultExecutionResult(console, process)
+        } catch (error: Throwable) {
+            launch.close()
+            throw error
+        }
     }
 }

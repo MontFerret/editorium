@@ -32,7 +32,7 @@ class FerretdDaemonLauncherTest {
         lateinit var process: FakeDaemonProcess
         val launcher = FerretdDaemonLauncher.testing(scope,
             { FerretdInstallation(Path.of("/installed/ferretd"), version) },
-            { _, token ->
+            { _, token, _ ->
                 credential = token
                 FakeDaemonProcess.ready(token).also { process = it }
             },
@@ -61,7 +61,7 @@ class FerretdDaemonLauncherTest {
         val launcher = FerretdDaemonLauncher.testing(
             scope,
             { FerretdInstallation(Path.of("/installed/ferretd"), version) },
-            { installation, token ->
+            { installation, token, _ ->
                 assertEquals(Path.of("/installed/ferretd"), installation.executable)
                 starterTokens += token
                 process
@@ -96,6 +96,8 @@ class FerretdDaemonLauncherTest {
     fun buildsTheAuthenticatedEphemeralLoopbackCommand() {
         val installation = FerretdInstallation(Path.of("/installed/ferretd"), "1.0.0-alpha.6")
 
+        val file = Path.of("A B", "runtimes.json").toAbsolutePath()
+        assertEquals(listOf("--runtime-config", file.toString()), FerretdDaemonLauncher.command(installation, file).takeLast(2))
         assertEquals(
             listOf(
                 installation.executable.toString(),
@@ -126,7 +128,7 @@ class FerretdDaemonLauncherTest {
             val launcher = FerretdDaemonLauncher.testing(
                 scope,
                 { FerretdInstallation(Path.of("/installed/ferretd"), version) },
-                { _, _ -> process },
+                { _, _, _ -> process },
                 { _, _ -> rpc },
             )
             try {
@@ -152,7 +154,7 @@ class FerretdDaemonLauncherTest {
         val launcher = FerretdDaemonLauncher.testing(
             scope,
             { FerretdInstallation(Path.of("/installed/ferretd"), version) },
-            { _, _ -> process },
+            { _, _, _ -> process },
             { _, _ -> rpc },
             startupTimeoutMillis = 25L,
         )
@@ -190,7 +192,7 @@ class FerretdDaemonLauncherTest {
         val launcher = FerretdDaemonLauncher.testing(
             scope,
             { FerretdInstallation(Path.of("/installed/ferretd"), version) },
-            { _, _ ->
+            { _, _, _ ->
                 processStarted.complete(Unit)
                 check(returnProcess.await(5L, TimeUnit.SECONDS)) { "Timed out waiting to return the daemon process." }
                 process
@@ -234,7 +236,7 @@ class FerretdDaemonLauncherTest {
         val launcher = FerretdDaemonLauncher.testing(
             scope,
             { FerretdInstallation(Path.of("/installed/ferretd"), version) },
-            { _, _ -> process },
+            { _, _, _ -> process },
             { _, _ -> rpc },
         )
         try {

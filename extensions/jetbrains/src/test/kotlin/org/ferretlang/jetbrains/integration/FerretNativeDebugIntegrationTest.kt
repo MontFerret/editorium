@@ -5,6 +5,7 @@ import com.intellij.execution.runners.ExecutionEnvironmentBuilder
 import com.intellij.execution.runners.ProgramRunner
 import com.intellij.execution.ui.RunContentDescriptor
 import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.testFramework.PlatformTestUtil
@@ -20,6 +21,8 @@ import kotlinx.coroutines.cancel
 import org.ferretlang.jetbrains.debugger.FerretBreakpointType
 import org.ferretlang.jetbrains.debugger.FerretDebugLauncher
 import org.ferretlang.jetbrains.debugger.FerretDebugProcess
+import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
+import org.ferretlang.jetbrains.runtime.CatalogStatus
 import org.ferretlang.jetbrains.run.FerretRunConfiguration
 import org.ferretlang.jetbrains.run.FerretRunConfigurationType
 import org.junit.experimental.categories.Category
@@ -84,6 +87,12 @@ class FerretNativeDebugIntegrationTest : HeavyPlatformTestCase() {
                 content.get()?.processHandler?.isProcessTerminated == true
             }, 15)
             assertEquals(130, content.get().processHandler?.exitCode)
+            val connection = project.service<FerretdDaemonConnection>()
+            PlatformTestUtil.waitWithEventsDispatching("Debug reservation was not released", { !connection.catalogState.value.busy }, 10)
+            connection.applyConfigPath("after-debug.json")
+            connection.applyConfigPath("")
+            assertEquals(CatalogStatus.RELOAD_REQUIRED, connection.catalogState.value.status)
+            org.junit.Assert.assertThrows(com.intellij.execution.ExecutionException::class.java) { connection.admitLocalLaunch("") }
         } finally {
             content.get()?.processHandler?.destroyProcess()
             scope.cancel()
