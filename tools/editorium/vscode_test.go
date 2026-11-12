@@ -17,7 +17,7 @@ func TestVSCodeTargetMatrixMappingsAndFilenames(t *testing.T) {
 		id, platform, architecture, artifact, archiveType, binary, runner string
 		unix                                                              bool
 	}{
-		{"darwin-arm64", "darwin", "arm64", "ferretd_darwin_arm64.tar.gz", "tar.gz", "ferretd", "macos-15", true},
+		{"darwin-arm64", "darwin", "arm64", "ferretd_darwin_arm64.tar.gz", "tar.gz", "ferretd", "macos-26", true},
 		{"darwin-x64", "darwin", "amd64", "ferretd_darwin_x86_64.tar.gz", "tar.gz", "ferretd", "macos-15-intel", true},
 		{"linux-x64", "linux", "amd64", "ferretd_linux_x86_64.tar.gz", "tar.gz", "ferretd", "ubuntu-24.04", true},
 		{"linux-arm64", "linux", "arm64", "ferretd_linux_arm64.tar.gz", "tar.gz", "ferretd", "ubuntu-24.04-arm", true},
