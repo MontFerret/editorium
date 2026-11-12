@@ -1,5 +1,7 @@
 package org.ferretlang.jetbrains.integration
 
+import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
+import com.intellij.openapi.components.service
 import com.intellij.execution.executors.DefaultDebugExecutor
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder
 import com.intellij.execution.ui.RunContentManager
@@ -104,6 +106,18 @@ class FerretNativeInspectionIntegrationTest : HeavyPlatformTestCase() {
         assertEquals(0, session.debugProcess.processHandler.exitCode)
     }
 
+    fun testApplyDuringSuspendedDebugPreservesTheSessionAndRequiresManualReload() {
+        val session = launch("busy", 2)
+        val connection = project.service<FerretdDaemonConnection>()
+        connection.applyConfigPath("next.json")
+        assertNull(connection.ensureCatalog())
+        org.junit.Assert.assertThrows(com.intellij.execution.ExecutionException::class.java) { connection.reloadRuntimes() }
+        assertEquals("5", evaluate(session, "local").value)
+        session.stop()
+        PlatformTestUtil.waitWithEventsDispatching("Debug cleanup did not finish", { !connection.catalogState.value.busy }, 15)
+        assertEquals(org.ferretlang.jetbrains.runtime.CatalogStatus.RELOAD_REQUIRED, connection.catalogState.value.status)
+    }
+
     fun testConcurrentNativeSessionsKeepValuesIndependentAndCanRelaunch() {
         val first = launch("first", 2)
         val second = launch("second", 6)
@@ -137,7 +151,9 @@ class FerretNativeInspectionIntegrationTest : HeavyPlatformTestCase() {
             .createTemplateConfiguration(project) as FerretRunConfiguration).apply { sourcePath = path.toString() }
         val environment = ExecutionEnvironmentBuilder.create(DefaultDebugExecutor.getDebugExecutorInstance(), configuration).build()
         val result = manager.newSessionBuilder(object : XDebugProcessStarter() {
-            override fun start(session: XDebugSession): XDebugProcess = FerretDebugProcess(session, launch)
+            override fun start(session: XDebugSession): XDebugProcess = FerretDebugProcess(
+                session, launch, project.service<FerretdDaemonConnection>().admitLocalLaunch(launch.runtimeName),
+            )
         }).environment(environment).sessionName(name).showTab(false).startSession().also(launches::add)
         // This fixture invokes the builder directly, outside ExecutionManager's process-start notification.
         result.session.debugProcess.processHandler.startNotify()

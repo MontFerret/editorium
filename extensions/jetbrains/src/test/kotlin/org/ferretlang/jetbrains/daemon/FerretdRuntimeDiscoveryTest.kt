@@ -1,0 +1,198 @@
+package org.ferretlang.jetbrains.daemon
+
+import com.intellij.execution.ExecutionException
+import kotlinx.coroutines.*
+import org.ferretlang.jetbrains.execution.FakeFerretdRpc
+import org.ferretlang.jetbrains.runtime.CatalogStatus
+import org.ferretlang.jetbrains.runtime.FerretRuntimeCatalog
+import org.ferretlang.jetbrains.runtime.FerretRuntimeSettings
+import org.ferretlang.jetbrains.runtime.FerretRuntimeDescriptor
+import org.junit.After
+import org.junit.Assert.*
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.nio.file.Path
+import java.util.concurrent.CopyOnWriteArrayList
+
+class FerretdRuntimeDiscoveryTest {
+    @get:Rule val folder = TemporaryFolder()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val paths = CopyOnWriteArrayList<Path?>()
+    private val version = "1.0.0-alpha.11"
+    private lateinit var rpc: FakeFerretdRpc
+    private var configure: (FakeFerretdRpc) -> Unit = {}
+    private val settings = FerretRuntimeSettings()
+    private val connection = FerretdDaemonConnection.testing(scope, FerretdDaemonLauncher.testing(
+        scope, { FerretdInstallation(Path.of("ferretd"), version) },
+        { _, _, path ->
+            paths.add(path)
+            FakeDaemonProcess.ready(version).also { process ->
+                rpc = FakeFerretdRpc(version, folder.root.toPath(), emptyList(), process::destroy).also(configure)
+            }
+        },
+        { _, _ -> rpc },
+    ), settings)
+    private val state get() = connection.catalogState.value
+
+    @After
+    fun close() = runBlocking {
+        connection.closeForTest()
+        scope.cancel()
+    }
+
+    @Test
+    fun firstUseAdoptsLatestPathAndJoinsStartupAndDiscovery() = runBlocking {
+        val first = folder.newFile().toPath()
+        val second = folder.newFile().toPath()
+        connection.applyConfigPath(first.toString())
+        connection.applyConfigPath(second.toString())
+        assertTrue(paths.isEmpty())
+        val entered = CompletableDeferred<Unit>()
+        val proceed = CompletableDeferred<Unit>()
+        configure = { it.discover = { entered.complete(Unit); proceed.await(); catalog("App") } }
+        val job = connection.ensureCatalog()!!
+        withTimeout(5000) { entered.await() }
+        assertSame(job, connection.ensureCatalog())
+        connection.applyConfigPath(second.toString())
+        proceed.complete(Unit)
+        job.join()
+        assertEquals("App", state.catalog?.defaultRuntime)
+        assertNull(connection.ensureCatalog())
+        assertEquals(listOf(second), paths)
+        assertEquals(1, rpc.calls.count { it == "listRuntimes" })
+    }
+
+    @Test
+    fun admissionCapturesConfigurationBeforeStartupAndProtectsItUntilRelease(): Unit = runBlocking {
+        val launch = connection.admitLocalLaunch("")
+        val config = folder.newFile().toPath()
+        connection.applyConfigPath(config.toString())
+        assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
+        assertNull(connection.ensureCatalog())
+        assertThrows(ExecutionException::class.java) { connection.admitLocalLaunch("") }
+        assertThrows(ExecutionException::class.java) { connection.reloadRuntimes() }
+        val original = launch.generation()
+        assertNull(paths.single())
+        launch.close()
+        assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
+        assertTrue(original.process.isAlive)
+        connection.reloadRuntimes().join()
+        assertFalse(original.process.isAlive)
+        assertEquals(config, paths.last())
+        assertThrows(ExecutionException::class.java) { connection.admitLocalLaunch("") }
+    }
+
+    @Test
+    fun failedReplacementDiscoveryRetriesOnTheSameDaemonAndUnblocksLaunchOnlyOnSuccess() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val proceed = CompletableDeferred<Unit>()
+        configure = { it.discover = { entered.complete(Unit); proceed.await(); error("Catalog unavailable") } }
+        val reload = connection.reloadRuntimes()
+        withTimeout(5000) { entered.await() }
+        assertSame(reload, connection.ensureCatalog())
+        assertThrows(ExecutionException::class.java) { connection.admitLocalLaunch("") }
+        proceed.complete(Unit)
+        reload.join()
+        assertEquals(CatalogStatus.DISCOVERY_FAILED, state.status)
+        assertEquals("Catalog unavailable", state.error)
+        assertNull(connection.ensureCatalog())
+        assertThrows(ExecutionException::class.java) { connection.admitLocalLaunch("") }
+        rpc.discover = { catalog("local") }
+        connection.retryDiscovery()!!.join()
+        assertEquals("local", state.catalog?.defaultRuntime)
+        connection.admitLocalLaunch("").close()
+        assertEquals(1, paths.size)
+        assertEquals(2, rpc.calls.count { it == "listRuntimes" })
+    }
+
+    @Test
+    fun ignoresLateMetadataAfterApplyReloadOrDisposal() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val proceed = CompletableDeferred<Unit>()
+        configure = { it.discover = {
+            entered.complete(Unit)
+            withContext(NonCancellable) { proceed.await() }
+            catalog("obsolete")
+        } }
+        val old = connection.ensureCatalog()!!
+        withTimeout(5000) { entered.await() }
+        connection.applyConfigPath(folder.newFile().path)
+        assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
+        configure = { it.discover = { catalog("current") } }
+        connection.reloadRuntimes().join()
+        proceed.complete(Unit)
+        old.join()
+        assertEquals("current", state.catalog?.defaultRuntime)
+
+        val finalEntered = CompletableDeferred<Unit>()
+        val finalReply = CompletableDeferred<Unit>()
+        configure = { it.discover = {
+            finalEntered.complete(Unit)
+            withContext(NonCancellable) { finalReply.await() }
+            catalog("disposed")
+        } }
+        val final = connection.reloadRuntimes()
+        withTimeout(5000) { finalEntered.await() }
+        connection.shutdown()
+        finalReply.complete(Unit)
+        final.join()
+        assertNull(state.catalog)
+    }
+
+    @Test
+    fun ordinaryDiscoverySharesAStartingRunButSupersededStartupCannotPublishACatalog() = runBlocking {
+        val gate = CompletableDeferred<Unit>()
+        val entered = CompletableDeferred<Unit>()
+        configure = { it.getInfoGate = gate; entered.complete(Unit) }
+        val launch = connection.admitLocalLaunch("")
+        val generation = async { launch.generation() }
+        withTimeout(5000) { entered.await() }
+        val discovery = connection.ensureCatalog()!!
+        connection.applyConfigPath(folder.newFile().path)
+        gate.complete(Unit)
+        assertTrue(generation.await().process.isAlive)
+        discovery.join()
+        assertEquals(1, paths.size)
+        assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
+        assertNull(state.catalog)
+        launch.close()
+    }
+
+    @Test
+    fun lostReplacementRequiresExplicitReloadAndOrdinaryFailureCanRetry() = runBlocking {
+        configure = { it.discover = { error("RPC unavailable") } }
+        connection.ensureCatalog()!!.join()
+        assertEquals(CatalogStatus.DISCOVERY_FAILED, state.status)
+        connection.admitLocalLaunch("").close()
+        val generation = connection.generation()
+        rpc.discover = { catalog("local") }
+        connection.retryDiscovery()!!.join()
+        assertSame(generation, connection.generation())
+        connection.reloadRuntimes().join()
+        assertEquals(CatalogStatus.DISCOVERY_FAILED, state.status)
+        // Terminal loss is signalled by the connection's existing process observer.
+        rpc.shutdown()
+        connection.retryDiscovery()?.join()
+        assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
+        assertNull(connection.ensureCatalog())
+        assertEquals(2, paths.size)
+        configure = { it.discover = { catalog("local") } }
+        connection.reloadRuntimes().join()
+        assertEquals(CatalogStatus.READY, state.status)
+        assertEquals(3, paths.size)
+    }
+
+    @Test
+    fun restoredProjectSettingsParticipateInLaunchAdmissionAndCatalogInvalidation() = runBlocking {
+        connection.ensureCatalog()!!.join()
+        settings.loadState(FerretRuntimeSettings.Options().apply { runtimeConfigPath = folder.newFile().path })
+        assertEquals(settings.state.runtimeConfigPath, connection.configPath)
+        assertNull(state.catalog)
+        assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
+        assertThrows(ExecutionException::class.java) { connection.admitLocalLaunch("") }
+        assertEquals(1, paths.size)
+    }
+
+    private fun catalog(name: String) = FerretRuntimeCatalog(name, listOf(FerretRuntimeDescriptor(name, name, "native")))
+}

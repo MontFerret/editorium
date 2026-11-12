@@ -1,5 +1,13 @@
 package org.ferretlang.jetbrains.run
 
+import com.intellij.execution.executors.DefaultDebugExecutor
+import com.intellij.execution.executors.DefaultRunExecutor
+import com.intellij.execution.runners.ExecutionEnvironmentBuilder
+import com.intellij.execution.runners.ProgramRunner
+import com.intellij.execution.ui.RunContentDescriptor
+import com.intellij.openapi.components.service
+import com.intellij.testFramework.PlatformTestUtil
+import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
 import com.intellij.execution.RunManager
 import com.intellij.execution.actions.ConfigurationContext
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -56,6 +64,37 @@ class FerretRunConfigurationProducerTest : BasePlatformTestCase() {
             )
         } finally {
             runManager.removeConfiguration(produced.configurationSettings)
+        }
+    }
+
+    fun testContextLaunchesRejectConfiguredFilesAndEveryExplicitRuntime() {
+        val file = createLocalFile("runtime.fql")
+        val config = requireNotNull(FerretRunConfigurationProducer().createConfigurationFromContext(contextFor(file)))
+            .configuration as FerretRunConfiguration
+        val connection = project.service<FerretdDaemonConnection>()
+        val executors = listOf(DefaultRunExecutor.getRunExecutorInstance(), DefaultDebugExecutor.getDebugExecutorInstance())
+        try {
+            for ((path, name) in listOf("" to "local", "" to "App", "configured.json" to "")) {
+                config.runtimeName = name
+                connection.applyConfigPath(path)
+                for (executor in executors) {
+                    val failure = java.util.concurrent.atomic.AtomicReference<Throwable>()
+                    val environment = ExecutionEnvironmentBuilder.create(executor, config).build(object : ProgramRunner.Callback {
+                        override fun processStarted(descriptor: RunContentDescriptor) { fail("Restricted launch started") }
+                        override fun processNotStarted(error: Throwable?) {
+                            failure.set(error ?: AssertionError("Missing launch error"))
+                        }
+                    })
+                    val reported = com.intellij.testFramework.LoggedErrorProcessor.executeAndReturnLoggedError {
+                        environment.runner.execute(environment)
+                        PlatformTestUtil.waitWithEventsDispatching("Expected a rejected launch", { failure.get() != null }, 10)
+                    }
+                    assertTrue(reported.toString(), reported.message.orEmpty().contains("Daemon default"))
+                    assertFalse(connection.catalogState.value.busy)
+                }
+            }
+        } finally {
+            connection.applyConfigPath("")
         }
     }
 

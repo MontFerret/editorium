@@ -8,6 +8,7 @@ internal data class FerretLaunchInput(
     val workingDirectory: String,
     val projectBasePath: String?,
     val bindings: FerretParameterBindings,
+    val runtimeName: String = "",
 )
 
 internal data class FerretResolvedLaunchInput(

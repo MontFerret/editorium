@@ -11,6 +11,8 @@ import io.grpc.stub.ClientResponseObserver
 import io.grpc.stub.ClientCallStreamObserver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import org.ferretlang.jetbrains.runtime.FerretRuntimeCatalog
+import org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesRequest
 import kotlinx.coroutines.withContext
 import org.ferretlang.jetbrains.execution.FerretdExecutionOptions
 import org.ferretlang.jetbrains.execution.FerretdExecutionSnapshot
@@ -73,6 +75,13 @@ internal class GrpcFerretdRpc private constructor(
                     .build(),
                 observer,
             )
+        },
+    )
+
+    override suspend fun listRuntimes(): FerretRuntimeCatalog = GrpcFerretdMapper.runtimeCatalog(
+        unary("list-runtimes") { observer ->
+            daemon.withDeadlineAfter(CONTROL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .listRuntimes(ListRuntimesRequest.getDefaultInstance(), observer)
         },
     )
 

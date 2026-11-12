@@ -1,5 +1,7 @@
 package org.ferretlang.jetbrains.debugger
 
+import com.intellij.openapi.components.service
+import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
 import com.intellij.execution.configurations.RunProfile
 import com.intellij.execution.configurations.RunProfileState
 import com.intellij.execution.configurations.RunnerSettings
@@ -25,11 +27,17 @@ class FerretDebugRunner : AsyncProgramRunner<RunnerSettings>() {
 
     override fun execute(environment: ExecutionEnvironment, state: RunProfileState): Promise<RunContentDescriptor?> {
         val input = (state as FerretRunProfileState).input
-        com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().saveAllDocuments()
-        FerretLaunchInputResolver.checkSavedSource(input)
-        val result = XDebuggerManager.getInstance(environment.project).newSessionBuilder(object : XDebugProcessStarter() {
-            override fun start(session: XDebugSession): XDebugProcess = FerretDebugProcess(session, input)
-        }).environment(environment).startSession()
-        return resolvedPromise(result.runContentDescriptor)
+        val launch = environment.project.service<FerretdDaemonConnection>().admitLocalLaunch(input.runtimeName)
+        try {
+            com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().saveAllDocuments()
+            FerretLaunchInputResolver.checkSavedSource(input)
+            val result = XDebuggerManager.getInstance(environment.project).newSessionBuilder(object : XDebugProcessStarter() {
+                override fun start(session: XDebugSession): XDebugProcess = FerretDebugProcess(session, input, launch)
+            }).environment(environment).startSession()
+            return resolvedPromise(result.runContentDescriptor)
+        } catch (error: Throwable) {
+            launch.close()
+            throw error
+        }
     }
 }

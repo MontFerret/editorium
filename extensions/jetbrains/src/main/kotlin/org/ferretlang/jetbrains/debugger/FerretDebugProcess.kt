@@ -10,6 +10,7 @@ import com.intellij.xdebugger.XDebugSession
 import com.intellij.xdebugger.breakpoints.XBreakpointHandler
 import com.intellij.xdebugger.evaluation.XDebuggerEditorsProvider
 import com.intellij.xdebugger.frame.XSuspendContext
+import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -19,7 +20,11 @@ import kotlinx.coroutines.withContext
 import org.eclipse.lsp4j.debug.Breakpoint
 import org.ferretlang.jetbrains.launch.FerretLaunchInput
 
-internal class FerretDebugProcess(session: XDebugSession, input: FerretLaunchInput) : XDebugProcess(session), FerretDapListener {
+internal class FerretDebugProcess(
+    session: XDebugSession,
+    input: FerretLaunchInput,
+    private val launch: FerretdDaemonConnection.LocalLaunch,
+) : XDebugProcess(session), FerretDapListener {
     private val launcher = session.project.service<FerretDebugLauncher>()
     private val scope = launcher.newLaunchScope()
     internal val dap = launcher.session(input, this)
@@ -32,7 +37,7 @@ internal class FerretDebugProcess(session: XDebugSession, input: FerretLaunchInp
 
     override fun sessionInitialized() {
         // Enter the ownership/finally boundary even if project cancellation already won.
-        scope.launch(start = CoroutineStart.UNDISPATCHED) { dap.run() }
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { dap.run() }.invokeOnCompletion { launch.close() }
     }
 
     override fun doGetProcessHandler(): ProcessHandler = handler

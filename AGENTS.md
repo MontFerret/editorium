@@ -68,7 +68,9 @@ The current integration state is intentionally asymmetric:
   execution daemon and the JetBrains Run console. Debug uses the same persisted
   configuration through native XDebugger and LSP4J Debug, with one independently
   owned `ferretd dap` process per launch. Suspended frames provide lazy scopes,
-  typed variables, expression evaluation, and native watches; there are no additional settings.
+  typed variables, expression evaluation, and native watches. Project settings support
+  runtime catalog discovery. Run and Debug currently require an empty runtime
+  configuration path and the daemon-default selection.
 * Both integrations consume the daemon version from `ferretd.json`; neither may
   introduce a separate editor-local pin.
 
@@ -230,7 +232,7 @@ compatibility-sensitive contracts.
 * native XDebugger presentation and per-launch LSP4J DAP session ownership;
 * shared Run/Debug launch inputs, with protocol encoding kept in each adapter;
 * frame-scoped inspection, expression evaluation, and native watches;
-* future JetBrains settings when explicitly implemented;
+* project runtime configuration, generation-scoped discovery, and persisted runtime selection;
 * Gradle configuration and plugin packaging;
 * JetBrains-specific platform, binary-resolution, and integration tests.
 

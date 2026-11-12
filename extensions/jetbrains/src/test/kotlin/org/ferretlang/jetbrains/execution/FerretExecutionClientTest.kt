@@ -32,6 +32,30 @@ import java.util.concurrent.TimeUnit
 
 class FerretExecutionClientTest {
     @Test
+    fun reloadRefusesDuringCancellationUntilSessionCleanupFinishes() = runBlocking {
+        val fixture = fixture(FakeFerretdRpc.Outcome.WAIT_FOR_CANCELLATION)
+        val gate = CompletableDeferred<Unit>()
+        fixture.rpc.closeSessionGate = gate
+        try {
+            val execution = fixture.execute()
+            execution.awaitStarted()
+            fixture.connection.applyConfigPath("next.json")
+            execution.handle.cancel()
+            fixture.rpc.closeSessionEntered.awaitResult()
+            org.junit.Assert.assertThrows(com.intellij.execution.ExecutionException::class.java) {
+                fixture.connection.reloadRuntimes()
+            }
+            gate.complete(Unit)
+            assertEquals(130, execution.exit.awaitResult())
+            assertFalse(fixture.connection.catalogState.value.busy)
+            assertEquals(org.ferretlang.jetbrains.runtime.CatalogStatus.RELOAD_REQUIRED, fixture.connection.catalogState.value.status)
+        } finally {
+            gate.complete(Unit)
+            fixture.close()
+        }
+    }
+
+    @Test
     fun ordersRpcCallsRegistersWatchEagerlyAndRendersTerminalJson() = runBlocking {
         val fixture = fixture(FakeFerretdRpc.Outcome.COMPLETED)
         try {
@@ -448,7 +472,7 @@ class FerretExecutionClientTest {
         val launcher = FerretdDaemonLauncher.testing(
             scope,
             { FerretdInstallation(Path.of("/installed/ferretd"), version) },
-            { _, token ->
+            { _, token, _ ->
                 check(token.length == 43)
                 check(token.none { it == '=' })
                 process

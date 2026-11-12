@@ -48,8 +48,8 @@ class FerretExecutionIntegrationTest {
         connection = FerretdDaemonConnection.testing(scope, FerretdDaemonLauncher.testing(
             scope,
             { installation },
-            { installed, credential ->
-                ProcessBuilder(FerretdDaemonLauncher.command(installed)).apply {
+            { installed, credential, configFile ->
+                ProcessBuilder(FerretdDaemonLauncher.command(installed, configFile)).apply {
                     environment()["FERRETD_AUTH_TOKEN"] = credential
                 }.start()
             },
@@ -66,6 +66,46 @@ class FerretExecutionIntegrationTest {
         runBlocking { connection.closeForTest() }
         scope.cancel()
         root.toFile().deleteRecursively()
+    }
+
+    @Test
+    fun discoversOfflineWireAndRereadsOnlyOnReloadBeforeReturningToLocalRun() = runBlocking {
+        val file = write("runtime config.json", """{"defaultRuntime":"App","runtimes":[
+            {"name":"App","label":"Offline application","provider":"wire","endpoint":"tcp://127.0.0.1:1","insecure":true}
+        ]}""")
+        connection.applyConfigPath(file.toString())
+        connection.ensureCatalog()!!.join()
+        val first = connection.generation()
+        val catalog = requireNotNull(connection.catalogState.value.catalog)
+        assertEquals("App", catalog.defaultRuntime)
+        assertEquals("Offline application", catalog.runtimes.single { it.name == "App" }.label)
+        assertEquals("wire", catalog.runtimes.single { it.name == "App" }.provider)
+        Files.writeString(file, Files.readString(file).replace("Offline application", "Edited label"))
+        assertEquals(catalog, connection.catalogState.value.catalog)
+        connection.reloadRuntimes().join()
+        assertTrue(!first.process.isAlive)
+        assertEquals("Edited label", connection.catalogState.value.catalog?.runtimes?.single { it.name == "App" }?.label)
+        connection.applyConfigPath("")
+        val source = write("main.fql", "RETURN 42")
+        org.junit.Assert.assertThrows(com.intellij.execution.ExecutionException::class.java) { execute(source) }
+        connection.reloadRuntimes().join()
+        assertEquals("local", connection.catalogState.value.catalog?.defaultRuntime)
+        assertEquals(0, execute(source).exit.awaitResult())
+    }
+
+    @Test
+    fun malformedFileRetainsTheDaemonDiagnosticAndNeverFallsBack() = runBlocking {
+        val file = write("broken config.json", """{"unknownField":true}""")
+        connection.applyConfigPath(file.toString())
+        connection.reloadRuntimes().join()
+        val failure = connection.catalogState.value
+        assertEquals(org.ferretlang.jetbrains.runtime.CatalogStatus.RELOAD_REQUIRED, failure.status)
+        assertTrue(failure.error.orEmpty(), failure.error.orEmpty().contains(file.toString()))
+        assertTrue(failure.error.orEmpty(), failure.error.orEmpty().contains("unknown field"))
+        assertTrue(failure.catalog == null)
+        Files.writeString(file, "{}")
+        connection.reloadRuntimes().join()
+        assertEquals("local", connection.catalogState.value.catalog?.defaultRuntime)
     }
 
     @Test

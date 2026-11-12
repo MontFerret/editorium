@@ -1,5 +1,9 @@
 package org.ferretlang.jetbrains.run
 
+import com.intellij.openapi.components.service
+import com.intellij.openapi.util.Disposer
+import org.ferretlang.jetbrains.runtime.FerretRuntimePicker
+import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.options.ConfigurationException
 import com.intellij.openapi.options.SettingsEditor
@@ -19,7 +23,10 @@ class FerretRunConfigurationEditor(
     private val workingDirectoryField = TextFieldWithBrowseButton()
     private val parametersField = JBTextArea(5, 40)
 
+    private val runtime = FerretRuntimePicker(project.service())
+
     init {
+        Disposer.register(this, runtime)
         sourcePathField.addBrowseFolderListener(
             project,
             FileChooserDescriptorFactory
@@ -36,6 +43,7 @@ class FerretRunConfigurationEditor(
     }
 
     override fun resetEditorFrom(configuration: FerretRunConfiguration) {
+        runtime.runtimeName = configuration.runtimeName
         sourcePathField.text = configuration.sourcePath
         workingDirectoryField.text = configuration.workingDirectory
         parametersField.text = configuration.parametersJson
@@ -48,6 +56,7 @@ class FerretRunConfigurationEditor(
             throw ConfigurationException(error.message ?: "The Ferret parameters are invalid.")
         }
 
+        configuration.runtimeName = runtime.runtimeName
         configuration.sourcePath = sourcePathField.text
         configuration.workingDirectory = workingDirectoryField.text
         configuration.parametersJson = parametersField.text
@@ -56,6 +65,9 @@ class FerretRunConfigurationEditor(
     override fun createEditor(): JComponent =
         FormBuilder
             .createFormBuilder()
+            .addLabeledComponent("Runtime:", runtime.component)
+            .addComponent(runtime.actions)
+            .addComponent(JBLabel(FerretdDaemonConnection.LOCAL_LIMITATION))
             .addLabeledComponent("Source file:", sourcePathField)
             .addLabeledComponent("Working directory:", workingDirectoryField)
             .addComponent(JBLabel("Leave blank to use the compilation workspace."))

@@ -32,6 +32,12 @@ class FerretRunConfiguration(
             options.sourcePath = value
         }
 
+    var runtimeName: String
+        get() = options.runtimeName.orEmpty()
+        set(value) {
+            options.runtimeName = value
+        }
+
     var workingDirectory: String
         get() = options.workingDirectory.orEmpty()
         set(value) {
@@ -119,6 +125,7 @@ class FerretRunConfiguration(
         workingDirectory = workingDirectory,
         projectBasePath = project.basePath,
         bindings = parameters,
+        runtimeName = runtimeName,
     )
 
     internal fun resolvedSourcePathOrNull(): Path? = resolvePathOrNull(sourcePath)

@@ -12,8 +12,11 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.ferretlang.jetbrains.execution.FerretdRpc
 import java.nio.charset.StandardCharsets
+import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicReference
 import java.security.SecureRandom
 import java.util.Base64
 import java.util.concurrent.TimeUnit
@@ -22,7 +25,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal class FerretdDaemonLauncher private constructor(
     private val coroutineScope: CoroutineScope,
     private val installationProvider: () -> FerretdInstallation,
-    private val processStarter: (FerretdInstallation, String) -> Process,
+    private val processStarter: (FerretdInstallation, String, Path?) -> Process,
     private val rpcConnector: (Int, String) -> FerretdRpc,
     private val startupTimeoutMillis: Long,
 ) {
@@ -45,7 +48,7 @@ internal class FerretdDaemonLauncher private constructor(
         STARTUP_TIMEOUT_MILLIS,
     )
 
-    suspend fun start(): StartedFerretdDaemon {
+    suspend fun start(configFile: Path? = null): StartedFerretdDaemon {
         val installation = withContext(Dispatchers.IO) { installationProvider() }
         val token = Base64.getUrlEncoder().withoutPadding().encodeToString(
             ByteArray(TOKEN_BYTES).also(SecureRandom()::nextBytes),
@@ -57,7 +60,7 @@ internal class FerretdDaemonLauncher private constructor(
             // Keep these contexts nested: switching dispatchers in the outer context
             // would let cancellation discard the newly created process on return.
             withContext(NonCancellable) {
-                withContext(Dispatchers.IO) { processStarter(installation, token) }
+                withContext(Dispatchers.IO) { processStarter(installation, token, configFile) }
             }
         } catch (error: Exception) {
             throw FerretdConnectionException("Cannot start the bundled Ferret daemon.", credentials.safeCause(error))
@@ -66,9 +69,10 @@ internal class FerretdDaemonLauncher private constructor(
         val lost = CompletableDeferred<Throwable>()
         val stopping = AtomicBoolean()
         val readySeen = AtomicBoolean()
-        val stderr = readStderr(process, installation.version, ready, lost, readySeen, credentials)
+        val diagnostic = AtomicReference<String>()
+        val stderr = readStderr(process, installation.version, ready, lost, readySeen, credentials, diagnostic)
         val stdout = drainStdout(process, credentials)
-        val processWaiter = observeProcess(process, ready, lost, stopping)
+        val processWaiter = observeProcess(process, ready, lost, stopping, stderr.takeIf { configFile != null })
         var rpc: FerretdRpc? = null
         try {
             val event = withTimeout(startupTimeoutMillis) { ready.await() }
@@ -121,7 +125,10 @@ internal class FerretdDaemonLauncher private constructor(
             } else {
                 "The Ferret daemon failed during startup. See the IDE log for details."
             }
-            throw FerretdConnectionException(credentials.redact(message), credentials.safeCause(error))
+            val detail = if (configFile == null) message else {
+                "Starting Ferret with runtime configuration file $configFile failed. " + (diagnostic.get() ?: message)
+            }
+            throw FerretdConnectionException(credentials.redact(detail), credentials.safeCause(error))
         }
     }
 
@@ -132,11 +139,15 @@ internal class FerretdDaemonLauncher private constructor(
         lost: CompletableDeferred<Throwable>,
         readySeen: AtomicBoolean,
         credentials: FerretdCredentials,
+        diagnostic: AtomicReference<String>,
     ): Job = coroutineScope.launch(Dispatchers.IO) {
         try {
             process.errorStream.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
                 lines.forEach { line ->
                     LOG.debug("ferretd stderr: ${credentials.redact(line)}")
+                    if (!readySeen.get() && line.startsWith("ferretd:")) {
+                        diagnostic.compareAndSet(null, credentials.redact(line).take(1024))
+                    }
                     val event = try {
                         FerretdReadyEvent.parse(line, version)
                     } catch (error: Throwable) {
@@ -178,8 +189,11 @@ internal class FerretdDaemonLauncher private constructor(
         ready: CompletableDeferred<FerretdReadyEvent>,
         lost: CompletableDeferred<Throwable>,
         stopping: AtomicBoolean,
+        startupStderr: Job?,
     ): Job = coroutineScope.launch(Dispatchers.IO) {
         val exit = process.waitFor()
+        // Let a configured daemon's final diagnostic reach the reader before reporting its exit.
+        if (startupStderr != null && !ready.isCompleted) withTimeoutOrNull(1_000L) { startupStderr.join() }
         if (!stopping.get()) {
             val error = FerretdConnectionException("The Ferret daemon exited unexpectedly with code $exit.")
             ready.completeExceptionally(error)
@@ -197,7 +211,7 @@ internal class FerretdDaemonLauncher private constructor(
         internal fun testing(
             coroutineScope: CoroutineScope,
             installationProvider: () -> FerretdInstallation,
-            processStarter: (FerretdInstallation, String) -> Process,
+            processStarter: (FerretdInstallation, String, Path?) -> Process,
             rpcConnector: (Int, String) -> FerretdRpc,
             startupTimeoutMillis: Long = STARTUP_TIMEOUT_MILLIS,
         ): FerretdDaemonLauncher = FerretdDaemonLauncher(
@@ -208,16 +222,16 @@ internal class FerretdDaemonLauncher private constructor(
             startupTimeoutMillis,
         )
 
-        internal fun command(installation: FerretdInstallation): List<String> = listOf(
+        internal fun command(installation: FerretdInstallation, configFile: Path? = null): List<String> = listOf(
             installation.executable.toString(),
             "serve",
             "--endpoint",
             "tcp://127.0.0.1:0",
             "--auth-token-env=$TOKEN_ENVIRONMENT",
-        )
+        ) + if (configFile == null) emptyList() else listOf("--runtime-config", configFile.toString())
 
-        private fun startProcess(installation: FerretdInstallation, token: String): Process {
-            return ProcessBuilder(command(installation)).apply {
+        private fun startProcess(installation: FerretdInstallation, token: String, configFile: Path?): Process {
+            return ProcessBuilder(command(installation, configFile)).apply {
                 environment()[TOKEN_ENVIRONMENT] = token
             }.start()
         }
