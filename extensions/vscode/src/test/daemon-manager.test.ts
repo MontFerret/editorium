@@ -1,5 +1,6 @@
 import * as assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { join, resolve } from 'node:path';
 import { PassThrough } from 'node:stream';
 
 import {
@@ -105,11 +106,10 @@ suite('Ferret daemon lifecycle', () => {
       timing,
     );
 
-    await controller.updateWorkspaceFolders([
-      '/workspace',
-      '/workspace',
-      '/workspace/packages/app',
-    ]);
+    const root = resolve('workspace');
+    const app = join(root, 'packages', 'app');
+    const added = join(root, 'new');
+    await controller.updateWorkspaceFolders([root, root, app]);
     await controller.start();
     process.stderr.write('daemon detail\n');
     await immediate();
@@ -119,23 +119,13 @@ suite('Ferret daemon lifecycle', () => {
       '--endpoint',
       endpoint.cli,
     ]);
-    assert.deepStrictEqual(state.openRoots, [
-      '/workspace',
-      '/workspace/packages/app',
-    ]);
+    assert.deepStrictEqual(state.openRoots, [root, app]);
     assert.strictEqual(controller.workspaceRegistry.workspaces.length, 2);
     assert.ok(output.infos.some((line) => line.includes('daemon detail')));
 
-    await controller.updateWorkspaceFolders([
-      '/workspace/packages/app',
-      '/workspace/new',
-    ]);
-    assert.deepStrictEqual(state.closeWorkspaceIds, ['workspace:/workspace']);
-    assert.deepStrictEqual(state.openRoots, [
-      '/workspace',
-      '/workspace/packages/app',
-      '/workspace/new',
-    ]);
+    await controller.updateWorkspaceFolders([app, added]);
+    assert.deepStrictEqual(state.closeWorkspaceIds, [`workspace:${root}`]);
+    assert.deepStrictEqual(state.openRoots, [root, app, added]);
 
     const invalidationOrder: string[] = [];
     observedSignal?.addEventListener(

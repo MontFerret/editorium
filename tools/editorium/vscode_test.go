@@ -18,7 +18,7 @@ func TestVSCodeTargetMatrixMappingsAndFilenames(t *testing.T) {
 		unix                                                              bool
 	}{
 		{"darwin-arm64", "darwin", "arm64", "ferretd_darwin_arm64.tar.gz", "tar.gz", "ferretd", "macos-26", true},
-		{"darwin-x64", "darwin", "amd64", "ferretd_darwin_x86_64.tar.gz", "tar.gz", "ferretd", "macos-15-intel", true},
+		{"darwin-x64", "darwin", "amd64", "ferretd_darwin_x86_64.tar.gz", "tar.gz", "ferretd", "macos-26-intel", true},
 		{"linux-x64", "linux", "amd64", "ferretd_linux_x86_64.tar.gz", "tar.gz", "ferretd", "ubuntu-24.04", true},
 		{"linux-arm64", "linux", "arm64", "ferretd_linux_arm64.tar.gz", "tar.gz", "ferretd", "ubuntu-24.04-arm", true},
 		{"win32-x64", "windows", "amd64", "ferretd_windows_x86_64.zip", "zip", "ferretd.exe", "windows-2025", false},
@@ -92,23 +92,26 @@ func TestSelectedTargetHonorsTargetEnvironment(t *testing.T) {
 	}
 }
 
-func TestVSCodeNodeToolingIsIntegrationLocal(t *testing.T) {
+func TestVSCodeScriptRunsInPackageWithDaemonEnvironment(t *testing.T) {
 	root := t.TempDir()
 	packageRoot := vscodePackageRoot(root)
-	wantRoot := filepath.Join(root, "extensions", "vscode")
-	if packageRoot != wantRoot {
-		t.Fatalf("vscodePackageRoot() = %q, want %q", packageRoot, wantRoot)
+	if err := os.MkdirAll(packageRoot, 0o755); err != nil {
+		t.Fatal(err)
 	}
-
-	t.Setenv("PATH", filepath.Join(root, "system-bin"))
-	environment := nodeBinEnvironment(packageRoot)
-	wantPath := filepath.Join(packageRoot, "node_modules", ".bin") + string(os.PathListSeparator) + filepath.Join(root, "system-bin")
-	if len(environment) != 1 || environment[0] != "PATH="+wantPath {
-		t.Fatalf("nodeBinEnvironment() = %v, want PATH=%s", environment, wantPath)
+	if runtime.GOOS == "windows" {
+		writeTestFile(t, filepath.Join(root, "npm.cmd"), []byte("@echo off\r\n>args.txt echo %1 %2\r\n>daemon.txt echo %FERRETD_TEST_PATH%\r\n"), 0o644)
+	} else {
+		writeTestFile(t, filepath.Join(root, "npm"), []byte("#!/bin/sh\necho \"$1 $2\" >args.txt\necho \"$FERRETD_TEST_PATH\" >daemon.txt\n"), 0o755)
 	}
-	for _, entry := range filepath.SplitList(strings.TrimPrefix(environment[0], "PATH=")) {
-		if entry == filepath.Join(root, "node_modules", ".bin") {
-			t.Fatalf("nodeBinEnvironment() includes repository-root npm binaries: %v", environment)
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	daemon := filepath.Join(root, "daemon with spaces", "ferretd")
+	if err := runVSCodeScript(context.Background(), packageRoot, []string{"FERRETD_TEST_PATH=" + daemon}, "test:integration"); err != nil {
+		t.Fatal(err)
+	}
+	for file, expected := range map[string]string{"args.txt": "run test:integration", "daemon.txt": daemon} {
+		data, err := os.ReadFile(filepath.Join(packageRoot, file))
+		if err != nil || strings.TrimRight(string(data), "\r\n") != expected {
+			t.Fatalf("%s = %q, %v; want %q", file, data, err, expected)
 		}
 	}
 }

@@ -6,9 +6,12 @@ import { createDaemonEndpoint } from '../daemon/endpoint';
 import { FerretWorkspaceRegistry } from '../daemon/workspaces';
 
 suite('Ferret daemon endpoints and workspaces', () => {
-  test('creates private unique Unix socket directories', async () => {
-    const first = await createDaemonEndpoint('darwin');
-    const second = await createDaemonEndpoint('linux');
+  test('creates private unique Unix socket directories', async function () {
+    if (process.platform === 'win32') {
+      this.skip();
+    }
+    const first = await createDaemonEndpoint();
+    const second = await createDaemonEndpoint();
 
     try {
       assert.notStrictEqual(first.cli, second.cli);

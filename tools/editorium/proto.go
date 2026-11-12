@@ -418,7 +418,8 @@ func replaceDirectoryAtomic(source, destination string) error {
 func generateVSCodeProto(ctx context.Context, root string, check bool) error {
 	packageRoot := vscodePackageRoot(root)
 	generatedRoot := filepath.Join(packageRoot, "src", "daemon", "gen")
-	buf := filepath.Join(packageRoot, "node_modules", ".bin", executableName("buf"))
+	modules := filepath.Join(packageRoot, "node_modules")
+	buf := filepath.Join(modules, "@bufbuild", "buf", "bin", "buf")
 	outputRoot := generatedRoot
 
 	if check {
@@ -430,7 +431,7 @@ func generateVSCodeProto(ctx context.Context, root string, check bool) error {
 		defer os.RemoveAll(temporary)
 
 		outputRoot = temporary
-		if err := runCommand(ctx, root, nodeBinEnvironment(packageRoot), buf, "lint", "shared/proto", "--config", "buf.yaml"); err != nil {
+		if err := runCommand(ctx, root, nil, "node", buf, "lint", "shared/proto", "--config", "buf.yaml"); err != nil {
 			return err
 		}
 	}
@@ -448,7 +449,7 @@ func generateVSCodeProto(ctx context.Context, root string, check bool) error {
 			},
 		}},
 		"plugins": []any{map[string]any{
-			"local":    "protoc-gen-ts_proto",
+			"local":    []string{"node", filepath.Join(modules, "ts-proto", "protoc-gen-ts_proto")},
 			"out":      outputRoot,
 			"strategy": "all",
 			"opt": []string{
@@ -464,7 +465,7 @@ func generateVSCodeProto(ctx context.Context, root string, check bool) error {
 		return err
 	}
 
-	if err := runCommand(ctx, root, nodeBinEnvironment(packageRoot), buf, "generate", "--template", string(templateJSON)); err != nil {
+	if err := runCommand(ctx, root, nil, "node", buf, "generate", "--template", string(templateJSON)); err != nil {
 		return err
 	}
 

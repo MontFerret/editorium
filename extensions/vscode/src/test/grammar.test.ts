@@ -102,7 +102,7 @@ function tokenize(source: string): FerretToken[] {
   const tokens: FerretToken[] = [];
   let ruleStack = INITIAL;
 
-  for (const text of source.split('\n')) {
+  for (const text of source.split(/\r?\n/u)) {
     const result = grammar.tokenizeLine(text, ruleStack);
 
     for (const token of result.tokens) {

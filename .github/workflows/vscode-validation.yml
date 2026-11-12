@@ -8,6 +8,7 @@ on:
       - '.gitattributes'
       - '.github/workflows/vscode-validation.yml'
       - 'Makefile'
+      - 'buf.yaml'
       - 'ferretd.json'
       - 'extensions/vscode/**'
       - 'shared/**'
@@ -19,6 +20,7 @@ on:
       - '.gitattributes'
       - '.github/workflows/vscode-validation.yml'
       - 'Makefile'
+      - 'buf.yaml'
       - 'ferretd.json'
       - 'extensions/vscode/**'
       - 'shared/**'
@@ -52,7 +54,15 @@ jobs:
         run: echo "matrix=$(go -C tools/editorium run . matrix vscode)" >> "$GITHUB_OUTPUT"
 
   editor-packages:
-    runs-on: ubuntu-24.04
+    name: Test VS Code (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - macos-26
+          - windows-2025
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Check out repository
@@ -75,14 +85,25 @@ jobs:
         working-directory: extensions/vscode
         run: npm ci
 
+      - name: Set up Make
+        if: runner.os == 'Windows'
+        run: choco install make --no-progress --yes
+
       - name: Build packages
+        if: runner.os == 'Linux'
         run: make build vscode
 
       - name: Lint packages
+        if: runner.os == 'Linux'
         run: make lint vscode
 
-      - name: Test packages
+      - name: Test extension and pinned daemon with Xvfb
+        if: runner.os == 'Linux'
         run: xvfb-run -a make test vscode
+
+      - name: Test extension and pinned daemon
+        if: runner.os != 'Linux'
+        run: make test vscode
 
   vscode-distributions:
     needs:

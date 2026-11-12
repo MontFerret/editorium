@@ -1,2 +1,3 @@
 shared/proto/**/*.proto text eol=lf
+extensions/vscode/src/daemon/gen/**/*.pb.ts text eol=lf
 extensions/jetbrains/src/main/generated/** text eol=lf whitespace=-blank-at-eol linguist-generated=true

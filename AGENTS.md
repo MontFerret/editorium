@@ -583,6 +583,13 @@ and remote marketplace assumptions.
 
 ## Tests and validation
 
+Every extension's validation workflow must run its full `make test <extension>`
+suite separately on Linux, macOS, and Windows for relevant pushes and pull
+requests. Use versioned runner images and let every OS finish when another
+fails. CI must also build, lint, package, and verify each extension's
+distributable. Each integration owns the additional checks for its editor and
+package format.
+
 Add or update tests for every behavior change.
 
 Test at the layer that owns the contract:

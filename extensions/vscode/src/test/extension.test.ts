@@ -473,9 +473,9 @@ suite('Ferret declarative language support', () => {
       await vscode.commands.executeCommand('type', { text: '\n' });
       await vscode.commands.executeCommand('type', { text: 'return item' });
 
-      assert.strictEqual(
-        document.getText(),
-        'for item in items {\n    return item\n}',
+      assert.deepStrictEqual(
+        document.getText().split(/\r?\n/u),
+        ['for item in items {', '    return item', '}'],
       );
     } finally {
       await discardTestDocument(document);
