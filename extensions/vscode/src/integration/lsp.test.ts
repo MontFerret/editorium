@@ -155,7 +155,7 @@ suite('ferretd LSP integration', () => {
     );
     const path = join(temporaryRoot, 'formatting.fql');
     const uri = vscode.Uri.file(path);
-    const savedSource = 'return "saved"';
+    const savedSource = 'return "saved"\n';
 
     let document: vscode.TextDocument | undefined;
     let editorConfiguration: vscode.WorkspaceConfiguration | undefined;

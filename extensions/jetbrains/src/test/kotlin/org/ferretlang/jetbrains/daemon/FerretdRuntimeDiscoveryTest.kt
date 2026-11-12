@@ -50,7 +50,7 @@ class FerretdRuntimeDiscoveryTest {
         val first = folder.newFile().toPath()
         val second = folder.newFile().toPath()
         connection.applyConfigPath(first.toString())
-        assertThrows(ExecutionException::class.java) { connection.admitLocalLaunch("") }
+        assertThrows(ExecutionException::class.java) { connection.admitDebug("") }
         connection.applyConfigPath(second.toString())
         assertTrue(paths.isEmpty())
         val entered = CompletableDeferred<Unit>()
@@ -70,12 +70,12 @@ class FerretdRuntimeDiscoveryTest {
 
     @Test
     fun admissionCapturesConfigurationBeforeStartupAndProtectsItUntilRelease(): Unit = runBlocking {
-        val launch = connection.admitLocalLaunch("")
+        val launch = connection.admitDebug("")
         val config = folder.newFile().toPath()
         connection.applyConfigPath(config.toString())
         assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
         assertNull(connection.ensureCatalog())
-        assertThrows(ExecutionException::class.java) { connection.admitLocalLaunch("") }
+        assertThrows(ExecutionException::class.java) { connection.admitDebug("") }
         assertThrows(ExecutionException::class.java) { connection.reloadRuntimes() }
         val original = launch.generation()
         assertNull(paths.single())
@@ -85,7 +85,7 @@ class FerretdRuntimeDiscoveryTest {
         connection.reloadRuntimes().join()
         assertFalse(original.process.isAlive)
         assertEquals(config, paths.last())
-        assertThrows(ExecutionException::class.java) { connection.admitLocalLaunch("") }
+        assertThrows(ExecutionException::class.java) { connection.admitDebug("") }
     }
 
     @Test
@@ -96,17 +96,19 @@ class FerretdRuntimeDiscoveryTest {
         val reload = connection.reloadRuntimes()
         withTimeout(5000) { entered.await() }
         assertSame(reload, connection.ensureCatalog())
-        assertThrows(ExecutionException::class.java) { connection.admitLocalLaunch("") }
+        val loading = assertThrows(ExecutionException::class.java) { connection.admitRun("App") }
+        assertTrue(loading.message.orEmpty().contains("Wait"))
         proceed.complete(Unit)
         reload.join()
         assertEquals(CatalogStatus.DISCOVERY_FAILED, state.status)
         assertEquals("Catalog unavailable", state.error)
         assertNull(connection.ensureCatalog())
-        assertThrows(ExecutionException::class.java) { connection.admitLocalLaunch("") }
+        val failed = assertThrows(ExecutionException::class.java) { connection.admitRun("App") }
+        assertTrue(failed.message.orEmpty().contains("Retry"))
         rpc.discover = { catalog("local") }
         connection.retryDiscovery()!!.join()
         assertEquals("local", state.catalog?.defaultRuntime)
-        connection.admitLocalLaunch("").close()
+        connection.admitDebug("").close()
         assertEquals(1, paths.size)
         assertEquals(2, rpc.calls.count { it == "listRuntimes" })
     }
@@ -119,10 +121,10 @@ class FerretdRuntimeDiscoveryTest {
         assertEquals(CatalogStatus.DISCOVERY_FAILED, state.status)
         connection.applyConfigPath("")
         assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
-        assertThrows(ExecutionException::class.java) { connection.admitLocalLaunch("") }
+        assertThrows(ExecutionException::class.java) { connection.admitDebug("") }
         assertTrue(paths.isEmpty())
         connection.reloadRuntimes().join()
-        connection.admitLocalLaunch("").close()
+        connection.admitDebug("").close()
     }
 
     @Test
@@ -142,7 +144,7 @@ class FerretdRuntimeDiscoveryTest {
             assertEquals(1, paths.size)
             assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
             assertNull(state.catalog)
-            assertThrows(ExecutionException::class.java) { connection.admitLocalLaunch("") }
+            assertThrows(ExecutionException::class.java) { connection.admitDebug("") }
         } finally {
             observeExit.countDown()
         }
@@ -187,7 +189,7 @@ class FerretdRuntimeDiscoveryTest {
         val gate = CompletableDeferred<Unit>()
         val entered = CompletableDeferred<Unit>()
         configure = { it.getInfoGate = gate; entered.complete(Unit) }
-        val launch = connection.admitLocalLaunch("")
+        val launch = connection.admitDebug("")
         val generation = async { launch.generation() }
         withTimeout(5000) { entered.await() }
         val discovery = connection.ensureCatalog()!!
@@ -206,7 +208,7 @@ class FerretdRuntimeDiscoveryTest {
         configure = { it.discover = { error("RPC unavailable") } }
         connection.ensureCatalog()!!.join()
         assertEquals(CatalogStatus.DISCOVERY_FAILED, state.status)
-        connection.admitLocalLaunch("").close()
+        connection.admitDebug("").close()
         val generation = connection.generation()
         rpc.discover = { catalog("local") }
         connection.retryDiscovery()!!.join()
@@ -232,7 +234,7 @@ class FerretdRuntimeDiscoveryTest {
         assertEquals(settings.state.runtimeConfigPath, connection.configPath)
         assertNull(state.catalog)
         assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
-        assertThrows(ExecutionException::class.java) { connection.admitLocalLaunch("") }
+        assertThrows(ExecutionException::class.java) { connection.admitDebug("") }
         assertEquals(1, paths.size)
     }
 

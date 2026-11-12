@@ -151,19 +151,7 @@ internal object GrpcFerretdMapper {
             if (value.workingDirectory.isBlank()) {
                 protocol(operation, "The Ferret daemon returned a blank execution working directory.")
             }
-            val path = try {
-                Path.of(value.workingDirectory)
-            } catch (error: Exception) {
-                throw FerretdRpcException(
-                    operation,
-                    "The Ferret daemon returned an invalid execution working directory.",
-                    cause = error,
-                )
-            }
-            if (!path.isAbsolute || path.normalize() != path) {
-                protocol(operation, "The Ferret daemon returned a non-canonical execution working directory.")
-            }
-            path
+            value.workingDirectory
         } else {
             null
         }
@@ -213,7 +201,9 @@ internal object GrpcFerretdMapper {
                                 val failure = CompilationFailure.parseFrom(detail.value)
                                 return FerretdRpcException(
                                     operation,
-                                    "Ferret session compilation failed.",
+                                    if (failure.diagnosticsCount == 0) {
+                                        status.message.ifBlank { error.status.description.orEmpty() }.ifBlank { "Ferret session compilation failed." }
+                                    } else "Ferret session compilation failed.",
                                     failure.diagnosticsList.map { diagnostic(it, operation) },
                                     error,
                                 )

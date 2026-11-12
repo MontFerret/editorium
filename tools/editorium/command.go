@@ -7,8 +7,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -51,20 +49,6 @@ func commandOutput(ctx context.Context, root string, environment []string, name 
 
 func commandLine(name string, args []string) string {
 	return strings.Join(append([]string{name}, args...), " ")
-}
-
-func nodeBinEnvironment(packageRoot string) []string {
-	path := filepath.Join(packageRoot, "node_modules", ".bin") + string(os.PathListSeparator) + os.Getenv("PATH")
-
-	return []string{"PATH=" + path}
-}
-
-func executableName(name string) string {
-	if runtime.GOOS == "windows" {
-		return name + ".cmd"
-	}
-
-	return name
 }
 
 func copyLimited(destination io.Writer, source io.Reader, maximum int64, label string) error {

@@ -1,4 +1,5 @@
 import * as assert from 'node:assert/strict';
+import { relative } from 'node:path';
 
 import * as vscode from 'vscode';
 
@@ -117,15 +118,17 @@ async function runCurrentFileDebugSession(
   try {
     const [, startedSession] = await Promise.all([start(), started]);
     session = startedSession;
+    const stopped = await terminated;
+    sessionTerminated = true;
+    assert.strictEqual(stopped.id, session.id);
     assert.strictEqual(session.type, debugType);
     assert.strictEqual(session.name, currentFileSessionName);
-    assert.strictEqual(session.configuration.program, program.fsPath);
-    assert.strictEqual(session.configuration.cwd, secondary.uri.fsPath);
+    // VS Code's ${file} substitution can capitalize a Windows drive letter.
+    assert.strictEqual(relative(program.fsPath, session.configuration.program), '',
+      `Unexpected debug program: ${session.configuration.program}`);
+    assert.strictEqual(relative(secondary.uri.fsPath, session.configuration.cwd), '',
+      `Unexpected debug directory: ${session.configuration.cwd}`);
     assert.strictEqual(session.configuration.stopOnEntry, false);
-
-    const stopped = await terminated;
-    assert.strictEqual(stopped.id, session.id);
-    sessionTerminated = true;
   } finally {
     if (session !== undefined && !sessionTerminated) {
       await vscode.debug.stopDebugging(session);

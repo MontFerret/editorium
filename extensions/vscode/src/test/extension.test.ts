@@ -473,9 +473,9 @@ suite('Ferret declarative language support', () => {
       await vscode.commands.executeCommand('type', { text: '\n' });
       await vscode.commands.executeCommand('type', { text: 'return item' });
 
-      assert.strictEqual(
-        document.getText(),
-        'for item in items {\n    return item\n}',
+      assert.deepStrictEqual(
+        document.getText().split(/\r?\n/u),
+        ['for item in items {', '    return item', '}'],
       );
     } finally {
       await discardTestDocument(document);
@@ -509,10 +509,11 @@ suite('Ferret declarative language support', () => {
 async function waitForActivation(
   extension: vscode.Extension<unknown>,
 ): Promise<void> {
-  const deadline = Date.now() + 5_000;
+  // Activation includes the daemon's bounded 10-second startup handshake.
+  const deadline = Date.now() + 15_000;
 
   while (!extension.isActive && Date.now() < deadline) {
-    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
   }
 }
 

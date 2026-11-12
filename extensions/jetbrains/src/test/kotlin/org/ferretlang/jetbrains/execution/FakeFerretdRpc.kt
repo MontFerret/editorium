@@ -38,6 +38,8 @@ internal class FakeFerretdRpc(
     var terminalGate: CompletableDeferred<Unit>? = null
     var serverInfo = FerretdServerInfo(version, "instance", 1, 1)
     var getInfoFailure: Throwable? = null
+    val requestedRuntimeNames = Collections.synchronizedList(mutableListOf<String>())
+    var sessionRuntime: (String) -> String = { name -> name.ifEmpty { if (serverInfo.supportsRuntimeSelection) "local" else "" } }
     var createSessionFailure: FerretdRpcException? = null
     var closeExecutionFailure: Throwable? = null
     val closeSessionEntered = CompletableDeferred<Unit>()
@@ -80,13 +82,14 @@ internal class FakeFerretdRpc(
         return FerretdWorkspace("workspace", root)
     }
 
-    override suspend fun createSession(workspaceId: String, relativePath: String): FerretdSession {
+    override suspend fun createSession(workspaceId: String, relativePath: String, runtimeName: String): FerretdSession {
+        requestedRuntimeNames += runtimeName
         val id = "session-${nextSession.incrementAndGet()}"
         calls += "createSession:$id"
         createSessionEntered.complete(Unit)
         createSessionGate?.await()
         createSessionFailure?.let { throw it }
-        return FerretdSession(id, workspaceId, relativePath, root.resolve(relativePath).toUri().toString(), 1, "")
+        return FerretdSession(id, workspaceId, relativePath, root.resolve(relativePath).toUri().toString(), 1, sessionRuntime(runtimeName))
     }
 
     override suspend fun createExecution(

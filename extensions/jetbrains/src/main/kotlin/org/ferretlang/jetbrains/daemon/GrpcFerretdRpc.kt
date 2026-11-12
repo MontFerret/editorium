@@ -9,6 +9,7 @@ import io.grpc.stub.MetadataUtils
 import io.grpc.stub.StreamObserver
 import io.grpc.stub.ClientResponseObserver
 import io.grpc.stub.ClientCallStreamObserver
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import org.ferretlang.jetbrains.runtime.FerretRuntimeCatalog
@@ -103,17 +104,33 @@ internal class GrpcFerretdRpc private constructor(
         return GrpcFerretdMapper.workspace(response.workspace)
     }
 
-    override suspend fun createSession(workspaceId: String, relativePath: String): FerretdSession {
-        val response = unary<CreateSessionResponse>("create-session") { observer ->
-            executions.withDeadlineAfter(CONTROL_TIMEOUT_SECONDS, TimeUnit.SECONDS).createSession(
-                toProtocolCreateSessionRequest(workspaceId, relativePath),
-                observer,
-            )
+    override suspend fun createSession(workspaceId: String, relativePath: String, runtimeName: String): FerretdSession {
+        var observedId: String? = null
+        try {
+            // A message can carry a published ID even when the final gRPC status is an error.
+            val response = unary<CreateSessionResponse>("create-session", onMessage = { message ->
+                if (observedId == null) observedId = message.session.id.value.takeIf(String::isNotBlank)
+            }) { observer ->
+                executions.withDeadlineAfter(SESSION_ACQUISITION_TIMEOUT_SECONDS, TimeUnit.SECONDS).createSession(
+                    toProtocolCreateSessionRequest(workspaceId, relativePath, runtimeName),
+                    observer,
+                )
+            }
+            if (!response.hasSession()) {
+                throw FerretdRpcException("create-session", "The Ferret daemon returned no session.")
+            }
+            return GrpcFerretdMapper.session(response.session)
+        } catch (error: Exception) {
+            val id = observedId ?: throw error
+            withContext(NonCancellable) {
+                try {
+                    closeSession(id)
+                } catch (cleanup: Exception) {
+                    error.addSuppressed(cleanup)
+                }
+            }
+            throw error
         }
-        if (!response.hasSession()) {
-            throw FerretdRpcException("create-session", "The Ferret daemon returned no session.")
-        }
-        return GrpcFerretdMapper.session(response.session)
     }
 
     override suspend fun createExecution(
@@ -207,6 +224,7 @@ internal class GrpcFerretdRpc private constructor(
 
     private suspend fun <Response> unary(
         operation: String,
+        onMessage: ((Response) -> Unit)? = null,
         invoke: (StreamObserver<Response>) -> Unit,
     ): Response = suspendCancellableCoroutine { continuation ->
         val completed = AtomicBoolean()
@@ -217,6 +235,7 @@ internal class GrpcFerretdRpc private constructor(
             }
 
             override fun onNext(value: Response) {
+                onMessage?.invoke(value)
                 if (response != null) {
                     if (completed.compareAndSet(false, true)) {
                         continuation.resumeWithException(
@@ -265,6 +284,7 @@ internal class GrpcFerretdRpc private constructor(
         const val API_MAJOR = 1
         const val API_MINOR = 1
         const val JSON_CONTENT_TYPE = "application/json"
+        private const val SESSION_ACQUISITION_TIMEOUT_SECONDS = 30L
         private const val CONTROL_TIMEOUT_SECONDS = 5L
 
         fun connect(port: Int, token: String): GrpcFerretdRpc = GrpcFerretdRpc(
@@ -272,17 +292,18 @@ internal class GrpcFerretdRpc private constructor(
             token,
         )
 
-        internal fun toProtocolCreateSessionRequest(workspaceId: String, relativePath: String): CreateSessionRequest =
+        internal fun toProtocolCreateSessionRequest(workspaceId: String, relativePath: String, runtimeName: String): CreateSessionRequest =
             CreateSessionRequest.newBuilder()
                 .setWorkspaceId(WorkspaceId.newBuilder().setValue(workspaceId))
                 .setRelativePath(relativePath)
+                .setRuntimeName(runtimeName)
                 .build()
 
         internal fun toProtocolExecutionOptions(options: FerretdExecutionOptions): ProtocolExecutionOptions =
             ProtocolExecutionOptions.newBuilder()
                 .setOutputContentType(options.outputContentType)
                 .apply {
-                    options.workingDirectory?.let { setWorkingDirectory(it.toString()) }
+                    options.workingDirectory?.let { setWorkingDirectory(it) }
                 }
                 .build()
     }

@@ -94,6 +94,51 @@ class FerretExecutionIntegrationTest {
     }
 
     @Test
+    fun offlineWireSelectionsFailAndLocalReusesTheDaemon() = runBlocking {
+        val file = write("offline.json", """{"defaultRuntime":"App","runtimes":[
+            {"name":"App","provider":"wire","endpoint":"tcp://127.0.0.1:1","insecure":true,"connectTimeout":"250ms"}
+        ]}""")
+        connection.applyConfigPath(file.toString())
+        val source = write("main.fql", "RETURN 42")
+        val generation = connection.generation()
+        for (selector in listOf("", "App")) {
+            val run = execute(source, runtimeName = selector)
+            assertEquals(run.debug(), 1, run.exit.awaitResult())
+            assertTrue(run.debug(), run.stderr.any { it.contains("unavailable", ignoreCase = true) })
+            assertTrue(run.stdout.isEmpty())
+            assertTrue(run.system.contains("Preparing Ferret runtime 'App' (wire)."))
+        }
+        val local = execute(source, runtimeName = "local")
+        assertEquals(local.debug(), 0, local.exit.awaitResult())
+        assertEquals("42", local.stdout.single().trim())
+        assertEquals(generation.number, connection.generation().number)
+    }
+
+    @Test
+    fun hostedApplicationExecutesAfterAnotherHostedRunIsStopped() = runBlocking {
+        val endpoint = System.getenv("FERRETD_TEST_WIRE_ENDPOINT")
+        org.junit.Assume.assumeTrue("Requires the CLI examples/wire-host fixture", !endpoint.isNullOrEmpty())
+        val file = write("hosted.json", """{"defaultRuntime":"App","runtimes":[
+            {"name":"App","provider":"wire","endpoint":"$endpoint","insecure":true}
+        ]}""")
+        connection.applyConfigPath(file.toString())
+        val source = write("hosted.fql", "RETURN DEMO::IDENTITY(@value)")
+        val bindings = FerretParameterBindingsJson.parse("""{"value":42}""")
+        for (selector in listOf("", "App")) {
+            val run = execute(source, bindings, workingDirectory = null, runtimeName = selector)
+            val exit = run.exit.awaitResult()
+            assertEquals(run.debug(), 0, exit)
+            assertEquals("42", run.stdout.single().trim())
+            if (selector.isEmpty()) {
+                val wait = execute(write("wait.fql", "WAIT(30s)\nRETURN DEMO::IDENTITY(1)"), workingDirectory = null)
+                wait.awaitStarted()
+                assertTrue(wait.handle.cancel())
+                assertEquals(130, wait.exit.awaitResult())
+            }
+        }
+    }
+
+    @Test
     fun malformedFileRetainsTheDaemonDiagnosticAndNeverFallsBack() = runBlocking {
         val file = write("broken config.json", """{"unknownField":true}""")
         connection.applyConfigPath(file.toString())
@@ -160,7 +205,7 @@ class FerretExecutionIntegrationTest {
 
             val generation = connection.generation()
             val workspaceId = connection.workspace(generation, root.toRealPath())
-            val session = generation.rpc.createSession(workspaceId, relativePath)
+            val session = generation.rpc.createSession(workspaceId, relativePath, "")
             try {
                 assertEquals(workspaceId, session.workspaceId)
                 assertEquals(relativePath, session.relativePath)
@@ -314,7 +359,7 @@ class FerretExecutionIntegrationTest {
         val result = execute(write("parameters.fql", "RETURN @value"), bindings)
         assertEquals(0, result.exit.awaitResult().also { if (it != 0) error(result.debug()) })
         assertEquals(JsonParser.parseString(json), JsonParser.parseString(result.stdout.single()))
-        assertEquals(listOf("Ferret execution completed."), result.system.toList())
+        assertEquals(listOf("Preparing Ferret runtime 'local' (native).", "Ferret execution completed."), result.system.toList())
         assertEquals(listOf("output", "terminated:0"), result.events.toList())
     }
 
@@ -451,6 +496,7 @@ class FerretExecutionIntegrationTest {
         workingDirectory: Path? = root,
         projectRoot: Path = root,
         daemon: FerretdDaemonConnection = connection,
+        runtimeName: String = "",
     ): RecordingExecution {
         val sink = RecordingExecution()
         sink.handle = FerretExecutionClient(daemon).start(
@@ -459,6 +505,7 @@ class FerretExecutionIntegrationTest {
                 workingDirectory?.toString().orEmpty(),
                 projectRoot.toString(),
                 parameters,
+                runtimeName,
             ),
             sink,
         )

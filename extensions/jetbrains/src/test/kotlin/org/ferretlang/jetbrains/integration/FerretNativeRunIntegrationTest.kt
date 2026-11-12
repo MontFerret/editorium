@@ -47,6 +47,9 @@ class FerretNativeRunIntegrationTest : BasePlatformTestCase() {
         val configuration = FerretRunConfigurationType.getInstance().configurationFactories.single()
             .createTemplateConfiguration(project) as FerretRunConfiguration
         configuration.sourcePath = path.toString()
+        val runtimeConfig = Files.writeString(path.resolveSibling("runtimes.json"), "{}")
+        connection.applyConfigPath(runtimeConfig.toString())
+        configuration.runtimeName = "local"
         configuration.workingDirectory = ""
         configuration.setGeneratedName()
         val content = AtomicReference<RunContentDescriptor>()

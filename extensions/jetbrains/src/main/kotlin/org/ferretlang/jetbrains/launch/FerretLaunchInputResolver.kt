@@ -25,7 +25,9 @@ internal object FerretLaunchInputResolver {
         }
     }
 
-    fun resolve(input: FerretLaunchInput): FerretResolvedLaunchInput {
+    fun resolve(input: FerretLaunchInput): FerretResolvedLaunchInput = resolve(input, "native")
+
+    fun resolve(input: FerretLaunchInput, provider: String): FerretResolvedLaunchInput {
         val projectBase = input.projectBasePath?.let {
             canonicalDirectory(configuredPath(it, null, "project base directory"), "project base directory")
         }
@@ -37,8 +39,13 @@ internal object FerretLaunchInputResolver {
         require(source.startsWith(workspace)) {
             "The Ferret source file must be inside the project workspace: $source is outside $workspace"
         }
-        val workingDirectory = input.workingDirectory.takeUnless(String::isBlank)?.let {
-            canonicalDirectory(configuredPath(it, projectBase, "working directory"), "working directory")
+        val directory = input.workingDirectory.takeUnless(String::isBlank)
+        val workingDirectory = when (provider) {
+            "native" -> directory?.let {
+                canonicalDirectory(configuredPath(it, projectBase, "working directory"), "working directory").toString()
+            }
+            "wire" -> directory
+            else -> throw FerretLaunchException("Unsupported Ferret runtime provider '$provider'. Choose a native or Wire runtime.")
         }
         return FerretResolvedLaunchInput(source, workspace, workingDirectory, input.bindings)
     }

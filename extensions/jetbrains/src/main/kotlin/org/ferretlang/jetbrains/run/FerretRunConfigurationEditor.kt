@@ -8,6 +8,9 @@ import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.options.ConfigurationException
 import com.intellij.openapi.options.SettingsEditor
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.ComponentWithBrowseButton
+import com.intellij.openapi.ui.TextComponentAccessor
+import com.intellij.ui.components.JBTextField
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
@@ -20,25 +23,27 @@ class FerretRunConfigurationEditor(
     project: Project,
 ) : SettingsEditor<FerretRunConfiguration>() {
     private val sourcePathField = TextFieldWithBrowseButton()
-    private val workingDirectoryField = TextFieldWithBrowseButton()
+    // TextFieldWithBrowseButton installs local path completion even when its button is disabled.
+    private val workingDirectoryField = JBTextField()
+    private val workingDirectoryControl = ComponentWithBrowseButton(workingDirectoryField, null)
     private val parametersField = JBTextArea(5, 40)
 
-    private val runtime = FerretRuntimePicker(project.service())
+    private val runtime = FerretRuntimePicker(project.service()) { provider ->
+        workingDirectoryControl.setButtonEnabled(provider == "native")
+        workingDirectoryControl.setButtonVisible(provider == "native")
+    }
 
     init {
         Disposer.register(this, runtime)
+        Disposer.register(this, workingDirectoryControl)
         sourcePathField.addBrowseFolderListener(
             project,
             FileChooserDescriptorFactory
                 .createSingleFileDescriptor(FerretLanguageFileType)
                 .withTitle("Select Ferret Source File"),
         )
-        workingDirectoryField.addBrowseFolderListener(
-            project,
-            FileChooserDescriptorFactory
-                .createSingleFolderDescriptor()
-                .withTitle("Select Working Directory"),
-        )
+        val directories = FileChooserDescriptorFactory.createSingleFolderDescriptor().withTitle("Select Working Directory")
+        workingDirectoryControl.addBrowseFolderListener(project, directories, TextComponentAccessor.TEXT_FIELD_WHOLE_TEXT)
         parametersField.emptyText.text = "{}"
     }
 
@@ -67,10 +72,10 @@ class FerretRunConfigurationEditor(
             .createFormBuilder()
             .addLabeledComponent("Runtime:", runtime.component)
             .addComponent(runtime.actions)
-            .addComponent(JBLabel(FerretdDaemonConnection.LOCAL_LIMITATION))
+            .addComponent(JBLabel(FerretdDaemonConnection.DEBUG_LIMITATION))
             .addLabeledComponent("Source file:", sourcePathField)
-            .addLabeledComponent("Working directory:", workingDirectoryField)
-            .addComponent(JBLabel("Leave blank to use the compilation workspace."))
+            .addLabeledComponent("Working directory:", workingDirectoryControl)
+            .addComponent(JBLabel("Leave blank to use the selected runtime’s default. Wire paths are interpreted on the runtime host."))
             .addComponent(JBLabel("Parameters: {\"limit\": 10} binds @limit. Keys omit @; blank means {}."))
             .addLabeledComponentFillVertically("Parameters (JSON object):", JBScrollPane(parametersField))
             .panel

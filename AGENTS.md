@@ -69,8 +69,9 @@ The current integration state is intentionally asymmetric:
   configuration through native XDebugger and LSP4J Debug, with one independently
   owned `ferretd dap` process per launch. Suspended frames provide lazy scopes,
   typed variables, expression evaluation, and native watches. Project settings support
-  runtime catalog discovery. Run and Debug currently require an empty runtime
-  configuration path and the daemon-default selection.
+  runtime catalog discovery. Run binds its daemon default or exact named runtime
+  at session creation. Debug requires an empty runtime configuration path and
+  the daemon-default selection.
 * Both integrations consume the daemon version from `ferretd.json`; neither may
   introduce a separate editor-local pin.
 
@@ -264,10 +265,12 @@ do not synthesize collection paging or nested evaluation expressions.
 
 For execution, the canonical project base is the compilation workspace when it
 exists; otherwise the canonical source parent is used. The source must remain
-inside that workspace. The optional configured working directory is a separate
-runtime filesystem root, may be outside the workspace, and is omitted from the
-daemon request when blank. Launcher mechanics are isolated from generation and
-workspace-cache ownership.
+inside that workspace. The working directory is a separate runtime filesystem
+root. Omit a blank value, canonicalize native overrides on the plugin host,
+and forward Wire overrides verbatim. Run resolves the selector and provider
+using its admitted generation’s catalog and checks the returned session name.
+Keep its activity lease through session acquisition and cleanup. Launcher
+mechanics are isolated from generation and workspace-cache ownership.
 
 Do not assume feature parity with VS Code. Implement only the capabilities
 actually supported by the current JetBrains integration or required by the task.
@@ -579,6 +582,13 @@ Changes to publishing workflows require reviewing both local package validation
 and remote marketplace assumptions.
 
 ## Tests and validation
+
+Every extension's validation workflow must run its full `make test <extension>`
+suite separately on Linux, macOS, and Windows for relevant pushes and pull
+requests. Use versioned runner images and let every OS finish when another
+fails. CI must also build, lint, package, and verify each extension's
+distributable. Each integration owns the additional checks for its editor and
+package format.
 
 Add or update tests for every behavior change.
 

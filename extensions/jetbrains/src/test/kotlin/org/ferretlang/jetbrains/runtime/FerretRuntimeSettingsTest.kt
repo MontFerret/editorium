@@ -34,7 +34,7 @@ class FerretRuntimeSettingsTest : BasePlatformTestCase() {
             assertEquals("", connection.configPath)
             configurable.reset()
             assertEquals("", field.text)
-            connection.admitLocalLaunch("").use {
+            connection.admitDebug("").use {
                 field.text = "runtime file.json"
                 configurable.apply()
                 assertFalse(configurable.isModified)

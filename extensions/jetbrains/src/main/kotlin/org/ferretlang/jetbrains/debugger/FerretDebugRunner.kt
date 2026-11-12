@@ -41,7 +41,7 @@ class FerretDebugRunner : AsyncProgramRunner<RunnerSettings>() {
         input: FerretLaunchInput,
         start: (XDebugProcessStarter) -> RunContentDescriptor?,
     ): RunContentDescriptor? {
-        val launch = project.service<FerretdDaemonConnection>().admitLocalLaunch(input.runtimeName)
+        val launch = project.service<FerretdDaemonConnection>().admitDebug(input.runtimeName)
         var process: FerretDebugProcess? = null
         try {
             FileDocumentManager.getInstance().saveAllDocuments()

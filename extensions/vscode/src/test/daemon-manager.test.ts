@@ -1,5 +1,6 @@
 import * as assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { join, resolve } from 'node:path';
 import { PassThrough } from 'node:stream';
 
 import {
@@ -105,11 +106,10 @@ suite('Ferret daemon lifecycle', () => {
       timing,
     );
 
-    await controller.updateWorkspaceFolders([
-      '/workspace',
-      '/workspace',
-      '/workspace/packages/app',
-    ]);
+    const root = resolve('workspace');
+    const app = join(root, 'packages', 'app');
+    const added = join(root, 'new');
+    await controller.updateWorkspaceFolders([root, root, app]);
     await controller.start();
     process.stderr.write('daemon detail\n');
     await immediate();
@@ -119,23 +119,13 @@ suite('Ferret daemon lifecycle', () => {
       '--endpoint',
       endpoint.cli,
     ]);
-    assert.deepStrictEqual(state.openRoots, [
-      '/workspace',
-      '/workspace/packages/app',
-    ]);
+    assert.deepStrictEqual(state.openRoots, [root, app]);
     assert.strictEqual(controller.workspaceRegistry.workspaces.length, 2);
     assert.ok(output.infos.some((line) => line.includes('daemon detail')));
 
-    await controller.updateWorkspaceFolders([
-      '/workspace/packages/app',
-      '/workspace/new',
-    ]);
-    assert.deepStrictEqual(state.closeWorkspaceIds, ['workspace:/workspace']);
-    assert.deepStrictEqual(state.openRoots, [
-      '/workspace',
-      '/workspace/packages/app',
-      '/workspace/new',
-    ]);
+    await controller.updateWorkspaceFolders([app, added]);
+    assert.deepStrictEqual(state.closeWorkspaceIds, [`workspace:${root}`]);
+    assert.deepStrictEqual(state.openRoots, [root, app, added]);
 
     const invalidationOrder: string[] = [];
     observedSignal?.addEventListener(
@@ -284,6 +274,40 @@ suite('Ferret daemon lifecycle', () => {
     assert.strictEqual(endpoint.disposeCalls, 1);
   });
 
+  test('replaces a failed startup channel and retains the ready one', async () => {
+    const process = new FakeProcess();
+    const failed = rpcState();
+    const ready = rpcState();
+    const controller = new DaemonController(
+      configuration,
+      new FakeOutput(),
+      () => process,
+      async () => fakeEndpoint(),
+      (_target, signal) => {
+        if (failed.getInfoCalls > 0) {
+          return successfulConnection(process, signal, ready);
+        }
+        return connection(signal, failed, process, (_request, _metadata, _options, callback) => {
+          callback(serviceError(status.UNAVAILABLE, 'missing pipe'), { serverInfo: undefined });
+          return fakeCall;
+        });
+      },
+      timing,
+    );
+
+    try {
+      await controller.start();
+      await controller.updateWorkspaceFolders([resolve('workspace')]);
+      assert.strictEqual(failed.channelCloseCalls, 1);
+      assert.strictEqual(failed.getInfoCalls, 1);
+      assert.deepStrictEqual(ready.openRoots, [resolve('workspace')]);
+      assert.strictEqual(ready.channelCloseCalls, 0);
+    } finally {
+      await controller.stop();
+    }
+    assert.strictEqual(ready.channelCloseCalls, 1);
+  });
+
   test('bounds readiness and force-terminates an unready daemon', async () => {
     const process = new FakeProcess();
     const endpoint = fakeEndpoint();
@@ -318,6 +342,7 @@ suite('Ferret daemon lifecycle', () => {
     );
 
     assert.ok(state.getInfoCalls > 1);
+    assert.strictEqual(state.channelCloseCalls, state.getInfoCalls);
     assert.strictEqual(process.killCalls, 1);
     assert.deepStrictEqual(process.killSignals, ['SIGKILL']);
     assert.strictEqual(endpoint.disposeCalls, 1);

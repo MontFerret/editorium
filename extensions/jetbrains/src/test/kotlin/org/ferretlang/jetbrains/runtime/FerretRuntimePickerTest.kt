@@ -61,6 +61,7 @@ class FerretRuntimePickerTest : BasePlatformTestCase() {
             second.firePopupMenuWillBecomeVisible()
             assertEquals(CatalogStatus.LOADING, connection.catalogState.value.status)
             Disposer.dispose(defaultEditor)
+            config.workingDirectory = """  C:\Remote Host\data  """
             config.runtimeName = "Removed"
             namedEditor.resetFrom(config)
             assertTrue(second.selectedItem.toString().contains("unresolved"))
@@ -74,7 +75,15 @@ class FerretRuntimePickerTest : BasePlatformTestCase() {
             assertEquals("Daemon default — Same (Wire)", second.getItemAt(0).toString())
             assertEquals("Same — local [native]", second.getItemAt(1).toString())
             assertEquals("Same — Wire [wire]", second.getItemAt(2).toString())
+            val directory = UIUtil.findComponentsOfType(namedEditor.component, com.intellij.openapi.ui.ComponentWithBrowseButton::class.java)
+                .single { it !is com.intellij.openapi.ui.TextFieldWithBrowseButton }
+            val browse = requireNotNull(UIUtil.findComponentOfType(directory, javax.swing.JButton::class.java))
+            assertFalse(browse.isEnabled)
+            second.selectedIndex = 1
+            assertTrue(browse.isEnabled)
             second.selectedIndex = 0
+            assertFalse(browse.isEnabled)
+            assertTrue((directory.childComponent as javax.swing.JTextField).isEditable)
             namedEditor.applyTo(config)
             assertEquals("", config.runtimeName)
             assertTrue(popup.isVisible)
@@ -87,6 +96,7 @@ class FerretRuntimePickerTest : BasePlatformTestCase() {
             }, 5)
             namedEditor.applyTo(config)
             assertEquals("Wire", config.runtimeName)
+            assertEquals("""  C:\Remote Host\data  """, config.workingDirectory)
         } finally {
             gate.complete(Unit)
             Disposer.dispose(defaultEditor)

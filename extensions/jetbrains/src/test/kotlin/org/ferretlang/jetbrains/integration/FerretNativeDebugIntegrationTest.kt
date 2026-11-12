@@ -92,7 +92,7 @@ class FerretNativeDebugIntegrationTest : HeavyPlatformTestCase() {
             connection.applyConfigPath("after-debug.json")
             connection.applyConfigPath("")
             assertEquals(CatalogStatus.RELOAD_REQUIRED, connection.catalogState.value.status)
-            org.junit.Assert.assertThrows(com.intellij.execution.ExecutionException::class.java) { connection.admitLocalLaunch("") }
+            org.junit.Assert.assertThrows(com.intellij.execution.ExecutionException::class.java) { connection.admitDebug("") }
         } finally {
             content.get()?.processHandler?.destroyProcess()
             scope.cancel()

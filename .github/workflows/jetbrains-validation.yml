@@ -8,6 +8,7 @@ on:
       - '.gitattributes'
       - '.github/workflows/jetbrains-validation.yml'
       - 'Makefile'
+      - 'buf.yaml'
       - 'ferretd.json'
       - 'extensions/jetbrains/**'
       - 'shared/**'
@@ -19,6 +20,7 @@ on:
       - '.gitattributes'
       - '.github/workflows/jetbrains-validation.yml'
       - 'Makefile'
+      - 'buf.yaml'
       - 'ferretd.json'
       - 'extensions/jetbrains/**'
       - 'shared/**'
@@ -37,7 +39,7 @@ jobs:
       matrix:
         os:
           - ubuntu-24.04
-          - macos-15
+          - macos-26
           - windows-2025
     runs-on: ${{ matrix.os }}
 

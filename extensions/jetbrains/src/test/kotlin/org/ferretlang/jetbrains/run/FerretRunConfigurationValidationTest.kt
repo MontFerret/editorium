@@ -51,7 +51,7 @@ class FerretRunConfigurationValidationTest : BasePlatformTestCase() {
         val projectBase = Path.of(requireNotNull(project.basePath))
 
         assertEquals(projectBase.resolve("nested/query.fql").normalize(), configuration.resolvedSourcePathOrNull())
-        assertEquals(projectBase.resolve("runtime").normalize(), configuration.resolvedWorkingDirectoryOrNull())
+        assertEquals("runtime", configuration.launchInput().workingDirectory)
     }
 
     fun testAcceptsAnEmptyWorkingDirectoryAndBlankBindings() {
@@ -153,7 +153,7 @@ class FerretRunConfigurationValidationTest : BasePlatformTestCase() {
             workingDirectory = "bad\u0000directory"
         }
 
-        val error = configurationError(configuration)
+        val error = executionError(configuration)
 
         assertTrue(error.localizedMessage.orEmpty().contains("working directory path is invalid"))
     }

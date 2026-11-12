@@ -13,7 +13,7 @@ internal interface FerretdRpc {
 
     suspend fun openWorkspace(root: Path): FerretdWorkspace
 
-    suspend fun createSession(workspaceId: String, relativePath: String): FerretdSession
+    suspend fun createSession(workspaceId: String, relativePath: String, runtimeName: String): FerretdSession
 
     suspend fun createExecution(
         sessionId: String,
@@ -45,7 +45,9 @@ internal data class FerretdServerInfo(
     val instanceId: String,
     val apiMajor: Int,
     val apiMinor: Int,
-)
+) {
+    val supportsRuntimeSelection: Boolean get() = apiMajor == 1 && apiMinor >= 3
+}
 
 internal data class FerretdWorkspace(
     val id: String,
@@ -71,7 +73,7 @@ internal enum class FerretdExecutionState {
 
 internal data class FerretdExecutionOptions(
     val outputContentType: String,
-    val workingDirectory: Path?,
+    val workingDirectory: String?,
 )
 
 internal data class FerretdExecutionOutput(

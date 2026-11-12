@@ -44,7 +44,9 @@ export function createConnection(
   signal: AbortSignal,
 ): DaemonConnection {
   const credentials = ChannelCredentials.createInsecure();
-  const channel = new Channel(target, credentials, {});
+  const channel = new Channel(target, credentials, {
+    'grpc.use_local_subchannel_pool': 1,
+  });
   const options = { channelOverride: channel };
 
   return {

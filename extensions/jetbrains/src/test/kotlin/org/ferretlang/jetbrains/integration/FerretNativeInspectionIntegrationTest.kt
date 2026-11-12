@@ -152,7 +152,7 @@ class FerretNativeInspectionIntegrationTest : HeavyPlatformTestCase() {
         val environment = ExecutionEnvironmentBuilder.create(DefaultDebugExecutor.getDebugExecutorInstance(), configuration).build()
         val result = manager.newSessionBuilder(object : XDebugProcessStarter() {
             override fun start(session: XDebugSession): XDebugProcess = FerretDebugProcess(
-                session, launch, project.service<FerretdDaemonConnection>().admitLocalLaunch(launch.runtimeName),
+                session, launch, project.service<FerretdDaemonConnection>().admitDebug(launch.runtimeName),
             )
         }).environment(environment).sessionName(name).showTab(false).startSession().also(launches::add)
         // This fixture invokes the builder directly, outside ExecutionManager's process-start notification.

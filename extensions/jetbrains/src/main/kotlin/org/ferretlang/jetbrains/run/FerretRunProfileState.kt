@@ -23,7 +23,7 @@ class FerretRunProfileState internal constructor(
         runner: ProgramRunner<*>,
     ): ExecutionResult {
         val connection = project.service<FerretdDaemonConnection>()
-        val launch = connection.admitLocalLaunch(input.runtimeName)
+        val launch = connection.admitRun(input.runtimeName)
         try {
             FerretLaunchInputResolver.checkSavedSource(input)
             val process = FerretExecutionProcessHandler()

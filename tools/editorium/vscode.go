@@ -51,7 +51,7 @@ type (
 
 var vscodeTargets = []vscodeTarget{
 	{ID: "darwin-arm64", Platform: "darwin", Architecture: "arm64", FerretdTargetID: "darwin-arm64", Runner: "macos-26"},
-	{ID: "darwin-x64", Platform: "darwin", Architecture: "amd64", FerretdTargetID: "darwin-x64", Runner: "macos-15-intel"},
+	{ID: "darwin-x64", Platform: "darwin", Architecture: "amd64", FerretdTargetID: "darwin-x64", Runner: "macos-26-intel"},
 	{ID: "linux-x64", Platform: "linux", Architecture: "amd64", FerretdTargetID: "linux-x64", Runner: "ubuntu-24.04"},
 	{ID: "linux-arm64", Platform: "linux", Architecture: "arm64", FerretdTargetID: "linux-arm64", Runner: "ubuntu-24.04-arm"},
 	{ID: "win32-x64", Platform: "windows", Architecture: "amd64", FerretdTargetID: "win32-x64", Runner: "windows-2025"},
@@ -79,7 +79,7 @@ func runVSCodeOperation(ctx context.Context, root, operation string) error {
 
 		return err
 	case "build":
-		return runCommand(ctx, vscodePackageRoot(root), nil, executableName("npm"), "run", "build")
+		return runVSCodeScript(ctx, vscodePackageRoot(root), nil, "build")
 	case "test":
 		if _, err := syncFerretdProto(ctx, root, false, nil); err != nil {
 			return err
@@ -100,11 +100,11 @@ func runVSCodeOperation(ctx context.Context, root, operation string) error {
 		}
 
 		packageRoot := vscodePackageRoot(root)
-		if err := runCommand(ctx, packageRoot, nil, executableName("npm"), "test"); err != nil {
+		if err := runVSCodeScript(ctx, packageRoot, nil, "test"); err != nil {
 			return err
 		}
 
-		return runCommand(ctx, packageRoot, []string{"FERRETD_TEST_PATH=" + prepared.StagedBinary}, executableName("npm"), "run", "test:integration")
+		return runVSCodeScript(ctx, packageRoot, []string{"FERRETD_TEST_PATH=" + prepared.StagedBinary}, "test:integration")
 	case "lint":
 		if _, err := syncFerretdProto(ctx, root, false, nil); err != nil {
 			return err
@@ -114,12 +114,19 @@ func runVSCodeOperation(ctx context.Context, root, operation string) error {
 			return err
 		}
 
-		return runCommand(ctx, vscodePackageRoot(root), nil, executableName("npm"), "run", "lint")
+		return runVSCodeScript(ctx, vscodePackageRoot(root), nil, "lint")
 	case "clean":
 		return cleanVSCode(root)
 	default:
 		return fmt.Errorf("unknown VS Code operation %q", operation)
 	}
+}
+
+func runVSCodeScript(ctx context.Context, packageRoot string, environment []string, script string) error {
+	if runtime.GOOS == "windows" {
+		return runCommand(ctx, packageRoot, environment, "cmd.exe", "/d", "/c", "npm.cmd", "run", script)
+	}
+	return runCommand(ctx, packageRoot, environment, "npm", "run", script)
 }
 
 func selectedTarget() (vscodeTarget, error) {
@@ -474,7 +481,7 @@ func testInstalledVSIX(ctx context.Context, root string, target vscodeTarget) er
 	packageRoot := vscodePackageRoot(root)
 	path := vscodeVSIXPath(root, manifest.Version, target)
 
-	return runCommand(ctx, packageRoot, []string{"FERRET_VSIX_PATH=" + path}, executableName("npm"), "run", "test:installed")
+	return runVSCodeScript(ctx, packageRoot, []string{"FERRET_VSIX_PATH=" + path}, "test:installed")
 }
 
 func readVSCodeManifest(root string) (vscodeManifest, error) {

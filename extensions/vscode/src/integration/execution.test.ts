@@ -428,7 +428,7 @@ class RealExecutionFixture {
     );
     try {
       await fixture.daemon.updateWorkspaceFolders([...roots.values()]);
-      await fixture.daemon.start();
+      await fixture.startDaemon();
       fixture.daemon.requireConnection();
       assert.strictEqual(
         fixture.daemon.workspaceRegistry.workspaces.length,
@@ -437,6 +437,18 @@ class RealExecutionFixture {
       return fixture;
     } catch (error) {
       await fixture.dispose();
+      throw error;
+    }
+  }
+
+  public async startDaemon(): Promise<void> {
+    const firstLine = this.output.infos.length;
+    try {
+      await this.daemon.start();
+    } catch (error) {
+      if (error instanceof Error) {
+        error.message += `\nProcess log:\n${this.output.infos.slice(firstLine).join('\n')}`;
+      }
       throw error;
     }
   }
@@ -983,7 +995,7 @@ RETURN [first, second, third]`,
         'A crashed execution must not be recreated automatically',
       );
 
-      await fixture.daemon.start();
+      await fixture.startDaemon();
       const freshWorkspace =
         fixture.daemon.workspaceRegistry.workspaces[0]?.id;
       assert.ok(freshWorkspace);
@@ -1003,7 +1015,7 @@ RETURN [first, second, third]`,
 
       await replaceDocument(long, 'RETURN "after restart"\n');
       assert.strictEqual(await long.save(), true);
-      await fixture.daemon.start();
+      await fixture.startDaemon();
       const afterRestart = await runToTerminal(fixture, long);
       assertFinished(afterRestart.change, 'completed');
       assert.strictEqual(resultValue(afterRestart.change), 'after restart');

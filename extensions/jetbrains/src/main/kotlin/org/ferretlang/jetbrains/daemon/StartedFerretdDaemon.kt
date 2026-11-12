@@ -3,11 +3,13 @@ package org.ferretlang.jetbrains.daemon
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import org.ferretlang.jetbrains.execution.FerretdRpc
+import org.ferretlang.jetbrains.execution.FerretdServerInfo
 import java.util.concurrent.atomic.AtomicBoolean
 
 internal data class StartedFerretdDaemon(
     val process: Process,
     val rpc: FerretdRpc,
+    val info: FerretdServerInfo,
     val lost: CompletableDeferred<Throwable>,
     val stopping: AtomicBoolean,
     val stderr: Job,
