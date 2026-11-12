@@ -252,9 +252,12 @@ FERRETD_TEST_PATH=/absolute/path/to/ferretd npm run test:integration
 Normal `make test vscode` stages the daemon and runs the complete unit, daemon
 transport, and real-ferretd integration suites. The native npm command is an
 extension implementation detail and fails when its override is missing or
-unusable. CI additionally runs the installed-VSIX bundled-server smoke test.
-Both test labels pin VS Code 1.95.0, the extension's compatibility baseline, so
-test-host behavior does not drift with the latest Stable release.
+unusable. Both test labels pin VS Code 1.95.0, the extension's compatibility
+baseline, so test-host behavior does not drift with the latest Stable release.
+
+The separate installed-VSIX smoke test uses stable VS Code. Linux x64 CI
+verifies the editor archive against Microsoft's SHA-256 and passes its
+executable to the test via `VSCODE_TEST_EXECUTABLE_PATH`.
 
 ## Run and debug
 
