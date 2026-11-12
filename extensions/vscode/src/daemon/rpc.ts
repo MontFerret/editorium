@@ -44,11 +44,8 @@ export function createConnection(
   signal: AbortSignal,
 ): DaemonConnection {
   const credentials = ChannelCredentials.createInsecure();
-  // The daemon creates its local socket or named pipe after we spawn it.
-  // Keep connection attempts within the startup handshake's time budget.
   const channel = new Channel(target, credentials, {
-    'grpc.initial_reconnect_backoff_ms': 100,
-    'grpc.max_reconnect_backoff_ms': 500,
+    'grpc.use_local_subchannel_pool': 1,
   });
   const options = { channelOverride: channel };
 

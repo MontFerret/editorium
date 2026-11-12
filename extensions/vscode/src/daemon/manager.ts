@@ -84,7 +84,7 @@ interface ProcessExit {
 
 interface ActiveDaemon {
   readonly abort: AbortController;
-  readonly connection: DaemonConnection;
+  connection: DaemonConnection;
   readonly endpoint: DaemonEndpoint;
   readonly exited: Promise<ProcessExit>;
   readonly process: DaemonProcess;
@@ -243,6 +243,13 @@ export class DaemonController implements DaemonConnectionProvider {
     let lastError: unknown;
 
     while (Date.now() < deadline) {
+      // A connection attempted before the named pipe exists can stay unavailable.
+      // Retry only the startup handshake. The first successful channel owns all RPCs.
+      if (lastError !== undefined) {
+        const previous = active.connection;
+        active.connection = this.connect(active.endpoint.grpc, active.abort.signal);
+        previous.channel.close();
+      }
       const attemptDeadline = Math.min(
         deadline,
         Date.now() + this.timing.readinessAttemptTimeout,

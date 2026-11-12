@@ -274,6 +274,40 @@ suite('Ferret daemon lifecycle', () => {
     assert.strictEqual(endpoint.disposeCalls, 1);
   });
 
+  test('replaces a failed startup channel and retains the ready one', async () => {
+    const process = new FakeProcess();
+    const failed = rpcState();
+    const ready = rpcState();
+    const controller = new DaemonController(
+      configuration,
+      new FakeOutput(),
+      () => process,
+      async () => fakeEndpoint(),
+      (_target, signal) => {
+        if (failed.getInfoCalls > 0) {
+          return successfulConnection(process, signal, ready);
+        }
+        return connection(signal, failed, process, (_request, _metadata, _options, callback) => {
+          callback(serviceError(status.UNAVAILABLE, 'missing pipe'), { serverInfo: undefined });
+          return fakeCall;
+        });
+      },
+      timing,
+    );
+
+    try {
+      await controller.start();
+      await controller.updateWorkspaceFolders([resolve('workspace')]);
+      assert.strictEqual(failed.channelCloseCalls, 1);
+      assert.strictEqual(failed.getInfoCalls, 1);
+      assert.deepStrictEqual(ready.openRoots, [resolve('workspace')]);
+      assert.strictEqual(ready.channelCloseCalls, 0);
+    } finally {
+      await controller.stop();
+    }
+    assert.strictEqual(ready.channelCloseCalls, 1);
+  });
+
   test('bounds readiness and force-terminates an unready daemon', async () => {
     const process = new FakeProcess();
     const endpoint = fakeEndpoint();
@@ -308,6 +342,7 @@ suite('Ferret daemon lifecycle', () => {
     );
 
     assert.ok(state.getInfoCalls > 1);
+    assert.strictEqual(state.channelCloseCalls, state.getInfoCalls);
     assert.strictEqual(process.killCalls, 1);
     assert.deepStrictEqual(process.killSignals, ['SIGKILL']);
     assert.strictEqual(endpoint.disposeCalls, 1);
