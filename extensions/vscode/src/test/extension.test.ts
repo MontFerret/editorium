@@ -509,10 +509,11 @@ suite('Ferret declarative language support', () => {
 async function waitForActivation(
   extension: vscode.Extension<unknown>,
 ): Promise<void> {
-  const deadline = Date.now() + 5_000;
+  // Activation includes the daemon's bounded 10-second startup handshake.
+  const deadline = Date.now() + 15_000;
 
   while (!extension.isActive && Date.now() < deadline) {
-    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
   }
 }
 
