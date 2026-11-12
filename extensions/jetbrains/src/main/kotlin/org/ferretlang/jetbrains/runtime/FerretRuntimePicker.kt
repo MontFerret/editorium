@@ -2,6 +2,7 @@ package org.ferretlang.jetbrains.runtime
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.ui.ComboBox
+import com.intellij.ide.ui.laf.darcula.ui.DarculaJBPopupComboPopup
 import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
 import javax.swing.DefaultListCellRenderer
 import javax.swing.DefaultComboBoxModel
@@ -14,6 +15,8 @@ internal class FerretRuntimePicker(private val connection: FerretdDaemonConnecti
     }
 
     private val combo = ComboBox<Choice>().apply {
+        setSwingPopup(false)
+        putClientProperty(DarculaJBPopupComboPopup.USE_LIVE_UPDATE_MODEL, true)
         renderer = DefaultListCellRenderer().apply { putClientProperty("html.disable", true) }
     }
     val component get(): javax.swing.JComponent = combo

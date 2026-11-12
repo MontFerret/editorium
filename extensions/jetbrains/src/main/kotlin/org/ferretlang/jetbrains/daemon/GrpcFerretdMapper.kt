@@ -1,6 +1,7 @@
 package org.ferretlang.jetbrains.daemon
 
 import org.ferretlang.jetbrains.protocol.ferretd.daemon.v1.ListRuntimesResponse
+import org.jdom.Verifier
 import org.ferretlang.jetbrains.runtime.FerretRuntimeCatalog
 import org.ferretlang.jetbrains.runtime.FerretRuntimeDescriptor
 
@@ -43,6 +44,9 @@ internal object GrpcFerretdMapper {
     fun runtimeCatalog(response: ListRuntimesResponse): FerretRuntimeCatalog {
         val names = mutableSetOf<String>()
         val entries = response.runtimesList.map {
+            if (!it.name.codePoints().allMatch(Verifier::isXMLCharacter)) {
+                protocol("list-runtimes", "A runtime name contains a character that cannot be saved in project XML. Rename that runtime.")
+            }
             if (it.name.isBlank() || it.name != it.name.trim() || !names.add(it.name) ||
                 it.label.isEmpty() || it.provider.isEmpty()
             ) {

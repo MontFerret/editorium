@@ -1,5 +1,7 @@
 package org.ferretlang.jetbrains.runtime
 
+import com.intellij.ide.ui.laf.darcula.ui.DarculaJBPopupComboPopup
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.util.Disposer
 import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
@@ -13,7 +15,6 @@ import org.ferretlang.jetbrains.run.FerretRunConfigurationEditor
 import org.ferretlang.jetbrains.run.FerretRunConfigurationType
 import java.nio.file.Path
 import javax.swing.JComboBox
-import javax.swing.event.PopupMenuEvent
 
 class FerretRuntimePickerTest : BasePlatformTestCase() {
     fun testEditorsShareDiscoveryAndRetainTheSelectionAcrossLoadingAndMissingEntries() {
@@ -43,8 +44,21 @@ class FerretRuntimePickerTest : BasePlatformTestCase() {
             assertEquals(CatalogStatus.UNLOADED, connection.catalogState.value.status)
             val first = combo(defaultEditor)
             val second = combo(namedEditor)
-            openPicker(first)
-            openPicker(second)
+            first.firePopupMenuWillBecomeVisible()
+            assertFalse((second as ComboBox<*>).isSwingPopup)
+            @Suppress("UNCHECKED_CAST")
+            val popup = object : DarculaJBPopupComboPopup<Any>(second as JComboBox<Any>) {
+                // The headless IDE does not map a native window. Exercise the platform's visible-popup
+                // model-change and selection handlers with the actual list that it creates.
+                override fun isVisible(): Boolean = getPopup()?.isDisposed == false
+            }
+            popup.show()
+            val listPopup = requireNotNull(popup.popup)
+            Disposer.register(testRootDisposable) {
+                popup.uninstallingUI()
+                if (!listPopup.isDisposed) Disposer.dispose(listPopup)
+            }
+            second.firePopupMenuWillBecomeVisible()
             assertEquals(CatalogStatus.LOADING, connection.catalogState.value.status)
             Disposer.dispose(defaultEditor)
             config.runtimeName = "Removed"
@@ -63,7 +77,14 @@ class FerretRuntimePickerTest : BasePlatformTestCase() {
             second.selectedIndex = 0
             namedEditor.applyTo(config)
             assertEquals("", config.runtimeName)
-            second.selectedIndex = 2
+            assertTrue(popup.isVisible)
+            assertSame(listPopup, popup.popup)
+            assertEquals(4, listPopup.list.model.size)
+            listPopup.list.selectedIndex = 2
+            listPopup.handleSelect(true)
+            PlatformTestUtil.waitWithEventsDispatching("Selection from the open popup did not reach the editor", {
+                second.selectedIndex == 2
+            }, 5)
             namedEditor.applyTo(config)
             assertEquals("Wire", config.runtimeName)
         } finally {
@@ -77,8 +98,4 @@ class FerretRuntimePickerTest : BasePlatformTestCase() {
 
     private fun combo(editor: FerretRunConfigurationEditor): JComboBox<*> =
         requireNotNull(UIUtil.findComponentOfType(editor.component, JComboBox::class.java))
-
-    private fun openPicker(combo: JComboBox<*>) {
-        combo.popupMenuListeners.forEach { it.popupMenuWillBecomeVisible(PopupMenuEvent(combo)) }
-    }
 }

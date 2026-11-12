@@ -14,6 +14,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 
 class FerretdRuntimeDiscoveryTest {
     @get:Rule val folder = TemporaryFolder()
@@ -21,14 +22,17 @@ class FerretdRuntimeDiscoveryTest {
     private val paths = CopyOnWriteArrayList<Path?>()
     private val version = "1.0.0-alpha.11"
     private lateinit var rpc: FakeFerretdRpc
+    private lateinit var process: FakeDaemonProcess
+    private var exitObservationGate: CountDownLatch? = null
     private var configure: (FakeFerretdRpc) -> Unit = {}
     private val settings = FerretRuntimeSettings()
     private val connection = FerretdDaemonConnection.testing(scope, FerretdDaemonLauncher.testing(
         scope, { FerretdInstallation(Path.of("ferretd"), version) },
         { _, _, path ->
             paths.add(path)
-            FakeDaemonProcess.ready(version).also { process ->
-                rpc = FakeFerretdRpc(version, folder.root.toPath(), emptyList(), process::destroy).also(configure)
+            FakeDaemonProcess.ready(version, exitObservationGate = exitObservationGate).also {
+                process = it
+                rpc = FakeFerretdRpc(version, folder.root.toPath(), emptyList(), it::destroy).also(configure)
             }
         },
         { _, _ -> rpc },
@@ -46,6 +50,7 @@ class FerretdRuntimeDiscoveryTest {
         val first = folder.newFile().toPath()
         val second = folder.newFile().toPath()
         connection.applyConfigPath(first.toString())
+        assertThrows(ExecutionException::class.java) { connection.admitLocalLaunch("") }
         connection.applyConfigPath(second.toString())
         assertTrue(paths.isEmpty())
         val entered = CompletableDeferred<Unit>()
@@ -104,6 +109,43 @@ class FerretdRuntimeDiscoveryTest {
         connection.admitLocalLaunch("").close()
         assertEquals(1, paths.size)
         assertEquals(2, rpc.calls.count { it == "listRuntimes" })
+    }
+
+    @Test
+    fun failedFirstStartupKeepsItsAdoptedConfiguration() = runBlocking {
+        val missing = folder.root.toPath().resolve("missing.json").toString()
+        connection.applyConfigPath(missing)
+        connection.ensureCatalog()!!.join()
+        assertEquals(CatalogStatus.DISCOVERY_FAILED, state.status)
+        connection.applyConfigPath("")
+        assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
+        assertThrows(ExecutionException::class.java) { connection.admitLocalLaunch("") }
+        assertTrue(paths.isEmpty())
+        connection.reloadRuntimes().join()
+        connection.admitLocalLaunch("").close()
+    }
+
+    @Test
+    fun replacementExitingDuringRetryAdmissionRequiresReload(): Unit = runBlocking {
+        val observeExit = CountDownLatch(1)
+        exitObservationGate = observeExit
+        try {
+            configure = { it.discover = { error("RPC unavailable") } }
+            connection.reloadRuntimes().join()
+            assertEquals(CatalogStatus.DISCOVERY_FAILED, state.status)
+            // The OS can report exit between Retry choosing a generation and sending the request.
+            // Keep the process observer from publishing the loss until Retry handles it.
+            process.exitAfterNextLivenessCheck.set(true)
+            configure = {}
+            rpc.discover = { catalog("obsolete") }
+            connection.retryDiscovery()!!.join()
+            assertEquals(1, paths.size)
+            assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
+            assertNull(state.catalog)
+            assertThrows(ExecutionException::class.java) { connection.admitLocalLaunch("") }
+        } finally {
+            observeExit.countDown()
+        }
     }
 
     @Test

@@ -7,6 +7,7 @@ import java.io.OutputStream
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 internal class FakeDaemonProcess(
@@ -15,6 +16,7 @@ internal class FakeDaemonProcess(
     private val requiresForcedTermination: Boolean = false,
 ) : Process() {
     private val stopped = CountDownLatch(1)
+    val exitAfterNextLivenessCheck = AtomicBoolean()
     private val exit = AtomicInteger()
     private val stderr = ByteArrayInputStream(stderrText.toByteArray(StandardCharsets.UTF_8))
     val destroyCalls = AtomicInteger()
@@ -52,7 +54,11 @@ internal class FakeDaemonProcess(
         return this
     }
 
-    override fun isAlive(): Boolean = stopped.count != 0L
+    override fun isAlive(): Boolean {
+        val alive = stopped.count != 0L
+        if (exitAfterNextLivenessCheck.getAndSet(false)) crash(1)
+        return alive
+    }
 
     fun crash(exitCode: Int) {
         exit.set(exitCode)

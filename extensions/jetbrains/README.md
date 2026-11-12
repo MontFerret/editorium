@@ -123,13 +123,15 @@ label and provider. Discovery also identifies the configured default. These are
 configuration metadata. An offline application can appear in the catalog.
 
 **Apply** saves the path. Before any launch or discovery has adopted a
-configuration, first use loads the latest saved path. After adoption, a path
-change requires **Reload runtimes**. Edits to the file at the same path also
+configuration, first use loads the latest saved path. Once a launch or discovery
+has used a configuration, changing or clearing its path requires **Reload runtimes**,
+even after the session ends or daemon startup fails. Edits to the file at the same path also
 require **Reload runtimes**. Reload starts a fresh project execution daemon
 and reads its catalog. Finish or stop active Run and Debug sessions and wait
 for cleanup before reloading. Pending changes block new launches. If the
 replacement started but its catalog request failed, **Retry discovery** reads
-that same daemon. A startup failure requires correcting the error and reloading.
+that same daemon. If the replacement exits, use **Reload runtimes** to start another.
+If replacement startup fails, correct the error and reload.
 
 The Run/Debug **Runtime** picker saves **Daemon default** as an empty selection,
 or saves an exact, case-sensitive runtime name, including explicit `local`.

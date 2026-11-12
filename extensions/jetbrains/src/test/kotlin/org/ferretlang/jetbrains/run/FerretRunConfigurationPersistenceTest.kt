@@ -4,6 +4,7 @@ import com.intellij.execution.RunManager
 import com.intellij.execution.configurations.RuntimeConfigurationError
 import com.intellij.execution.impl.RunManagerImpl
 import com.intellij.execution.impl.RunnerAndConfigurationSettingsImpl
+import com.intellij.openapi.util.JDOMUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.jdom.Element
 import org.junit.Assert
@@ -42,7 +43,7 @@ class FerretRunConfigurationPersistenceTest : BasePlatformTestCase() {
     fun testRuntimeSelectionRoundTripsThroughEditorSerializationAndDuplication() {
         val manager = RunManager.getInstance(project) as RunManagerImpl
         val factory = FerretRunConfigurationType.getInstance().configurationFactories.single()
-        for (name in listOf("", "local", "MyApplication", "removed")) {
+        for (name in listOf("", "local", "MyApplication", "removed", "应用 🦦 <&\"", "🦦")) {
             val settings = manager.createConfiguration("runtime", factory) as RunnerAndConfigurationSettingsImpl
             val config = settings.configuration as FerretRunConfiguration
             config.runtimeName = name
@@ -57,7 +58,7 @@ class FerretRunConfigurationPersistenceTest : BasePlatformTestCase() {
             val xml = Element("configuration")
             settings.writeExternal(xml)
             val copy = RunnerAndConfigurationSettingsImpl(manager)
-            copy.readExternal(xml, false)
+            copy.readExternal(JDOMUtil.load(JDOMUtil.writeElement(xml)), false)
             val restored = copy.configuration as FerretRunConfiguration
             assertEquals(name, restored.runtimeName)
             assertEquals(name, (restored.clone() as FerretRunConfiguration).runtimeName)

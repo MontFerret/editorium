@@ -54,7 +54,7 @@ internal class FerretdDaemonConnection private constructor(
     private val lock = settings
     private val replacement = Mutex()
     private var saved = Configuration("")
-    private var adopted = saved
+    private var adopted: Configuration? = null
     private var launches = 0
     private var pendingReload = false
     private var catalogJob: Job? = null
@@ -98,16 +98,15 @@ internal class FerretdDaemonConnection private constructor(
 
     private fun updateSavedPath(path: String) {
         if (path == saved.path) return
-        pendingReload = pendingReload || active != null || starting != null || catalogJob != null || launches > 0
+        pendingReload = adopted != null
         saved = Configuration(path)
-        if (!pendingReload) adopted = saved
         discardCatalog()
         publish(if (pendingReload) CatalogStatus.RELOAD_REQUIRED else CatalogStatus.UNLOADED)
     }
 
     fun admitLocalLaunch(runtimeName: String): LocalLaunch = synchronized(lock) {
         checkOpen()
-        if (pendingReload || adopted !== saved) {
+        if (pendingReload) {
             val action = when (state.value.status) {
                 CatalogStatus.RELOADING -> "Wait for runtime discovery to finish."
                 CatalogStatus.DISCOVERY_FAILED -> "Retry discovery for the saved runtime configuration."
@@ -116,10 +115,14 @@ internal class FerretdDaemonConnection private constructor(
             throw ExecutionException("$action $LOCAL_LIMITATION")
         }
         if (saved.path.isNotEmpty() || runtimeName.isNotEmpty()) throw ExecutionException(LOCAL_LIMITATION)
+        val launch = LocalLaunch(this, adoptSaved())
         launches++
         state.value = state.value.copy(busy = true)
-        LocalLaunch(this, adopted)
+        launch
     }
+
+    // Under the connection lock, capture the revision before handing work to another thread.
+    private fun adoptSaved(): Configuration = saved.also { adopted = it }
 
     private fun releaseLaunch() = synchronized(lock) {
         launches--
@@ -156,11 +159,12 @@ internal class FerretdDaemonConnection private constructor(
         checkOpen()
         catalogJob?.let { return it }
         if (state.value.status != CatalogStatus.DISCOVERY_FAILED) return null
-        if (pendingReload && !isLive(catalogGeneration)) {
+        val source = catalogGeneration?.takeIf(::isLive)
+        if (pendingReload && source == null) {
             publish(CatalogStatus.RELOAD_REQUIRED)
             return null
         }
-        discover(retryGeneration = catalogGeneration?.takeIf(::isLive))
+        discover(retryGeneration = source)
     }
 
     fun reloadRuntimes(): Job = synchronized(lock) {
@@ -189,7 +193,7 @@ internal class FerretdDaemonConnection private constructor(
 
     // The project owns the job. Editors subscribe to its state and can leave independently.
     private fun discover(replace: Boolean = false, retryGeneration: Generation? = null): Job {
-        val config = saved
+        val config = adoptSaved()
         publish(if (pendingReload) CatalogStatus.RELOADING else CatalogStatus.LOADING)
         val job = coroutineScope.launch(Dispatchers.Default, start = CoroutineStart.LAZY) {
             val request = coroutineContext[Job]
@@ -234,7 +238,6 @@ internal class FerretdDaemonConnection private constructor(
         val (old, startup) = synchronized(lock) {
             checkOpen()
             check(saved === config)
-            adopted = config
             val prior = active to starting
             active = null
             starting = null
@@ -248,7 +251,7 @@ internal class FerretdDaemonConnection private constructor(
 
     internal suspend fun generation(): Generation = generation(synchronized(lock) {
         check(!pendingReload) { "Reload runtimes before using the Ferret daemon." }
-        adopted
+        adoptSaved()
     })
 
     private suspend fun generation(config: Configuration): Generation {

@@ -5,9 +5,20 @@ import com.intellij.execution.executors.DefaultRunExecutor
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder
 import com.intellij.execution.runners.ProgramRunner
 import com.intellij.execution.ui.RunContentDescriptor
-import com.intellij.openapi.components.service
 import com.intellij.testFramework.PlatformTestUtil
+import com.intellij.testFramework.replaceService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
+import org.ferretlang.jetbrains.daemon.FakeDaemonProcess
 import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
+import org.ferretlang.jetbrains.daemon.FerretdDaemonLauncher
+import org.ferretlang.jetbrains.daemon.FerretdInstallation
+import org.ferretlang.jetbrains.debugger.FerretDapSession
+import org.ferretlang.jetbrains.debugger.FerretDebugLauncher
+import org.ferretlang.jetbrains.execution.FakeFerretdRpc
 import com.intellij.execution.RunManager
 import com.intellij.execution.actions.ConfigurationContext
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -18,6 +29,7 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.ferretlang.jetbrains.lang.FerretLanguageFileType
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicInteger
 
 class FerretRunConfigurationProducerTest : BasePlatformTestCase() {
     private lateinit var temporaryRoot: Path
@@ -68,13 +80,30 @@ class FerretRunConfigurationProducerTest : BasePlatformTestCase() {
     }
 
     fun testContextLaunchesRejectConfiguredFilesAndEveryExplicitRuntime() {
-        val file = createLocalFile("runtime.fql")
+        val root = Files.createDirectories(Path.of(requireNotNull(project.basePath)))
+        val source = Files.createTempFile(root, "runtime-", ".fql")
+        val file = createLocalFile(source.toString())
+        val configurationFile = Files.writeString(temporaryRoot.resolve("runtimes.json"), "{}")
         val config = requireNotNull(FerretRunConfigurationProducer().createConfigurationFromContext(contextFor(file)))
             .configuration as FerretRunConfiguration
-        val connection = project.service<FerretdDaemonConnection>()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val version = "1.0.0"
+        val process = FakeDaemonProcess.ready(version)
+        val rpc = FakeFerretdRpc(version, root, emptyList(), process::destroy)
+        val connection = FerretdDaemonConnection.testing(scope, FerretdDaemonLauncher.testing(
+            scope, { FerretdInstallation(Path.of("ferretd"), version) }, { _, _, _ -> process }, { _, _ -> rpc },
+        ))
+        project.replaceService(FerretdDaemonConnection::class.java, connection, testRootDisposable)
+        val dapStarts = AtomicInteger()
+        project.replaceService(FerretDebugLauncher::class.java, FerretDebugLauncher.testing(scope) { input, listener ->
+            FerretDapSession(input, listener, { Path.of("ferretd") }, {
+                dapStarts.incrementAndGet()
+                error("Restricted launch started a DAP process")
+            })
+        }, testRootDisposable)
         val executors = listOf(DefaultRunExecutor.getRunExecutorInstance(), DefaultDebugExecutor.getDebugExecutorInstance())
         try {
-            for ((path, name) in listOf("" to "local", "" to "App", "configured.json" to "")) {
+            for ((path, name) in listOf("" to "local", "" to "App", configurationFile.toString() to "")) {
                 config.runtimeName = name
                 connection.applyConfigPath(path)
                 for (executor in executors) {
@@ -91,10 +120,14 @@ class FerretRunConfigurationProducerTest : BasePlatformTestCase() {
                     }
                     assertTrue(reported.toString(), reported.message.orEmpty().contains("Daemon default"))
                     assertFalse(connection.catalogState.value.busy)
+                    assertEquals(0, rpc.calls.count { it.startsWith("createSession:") })
+                    assertEquals(0, dapStarts.get())
                 }
             }
         } finally {
-            connection.applyConfigPath("")
+            runBlocking { connection.closeForTest() }
+            scope.cancel()
+            Files.deleteIfExists(source)
         }
     }
 

@@ -22,6 +22,16 @@ class FerretRuntimeCatalogTest {
     }
 
     @Test
+    fun acceptsXmlMetacharactersAndUnicodeButRejectsAnUnpersistableName() {
+        val valid = "应用 🦦 <&\""
+        val response = ListRuntimesResponse.newBuilder().setDefaultRuntime(valid).addRuntimes(entry.toBuilder().setName(valid))
+        assertEquals(valid, GrpcFerretdMapper.runtimeCatalog(response.build()).runtimes.single().name)
+        response.addRuntimes(entry.toBuilder().setName("App\u0001Name"))
+        val error = assertThrows(FerretdRpcException::class.java) { GrpcFerretdMapper.runtimeCatalog(response.build()) }
+        assertTrue(error.message.orEmpty().contains("project XML"))
+    }
+
+    @Test
     fun rejectsMalformedCatalogsAndReportsUnsupportedDiscovery() {
         val single = ListRuntimesResponse.newBuilder().setDefaultRuntime("App").addRuntimes(entry)
         val malformed = listOf(
