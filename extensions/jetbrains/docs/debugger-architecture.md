@@ -9,11 +9,30 @@ values, selected-frame expression evaluation, and native watches. Inspection
 shares the ordered session queue, is invalidated per stop, and reports request
 failures locally while transport loss remains session-fatal. Null launch bindings
 are preserved by a parameter-specific DAP serializer.
-As of November 12, 2026, Run resolves the selected runtime through its project
-daemon generation and binds it at gRPC session creation. A Wire Run passes an
-explicit working directory to the application host. Native Run and Debug
-resolve that directory on the plugin host. Debug still requires an unconfigured
-daemon default and uses its own DAP process.
+With the alpha.11 pin, Run and Debug capture the project configuration at
+admission. Configured or explicit selections use the admitted generation’s
+catalog to resolve the exact runtime and its provider. An unconfigured default
+Debug launch uses native `local` directly. Native working-directory overrides
+resolve on the plugin host and nonblank Wire overrides travel verbatim.
+
+The connection resolves the saved path against the project base, normalizes
+it lexically, and uses that path for validation, SHA-256 reads, and both
+processes. If the first digest read loses access after validation, the admitted
+configuration requires Reload. Debug verifies the digest immediately before
+spawning its adapter with `--runtime-config` and again after initialization.
+A pre-launch adapter failure also triggers a cancellable recheck, since
+`ferretd` opens its configuration before reading `initialize`. Matching bytes
+preserve the adapter error. A mismatch invalidates discovery for the admitted
+revision and requires Reload. This detects edits across independent reads.
+The adapter supplies its own Boolean selection
+capability and, after `configurationDone`, acknowledges the acquired runtime.
+The ordered session queue publishes readiness and inspection after validation.
+Since the daemon starts execution before replying, an invalid acknowledgment
+requires prompt session cleanup.
+
+The startup deadline covers catalog preparation. Stop detaches the waiting Debug
+launch from project discovery and the activity lease covers owned-process cleanup.
+After startup the DAP session operates independently of the catalog daemon.
 See the [current README](../README.md#debugging) for supported
 behavior and source-snapshot limitations. The original spike text below is
 historical evidence, including its alpha.6 blockers and then-future task lists;

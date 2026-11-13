@@ -21,7 +21,7 @@ class FerretLaunchParityTest {
                 val configured = FerretLaunchInput("queries/main.fql", directory, root.toString(), bindings)
                 val resolved = FerretLaunchInputResolver.resolve(configured)
                 val run = FerretExecutionRequest.resolve(configured, "native")
-                val debug = FerretDapLaunchArguments.from(resolved)
+                val debug = FerretDapLaunchArguments.from(resolved, configured.runtimeName)
                 assertEquals(run.source.toString(), debug["program"])
                 assertEquals(run.workspaceRoot.toString(), debug["cwd"])
                 assertEquals(run.workingDirectory, debug["workingDirectory"])

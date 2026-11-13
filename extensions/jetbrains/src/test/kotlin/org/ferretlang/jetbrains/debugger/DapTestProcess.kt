@@ -1,6 +1,8 @@
 package org.ferretlang.jetbrains.debugger
 
 import org.eclipse.lsp4j.debug.services.IDebugProtocolClient
+import org.eclipse.lsp4j.jsonrpc.MessageConsumer
+import org.eclipse.lsp4j.jsonrpc.debug.messages.DebugResponseMessage
 import org.eclipse.lsp4j.jsonrpc.debug.DebugLauncher
 import java.io.ByteArrayInputStream
 import java.io.PipedInputStream
@@ -20,7 +22,14 @@ internal class DapTestProcess(adapter: DapTestAdapter, private val requiresForce
     val destroyCalls = AtomicInteger()
     val forceCalls = AtomicInteger()
     private val launcher = DebugLauncher.createLauncher(
-        adapter, IDebugProtocolClient::class.java, serverInput, serverOutput, executor, { it },
+        adapter, IDebugProtocolClient::class.java, serverInput, serverOutput, executor, { delegate ->
+            MessageConsumer { message ->
+                if (message is DebugResponseMessage && message.error == null) {
+                    adapter.responseBody(message.method, message.result)?.let { message.result = it }
+                }
+                delegate.consume(message)
+            }
+        },
     )
     private val listening = launcher.startListening()
 

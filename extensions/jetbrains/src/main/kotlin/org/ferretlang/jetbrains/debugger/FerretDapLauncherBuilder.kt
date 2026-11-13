@@ -1,5 +1,7 @@
 package org.ferretlang.jetbrains.debugger
 
+import com.google.gson.JsonElement
+import org.eclipse.lsp4j.jsonrpc.json.JsonRpcMethod
 import org.eclipse.lsp4j.debug.services.IDebugProtocolServer
 import org.eclipse.lsp4j.jsonrpc.MessageConsumer
 import org.eclipse.lsp4j.jsonrpc.MessageProducer
@@ -21,6 +23,12 @@ internal class FerretDapLauncherBuilder(
         setExceptionHandler { error ->
             FerretDapErrors.log("client request", error)
             ResponseError(ResponseErrorCode.InternalError, "The Ferret debug client cannot handle this adapter request.", null)
+        }
+    }
+
+    override fun getSupportedMethods(): MutableMap<String, JsonRpcMethod> = super.getSupportedMethods().apply {
+        for ((name, result) in mapOf("initialize" to FerretDapCapabilities::class.java, "launch" to JsonElement::class.java)) {
+            put(name, JsonRpcMethod.request(name, result, *getValue(name).parameterTypes))
         }
     }
 

@@ -25,7 +25,7 @@ import org.ferretlang.jetbrains.launch.FerretLaunchInput
 internal class FerretDebugProcess(
     session: XDebugSession,
     input: FerretLaunchInput,
-    launch: FerretdDaemonConnection.Launch,
+    private val launch: FerretdDaemonConnection.Launch,
 ) : XDebugProcess(session), FerretDapListener {
     private val launcher = session.project.service<FerretDebugLauncher>()
     internal val dap = launcher.createSession(input, this)
@@ -52,7 +52,7 @@ internal class FerretDebugProcess(
 
     override fun sessionInitialized() {
         if (!scope.isActive) return
-        scope.launch(start = CoroutineStart.UNDISPATCHED) { dap.run() }.invokeOnCompletion { scope.cancel() }
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { dap.run(launch::prepareDebugRuntime) }.invokeOnCompletion { scope.cancel() }
     }
 
     override fun doGetProcessHandler(): ProcessHandler = handler

@@ -5,15 +5,21 @@ import kotlinx.coroutines.*
 import org.ferretlang.jetbrains.execution.FakeFerretdRpc
 import org.ferretlang.jetbrains.runtime.CatalogStatus
 import org.ferretlang.jetbrains.runtime.FerretRuntimeCatalog
+import org.ferretlang.jetbrains.runtime.FerretRuntimeConfigFingerprint
 import org.ferretlang.jetbrains.runtime.FerretRuntimeSettings
 import org.ferretlang.jetbrains.runtime.FerretRuntimeDescriptor
 import org.junit.After
 import org.junit.Assert.*
+import org.junit.Assume.assumeNoException
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.IOException
+import java.nio.file.Files
+import org.ferretlang.jetbrains.debugger.DapTestLaunch
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.CountDownLatch
 
 class FerretdRuntimeDiscoveryTest {
@@ -25,6 +31,7 @@ class FerretdRuntimeDiscoveryTest {
     private lateinit var process: FakeDaemonProcess
     private var exitObservationGate: CountDownLatch? = null
     private var configure: (FakeFerretdRpc) -> Unit = {}
+    private var beforeCapture: suspend (Path) -> Unit = {}
     private val settings = FerretRuntimeSettings()
     private val connection = FerretdDaemonConnection.testing(scope, FerretdDaemonLauncher.testing(
         scope, { FerretdInstallation(Path.of("ferretd"), version) },
@@ -36,7 +43,10 @@ class FerretdRuntimeDiscoveryTest {
             }
         },
         { _, _ -> rpc },
-    ), settings)
+    ), settings) { path ->
+        beforeCapture(path)
+        FerretRuntimeConfigFingerprint.capture(path)
+    }
     private val state get() = connection.catalogState.value
 
     @After
@@ -50,7 +60,6 @@ class FerretdRuntimeDiscoveryTest {
         val first = folder.newFile().toPath()
         val second = folder.newFile().toPath()
         connection.applyConfigPath(first.toString())
-        assertThrows(ExecutionException::class.java) { connection.admitDebug("") }
         connection.applyConfigPath(second.toString())
         assertTrue(paths.isEmpty())
         val entered = CompletableDeferred<Unit>()
@@ -85,7 +94,7 @@ class FerretdRuntimeDiscoveryTest {
         connection.reloadRuntimes().join()
         assertFalse(original.process.isAlive)
         assertEquals(config, paths.last())
-        assertThrows(ExecutionException::class.java) { connection.admitDebug("") }
+        connection.admitDebug("").close()
     }
 
     @Test
@@ -236,6 +245,203 @@ class FerretdRuntimeDiscoveryTest {
         assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
         assertThrows(ExecutionException::class.java) { connection.admitDebug("") }
         assertEquals(1, paths.size)
+    }
+
+    @Test
+    fun lostFileBetweenValidationAndFirstReadBlocksAdmissionUntilReload() = runBlocking {
+        val file = folder.newFile().toPath()
+        connection.applyConfigPath(file.toString())
+        beforeCapture = { Files.delete(it) }
+        connection.ensureCatalog()!!.join()
+        assertTrue(paths.isEmpty())
+        assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
+        assertTrue(state.error.orEmpty().contains("Reload runtimes"))
+        Files.writeString(file, "")
+        assertNull(connection.retryDiscovery())
+        assertThrows(ExecutionException::class.java) { connection.admitDebug("local") }
+        beforeCapture = {}
+        connection.reloadRuntimes().join()
+        assertEquals(CatalogStatus.READY, state.status)
+        assertEquals(listOf(file), paths)
+    }
+
+    @Test
+    fun baselineReadDeniedAfterApplyLeavesTheNewPathAlone() = runBlocking {
+        val original = folder.newFile().toPath()
+        val next = folder.newFile().toPath()
+        val entered = CompletableDeferred<Path>()
+        val proceed = CompletableDeferred<Unit>()
+        beforeCapture = { path ->
+            entered.complete(path)
+            proceed.await()
+            throw SecurityException("private detail")
+        }
+        connection.applyConfigPath(original.toString())
+        connection.admitDebug("local").use { launch ->
+            val result = async { runCatching { launch.prepareDebugRuntime() }.exceptionOrNull() }
+            try {
+                assertEquals(original, withTimeout(5000) { entered.await() })
+                connection.applyConfigPath(next.toString())
+            } finally { proceed.complete(Unit) }
+            assertTrue(result.await()?.message.orEmpty().contains("Reload runtimes"))
+            assertEquals(next.toString(), connection.configPath)
+            assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
+            assertNull(state.error)
+            assertTrue(paths.isEmpty())
+        }
+        beforeCapture = {}
+        connection.reloadRuntimes().join()
+        assertEquals(listOf(next), paths)
+    }
+
+    @Test
+    fun serveDapAndFingerprintUseTheSameLexicallyNormalizedPath() = runBlocking {
+        val root = folder.root.toPath()
+        val target = Files.createDirectories(root.resolve("elsewhere/child"))
+        val link = root.resolve("link")
+        try {
+            Files.createSymbolicLink(link, target)
+        } catch (error: Exception) {
+            if (error !is IOException && error !is SecurityException && error !is UnsupportedOperationException) throw error
+            assumeNoException("Requires directory symlinks", error)
+        }
+        val file = Files.writeString(root.resolve("runtimes.json"), "catalog")
+        val other = Files.writeString(target.parent.resolve(file.fileName), "other")
+        val entered = link.resolve("..").resolve(file.fileName).toString()
+        connection.applyConfigPath(entered)
+        configure = { it.serverInfo = it.serverInfo.copy(apiMinor = 3) }
+        connection.admitDebug("").use { admitted ->
+            val runtime = admitted.prepareDebugRuntime()
+            assertEquals(listOf(file), paths)
+            assertEquals(entered, connection.configPath)
+            Files.writeString(other, "edit unrelated file")
+            val debug = DapTestLaunch(prepareRuntime = { runtime })
+            try {
+                debug.adapter.responseBody = { method, original ->
+                    when (method) {
+                        "initialize" -> mapOf("supportsConfigurationDoneRequest" to true, "supportsFerretRuntimeSelection" to true)
+                        "launch" -> mapOf("runtimeName" to runtime.descriptor.name)
+                        else -> original
+                    }
+                }
+                debug.start()
+                withTimeout(5000) { debug.session.launchCompleted.await() }
+                assertEquals(listOf("--runtime-config", file.toString()), debug.command.takeLast(2))
+                Files.writeString(file, "edit daemon file")
+                assertTrue(runCatching { runtime.verifyConfiguration() }.exceptionOrNull() is ExecutionException)
+                assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
+            } finally { debug.close() }
+        }
+    }
+
+    @Test
+    fun detectsFileChangesAcrossGenerationStartupAndRequiresExplicitReload() = runBlocking {
+        val file = folder.newFile().toPath()
+        connection.applyConfigPath(file.toString())
+        configure = { Files.writeString(file, "updated during startup") }
+        connection.ensureCatalog()!!.join()
+        assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
+        assertTrue(process.waitFor(5, TimeUnit.SECONDS))
+        assertNull(connection.retryDiscovery())
+        assertFalse(state.error.orEmpty().contains("updated during startup"))
+        configure = {}
+        connection.reloadRuntimes().join()
+        assertEquals(CatalogStatus.READY, state.status)
+    }
+
+    @Test
+    fun restoringOldBytesOrRetryingCannotClearStaleness() = runBlocking {
+        val file = folder.newFile().toPath()
+        configure = { it.serverInfo = it.serverInfo.copy(apiMinor = 3) }
+        connection.applyConfigPath(file.toString())
+        connection.admitDebug("local").use { admitted ->
+            val source = admitted.generation()
+            // Start discovery against its cached catalog while Debug detects the edit.
+            val runtime = admitted.prepareDebugRuntime()
+            Files.delete(file)
+            val discovery = connection.ensureCatalog()!!
+            val stale = runCatching { runtime.verifyConfiguration() }.exceptionOrNull()
+            assertTrue(stale is ExecutionException)
+            discovery.join()
+            assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
+            assertNull(state.catalog)
+            Files.writeString(file, "")
+            assertTrue(runCatching { runtime.verifyConfiguration() }.isFailure)
+            assertNull(connection.retryDiscovery())
+            assertNull(connection.ensureCatalog())
+            assertTrue(source.process.isAlive)
+        }
+        assertThrows(ExecutionException::class.java) { connection.admitRun("local") }
+        connection.reloadRuntimes().join()
+        assertEquals(CatalogStatus.READY, state.status)
+    }
+
+    @Test
+    fun configuredDebugChecksTheAdmittedFileBeforeSpawnAndAgainAfterInitialize() = runBlocking {
+        val file = folder.newFile().toPath()
+        val other = folder.newFile().toPath()
+        configure = { it.serverInfo = it.serverInfo.copy(apiMinor = 3) }
+        connection.applyConfigPath(file.toString())
+        for (editDuringInitialize in listOf(false, true)) {
+            connection.reloadRuntimes().join()
+            connection.admitDebug("").use { admitted ->
+                val debug = DapTestLaunch(prepareRuntime = admitted::prepareDebugRuntime)
+                try {
+                    if (!editDuringInitialize) Files.writeString(file, "before adapter startup")
+                    else debug.adapter.responseBody = { method, original ->
+                        if (method == "initialize") {
+                            connection.applyConfigPath(other.toString())
+                            Files.delete(file)
+                            mapOf("supportsConfigurationDoneRequest" to true, "supportsFerretRuntimeSelection" to true)
+                        } else original
+                    }
+                    debug.start()
+                    assertEquals(1, withTimeout(5000) { debug.session.completion.await() })
+                    assertEquals(if (editDuringInitialize) listOf("initialize", "disconnect") else emptyList(), debug.adapter.history.toList())
+                    if (editDuringInitialize) {
+                        assertEquals(file.toString(), debug.command.last())
+                        assertEquals(other.toString(), connection.configPath)
+                        assertNull(state.error)
+                    }
+                    assertTrue(debug.listener.errors.receive().contains("Reload runtimes"))
+                    assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
+                } finally { debug.close() }
+            }
+        }
+    }
+
+    @Test
+    fun debugAndRunShareCatalogButCancellingOneWaiterDoesNotCancelItsSibling() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val reply = CompletableDeferred<Unit>()
+        val name = "  App  "
+        configure = { fake ->
+            fake.serverInfo = fake.serverInfo.copy(apiMinor = 3)
+            fake.discover = { entered.complete(Unit); reply.await(); catalog(name) }
+        }
+        val file = folder.newFile().toPath()
+        connection.applyConfigPath(file.toString())
+        connection.admitDebug(name).use { debug ->
+            connection.admitRun("").use { run ->
+                val cancelled = async { debug.prepareDebugRuntime() }
+                withTimeout(5000) { entered.await() }
+                val sibling = async { run.resolveRuntime(run.generation()) }
+                cancelled.cancelAndJoin()
+                connection.applyConfigPath(folder.newFile().path)
+                reply.complete(Unit)
+                assertEquals(name, sibling.await().name)
+                val prepared = debug.prepareDebugRuntime()
+                assertEquals(name, prepared.descriptor.name)
+                assertEquals(file, prepared.configFile)
+                prepared.verifyConfiguration()
+                assertEquals(1, rpc.calls.count { it == "listRuntimes" })
+            }
+        }
+        connection.reloadRuntimes().join()
+        connection.admitDebug(name.trim()).use { missing ->
+            assertTrue(runCatching { missing.prepareDebugRuntime() }.exceptionOrNull()?.message.orEmpty().contains("unavailable"))
+            assertEquals(name.trim(), missing.runtimeName)
+        }
     }
 
     private fun catalog(name: String) = FerretRuntimeCatalog(name, listOf(FerretRuntimeDescriptor(name, name, "native")))
