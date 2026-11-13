@@ -121,20 +121,20 @@ jobs:
       - &certificate
         name: Prepare public author certificate chain
         env:
-          CERTIFICATE: ${{ vars.JETBRAINS_SIGNING_CERTIFICATE }}
+          CERTIFICATE: ${{ vars.JB_SIGNING_CERTIFICATE }}
         run: |
-          : "${CERTIFICATE:?Missing JETBRAINS_SIGNING_CERTIFICATE}"
+          : "${CERTIFICATE:?Missing JB_SIGNING_CERTIFICATE}"
           printf '%s\n' "$CERTIFICATE" > "$RUNNER_TEMP/ferret-certificate.pem"
           echo "JETBRAINS_CERTIFICATE_FILE=$RUNNER_TEMP/ferret-certificate.pem" >> "$GITHUB_ENV"
       - name: Sign the qualified archive
         id: sign
         env:
-          SIGNING_KEY: ${{ secrets.JETBRAINS_SIGNING_KEY }}
+          SIGNING_KEY: ${{ secrets.JB_SIGNING_KEY }}
           UNSIGNED_SHA256: ${{ needs.qualify.outputs.unsigned-sha256 }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          : "${SIGNING_KEY:?Missing JETBRAINS_SIGNING_KEY}"
+          : "${SIGNING_KEY:?Missing JB_SIGNING_KEY}"
           umask 077
           JETBRAINS_SIGNING_KEY_FILE="$(mktemp "$RUNNER_TEMP/ferret-key.XXXXXX")"
           export JETBRAINS_SIGNING_KEY_FILE
