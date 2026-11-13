@@ -86,7 +86,7 @@ export async function activate(
   const runtimes = new RuntimeCoordinator(
     daemon, readRuntimeConfiguration(), () => context.workspaceState.get(runtimeNameKey, ''),
   );
-  const activeController = new FerretServerController(languageServer, runtimes);
+  const activeController = new FerretServerController(languageServer, runtimes, () => readExecutable().executable);
   const activeExecutionManager = new FerretExecutionManager(
     daemon,
     new FerretExecutionClient(daemon),
@@ -116,10 +116,10 @@ export async function activate(
     activeExecutionFeedback.dispose();
     activeExecutionCommands.dispose();
     try {
-      const results = await Promise.allSettled([activeExecutionManager.dispose(), factory.shutdown()]);
-      for (const result of results) if (result.status === 'rejected') throw result.reason;
+      await activeController.stop(activeExecutionManager.dispose(), factory.shutdown());
     } finally {
-      await activeController.stop();
+      traceOutput.dispose();
+      output.dispose();
     }
   };
   const serverConfigurationListener =
@@ -139,14 +139,11 @@ export async function activate(
       });
     });
   context.subscriptions.push(
-    output,
-    traceOutput,
     serverConfigurationListener,
     activeExecutionCommands,
     activeExecutionFeedback,
     registerRuntimeCommands(runtimes, context.workspaceState),
     vscode.debug.registerDebugAdapterDescriptorFactory(ferretDebugType, factory),
-    vscode.debug.onDidTerminateDebugSession(session => factory.terminate(session)),
     debugConfigurationRegistration,
     debugCommandRegistration,
     vscode.commands.registerCommand(

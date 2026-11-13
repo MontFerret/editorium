@@ -93,6 +93,8 @@ interface ActiveDaemon {
   logReader?: Interface;
   ready: boolean;
   stopping: boolean;
+  usesWorkspaces: boolean;
+  workspaceSync?: Promise<void>;
 }
 
 export class DaemonController implements DaemonConnectionProvider {
@@ -124,9 +126,9 @@ export class DaemonController implements DaemonConnectionProvider {
     throw this.lastError ?? unavailableDaemon();
   }
 
-  public start(configPath?: string): Promise<void> {
+  public start(configPath?: string, executable = this.readExecutable().executable): Promise<void> {
     const revision = this.startupRevision;
-    return this.enqueue(() => this.startNow(revision, configPath));
+    return this.enqueue(() => this.startNow(revision, executable, configPath));
   }
 
   public stop(): Promise<void> {
@@ -144,7 +146,30 @@ export class DaemonController implements DaemonConnectionProvider {
   ): Promise<void> {
     this.desiredRoots = new Set(roots.map((root) => resolve(root)));
 
-    return this.enqueue(() => this.reconcileWorkspaces());
+    const active = this.active;
+    return active?.usesWorkspaces && !active.stopping
+      ? this.prepareWorkspaces(active.connection.signal) : Promise.resolve();
+  }
+
+  public prepareWorkspaces(signal: AbortSignal): Promise<void> {
+    const active = this.active;
+    if (!active?.ready || active.stopping || active.connection.signal !== signal || signal.aborted) {
+      return Promise.reject(new DaemonDisposedError());
+    }
+    active.usesWorkspaces = true;
+    return active.workspaceSync ??= this.enqueue(async () => {
+      try {
+        let roots: ReadonlySet<string>;
+        do {
+          signal.throwIfAborted();
+          roots = this.desiredRoots;
+          await this.reconcileWorkspaces(active, roots);
+          signal.throwIfAborted();
+        } while (roots !== this.desiredRoots);
+      } finally {
+        active.workspaceSync = undefined;
+      }
+    });
   }
 
   private enqueue(operation: () => Promise<void>): Promise<void> {
@@ -154,14 +179,13 @@ export class DaemonController implements DaemonConnectionProvider {
     return next;
   }
 
-  private async startNow(revision: number, configPath?: string): Promise<void> {
+  private async startNow(revision: number, executable: string, configPath?: string): Promise<void> {
     if (revision !== this.startupRevision) throw new DaemonDisposedError();
     if (this.survivingProcess) throw new Error('The previous Ferret daemon is still stopping.');
     if (this.active !== undefined) {
       return;
     }
 
-    const selection = this.readExecutable();
     let endpoint: DaemonEndpoint | undefined;
     let active: ActiveDaemon | undefined;
     let connection: DaemonConnection | undefined;
@@ -177,7 +201,7 @@ export class DaemonController implements DaemonConnectionProvider {
       const abort = new AbortController();
       connection = this.connect(endpoint.grpc, abort.signal);
       const process = this.createProcess(
-        selection.executable,
+        executable,
         args,
       );
       const exited = observeExit(process);
@@ -188,6 +212,7 @@ export class DaemonController implements DaemonConnectionProvider {
         exited,
         process,
         ready: false,
+        usesWorkspaces: false,
         stopping: false,
       };
       active.logReader = logDaemonOutput(process.stderr, this.output);
@@ -204,9 +229,6 @@ export class DaemonController implements DaemonConnectionProvider {
       void active.exited.then((result) =>
         this.handleUnexpectedExit(active!, result),
       );
-
-      await this.reconcileWorkspaces();
-      active.abort.signal.throwIfAborted();
     } catch (error) {
       const mapped = mapStartupError(error);
       this.lastError = mapped;
@@ -321,14 +343,9 @@ export class DaemonController implements DaemonConnectionProvider {
     );
   }
 
-  private async reconcileWorkspaces(): Promise<void> {
-    const active = this.active;
-    if (active?.ready !== true || active.abort.signal.aborted) {
-      return;
-    }
-
+  private async reconcileWorkspaces(active: ActiveDaemon, roots: ReadonlySet<string>): Promise<void> {
     for (const workspace of this.workspaceRegistry.workspaces) {
-      if (this.desiredRoots.has(workspace.root)) {
+      if (roots.has(workspace.root)) {
         continue;
       }
 
@@ -341,6 +358,7 @@ export class DaemonController implements DaemonConnectionProvider {
             ),
           active.abort.signal,
         );
+        active.abort.signal.throwIfAborted();
         this.workspaceRegistry.delete(workspace.root);
       } catch (error) {
         if (!active.abort.signal.aborted) {
@@ -351,7 +369,7 @@ export class DaemonController implements DaemonConnectionProvider {
       }
     }
 
-    for (const root of [...this.desiredRoots].sort()) {
+    for (const root of [...roots].sort()) {
       if (this.workspaceRegistry.get(root) !== undefined) {
         continue;
       }
@@ -362,6 +380,7 @@ export class DaemonController implements DaemonConnectionProvider {
             active.connection.workspaces.open({ root }, callback),
           active.abort.signal,
         );
+        active.abort.signal.throwIfAborted();
         const workspace = response.workspace;
         if (
           workspace?.id?.value === undefined ||

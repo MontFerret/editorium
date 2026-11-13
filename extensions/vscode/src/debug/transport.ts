@@ -9,6 +9,7 @@ interface Envelope {
   type?: string;
   command?: string;
   event?: string;
+  arguments?: { restart?: boolean };
   seq?: number;
   request_seq?: number;
   success?: boolean;
@@ -64,11 +65,18 @@ export class FerretDebugTransport implements vscode.DebugAdapter {
     if (this.child) this.child.stdin.write(frame);
     else this.outgoing.push(frame);
 
-    if (request.type === 'request' && request.command === 'disconnect') {
-      this.dispose();
-    } else {
-      this.starting ??= this.start();
+    if (request.type === 'request' && request.arguments?.restart !== true) {
+      if (request.command === 'disconnect' || (request.command === 'terminate' && !this.child)) {
+        this.dispose();
+        return;
+      }
+      if (request.command === 'terminate') {
+        // Let the child respond and VS Code disconnect normally, even when Stop
+        // arrives during initialization. A stalled child still has a deadline.
+        this.timer ??= setTimeout(() => this.dispose(), this.graceMs);
+      }
     }
+    this.starting ??= this.start();
   }
 
   private async start(): Promise<void> {
@@ -130,6 +138,7 @@ export class FerretDebugTransport implements vscode.DebugAdapter {
   public dispose(): void {
     if (this.stopping) return;
     this.stopping = true;
+    clearTimeout(this.timer);
     this.outgoing.length = 0;
     if (!this.child) {
       if (!this.starting) {

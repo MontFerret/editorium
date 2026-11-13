@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { readRuntimeSelector } from '../runtime/selector';
 
 import { RuntimeLaunchError } from '../runtime/errors';
 import { DaemonError } from '../daemon/errors';
@@ -133,8 +134,7 @@ export class ExecutionCommandController implements vscode.Disposable {
     }
 
     try {
-      const selector = options && typeof options === 'object' && 'runtimeName' in options
-        ? options.runtimeName : undefined;
+      const selector = readRuntimeSelector(options);
       await this.manager.run(document, undefined, selector);
     } catch (error) {
       await this.reportRunError(error);

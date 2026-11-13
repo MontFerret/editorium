@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { readRuntimeSelector } from '../runtime/selector';
 import type { FerretdExecutable } from '../ferretd';
 import type { RuntimeCoordinator } from '../runtime/coordinator';
 import type { ServerOutput } from '../server';
@@ -7,7 +8,7 @@ import { FerretDebugTransport } from './transport';
 export const ferretDebugType = 'ferret';
 
 export class FerretDebugAdapterDescriptorFactory implements vscode.DebugAdapterDescriptorFactory {
-  private readonly adapters = new Map<string, FerretDebugTransport>();
+  private readonly adapters = new Set<FerretDebugTransport>();
 
   public constructor(
     private readonly resolveExecutable: () => Promise<FerretdExecutable>,
@@ -17,21 +18,18 @@ export class FerretDebugAdapterDescriptorFactory implements vscode.DebugAdapterD
 
   public createDebugAdapterDescriptor(session: vscode.DebugSession): vscode.DebugAdapterInlineImplementation {
     if ('debugServer' in session.configuration) throw new Error('Remove debugServer to use the owned Ferret debug adapter.');
-    const reservation = this.runtime.admit(session.configuration.runtimeName);
+    const reservation = this.runtime.admit(readRuntimeSelector(session.configuration));
     const transport = new FerretDebugTransport(this.resolveExecutable, this.output, () => {
-      this.adapters.delete(session.id);
+      this.adapters.delete(transport);
       reservation.release();
     });
-    this.adapters.set(session.id, transport);
+    this.adapters.add(transport);
     transport.prepare();
     return new vscode.DebugAdapterInlineImplementation(transport);
   }
 
-  public terminate(session: vscode.DebugSession): void {
-    this.adapters.get(session.id)?.dispose();
-  }
-
   public async shutdown(): Promise<void> {
-    await Promise.all([...this.adapters.values()].map(adapter => adapter.shutdown()));
+    const results = await Promise.allSettled([...this.adapters].map(adapter => adapter.shutdown()));
+    for (const result of results) if (result.status === 'rejected') throw result.reason;
   }
 }

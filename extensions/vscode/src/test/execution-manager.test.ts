@@ -4,6 +4,7 @@ import * as assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 
 import * as vscode from 'vscode';
+import { FerretServerController } from '../controller';
 
 import { FerretWorkspaceRegistry } from '../daemon/workspaces';
 import {
@@ -25,6 +26,8 @@ import type {
 
 class FakeDaemon implements ExecutionDaemon {
   private generation = new AbortController();
+
+  public async prepareWorkspaces(): Promise<void> {}
 
   public requireConnection(): { readonly signal: AbortSignal } {
     return { signal: this.generation.signal };
@@ -405,6 +408,40 @@ suite('Ferret execution manager', () => {
     await fixture.runtime.reload();
     await disposeFixture(fixture);
   });
+
+  for (const hung of [true, false]) {
+    test(`deactivation settles ${hung ? 'an acquisition blocked until daemon abort' : 'a session arriving during graceful cleanup'}`, async () => {
+      const fixture = createFixture();
+      const entered = deferred(), acquire = deferred(), debug = deferred();
+      const signal = fixture.daemon.requireConnection().signal;
+      const create = fixture.client.createSession.bind(fixture.client);
+      fixture.client.createSession = async (...args) => {
+        entered.resolve();
+        if (hung) {
+          await new Promise<void>((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+        } else {
+          await acquire.promise;
+        }
+        return create(...args);
+      };
+      const controller = new FerretServerController({
+        start: async () => {}, stop: async () => {}, restart: async () => {},
+      }, { restartExecutable: async () => {}, shutdown: () => fixture.runtime.shutdown() }, () => 'ferretd');
+      const run = assert.rejects(fixture.manager.run(asTextDocument(ferretDocument('/workspace/late.fql'))));
+      await entered.promise;
+      fixture.runtime.closeAdmissions();
+      const stopped = controller.stop(fixture.manager.dispose(), debug.promise, hung ? 0 : 1500);
+      assert.throws(() => fixture.runtime.admit(), /shutting down/);
+      acquire.resolve();
+      await run;
+      debug.resolve();
+      await stopped;
+      assert.equal(signal.aborted, true);
+      assert.deepEqual(fixture.client.closeSessionIds, hung ? [] : ['session-1']);
+      assert.ok(!fixture.client.calls.includes('create-execution'));
+      fixture.documents.dispose();
+    });
+  }
 
   test('rejects a document changed while Session creation is pending', async () => {
     const fixture = createFixture();
@@ -887,7 +924,7 @@ function createFixture(): Fixture {
   const registry = new FerretWorkspaceRegistry();
   registry.set({ id: 'workspace-1', root: '/workspace' });
   const runtime = new RuntimeCoordinator({
-    start: async () => {}, stop: async () => {},
+    start: async () => {}, stop: async () => { daemon.replace(); },
     requireConnection: () => daemon.requireConnection() as DaemonConnection,
   }, { entered: '' }, () => '', async () => ({ defaultRuntime: 'local', runtimes: [{ name: 'local', label: 'Local', provider: 'native' }] }));
   const manager = new FerretExecutionManager(

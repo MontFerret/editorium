@@ -339,6 +339,20 @@ suite('Ferret debug configuration provider', () => {
     ]);
   });
 
+  test('checks all daemon selector spellings after variable substitution', async () => {
+    const host = new FakeConfigurationHost();
+    const provider = new FerretDebugConfigurationProvider(host, selector => {
+      if (selector !== undefined && selector !== '') throw new Error('explicit selector');
+    });
+    const config = { type: 'ferret', request: 'launch', name: 'current', program: '/file.fql' };
+    for (const options of [{ RuntimeName: 'local' }, { RUNTIMENAME: 1 }, { runtimeName: '', RuntimeName: '' }]) {
+      assert.equal(await provider.resolveDebugConfigurationWithSubstitutedVariables(undefined, { ...config, ...options }), undefined);
+    }
+    assert.equal(host.errors.length, 3);
+    const metadata = { ...config, RunTimeName: '', __sessionId: 'opaque' };
+    assert.strictEqual(await provider.resolveDebugConfigurationWithSubstitutedVariables(undefined, metadata), metadata);
+  });
+
   test('registers one initial provider and releases it', () => {
     const registrationHost = new FakeRegistrationHost();
     const configurationHost = new FakeConfigurationHost();

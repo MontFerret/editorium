@@ -65,6 +65,7 @@ export type ManagedExecutionChange =
     };
 
 export interface ExecutionDaemon {
+  prepareWorkspaces(signal: AbortSignal): Promise<void>;
   requireConnection(): { readonly signal: AbortSignal };
 }
 
@@ -253,6 +254,9 @@ export class FerretExecutionManager {
         throw managerError('workspace-unavailable', 'Ferret daemon changed during startup.');
       }
       pending.generation = generation;
+      this.assertGenerationStillUsable(pending, document.uri);
+      await this.daemon.prepareWorkspaces(generation);
+      this.assertGenerationStillUsable(pending, document.uri);
       const target = this.resolveTarget(document.uri);
       pending.workspaceId = target.workspaceId;
       pending.relativePath = target.relativePath;

@@ -1,7 +1,8 @@
 import * as assert from 'node:assert/strict';
-import { relative, join } from 'node:path';
+import { basename, relative, join } from 'node:path';
+import { watch } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 
 import * as vscode from 'vscode';
 
@@ -14,30 +15,64 @@ const currentFileSessionName = 'Debug Current Ferret File';
 const eventTimeout = 15_000;
 
 suite('ferretd DAP integration', () => {
-  test('restores standard F5 after clearing an adopted Wire configuration and reloading', async () => {
+  test('persists picker selection across Reload and restores local Run and F5', async () => {
     await configureFerretd();
     await vscode.extensions.getExtension(extensionId)!.activate();
-    const root = await mkdtemp(join(tmpdir(), 'ferret-debug-runtime-'));
+    const folder = vscode.workspace.workspaceFolders![0]!;
+    const root = await mkdtemp(join(folder.uri.fsPath, 'ferret-runtime-test-'));
     const config = join(root, 'runtimes.json');
     const settings = vscode.workspace.getConfiguration('ferret');
     const save = (path?: string) => settings.update('runtime.configPath', path, vscode.ConfigurationTarget.Global);
-    const program = vscode.Uri.joinPath(vscode.workspace.workspaceFolders![0]!.uri, 'sample.fql').fsPath;
+    const program = join(root, 'guard.fql');
+    const result = join(root, 'result.txt');
+    const pick = async (position: 'first' | 'last') => {
+      await vscode.commands.executeCommand('ferret.selectRuntime');
+      await vscode.commands.executeCommand('quickInput.' + position);
+      await vscode.commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem');
+    };
     const launch = { type: debugType, request: 'launch', name: 'Guarded Ferret launch', program };
     try {
       await writeFile(config, JSON.stringify({ defaultRuntime: 'offline', runtimes: [{
         name: 'offline', label: 'Offline', provider: 'wire', endpoint: 'tcp://127.0.0.1:1', insecure: true,
       }] }));
+      await writeFile(program, `RETURN IO::FS::WRITE("${basename(root)}/result.txt", TO_BINARY("local Run"))\n`);
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(program));
+      await vscode.window.showTextDocument(doc);
       await save(config);
       await vscode.commands.executeCommand('ferret.reloadRuntimes');
+      // The bundled catalog is ordered by name: Daemon default, local, offline.
+      await pick('last');
+      await vscode.commands.executeCommand('ferret.runFile');
       assert.equal(await vscode.debug.startDebugging(undefined, launch), false);
       await save();
       assert.equal(await vscode.debug.startDebugging(undefined, launch), false);
       await vscode.commands.executeCommand('ferret.reloadRuntimes');
-      assert.equal(await vscode.debug.startDebugging(undefined, { ...launch, runtimeName: 'local' }), false);
-      assert.equal(await vscode.debug.startDebugging(undefined, { ...launch, debugServer: 1234 }), false);
+      await vscode.commands.executeCommand('ferret.runFile');
+      assert.equal(await vscode.debug.startDebugging(undefined, launch), false, 'the unavailable saved name still gates Debug');
+      await assert.rejects(readFile(result), { code: 'ENOENT' });
+      await pick('first');
+      for (const options of [{ runtimeName: 'local' }, { RuntimeName: 'local' }, { debugServer: 1234 }]) {
+        assert.equal(await vscode.debug.startDebugging(undefined, { ...launch, ...options }), false);
+      }
+      const watcher = watch(root);
+      try {
+        const created = new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('Local Run did not write its result')), eventTimeout);
+          watcher.once('close', () => clearTimeout(timeout));
+          watcher.on('change', () => {
+            void readFile(result, 'utf8').then(value => {
+              if (value === 'local Run') resolve();
+            }, () => {});
+          });
+        });
+        await Promise.all([created, vscode.commands.executeCommand('ferret.runFile')]);
+      } finally {
+        watcher.close();
+      }
       await runCurrentFileDebugSession(() => vscode.commands.executeCommand('workbench.action.debug.start'));
     } finally {
       await save();
+      await pick('first');
       await rm(root, { recursive: true, force: true });
     }
   });

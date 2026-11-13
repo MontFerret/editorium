@@ -223,6 +223,32 @@ suite('Ferret language server lifecycle', () => {
     assert.strictEqual(clients[1]?.startCalls, 1);
   });
 
+  test('applies newer executable and arguments received during an in-flight restart', async () => {
+    let config = serverConfiguration('A');
+    let entered!: () => void, release!: () => void;
+    const starting = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const launches: ServerConfiguration[] = [];
+    const controller = new LanguageServerController(() => config, (snapshot, reportFailure) => {
+      const client = new FakeClient(reportFailure);
+      launches.push(snapshot);
+      if (snapshot.executable === 'B') client.start = async () => { client.running = true; entered(); await gate; };
+      return client;
+    }, new FakeOutput(), async () => false);
+    await controller.start();
+    config = serverConfiguration('B');
+    const first = controller.restart();
+    await starting;
+    config = { ...serverConfiguration('C'), extraArguments: ['--new'] };
+    const second = controller.restart();
+    assert.equal(controller.restart(), second);
+    release();
+    await Promise.all([first, second]);
+    assert.deepEqual(launches.map(value => value.executable), ['A', 'B', 'C']);
+    assert.deepEqual(launches[2]?.extraArguments, ['--new']);
+    await controller.stop();
+  });
+
   test('cleans up a partially started client', async () => {
     const output = new FakeOutput();
     let client: FakeClient | undefined;

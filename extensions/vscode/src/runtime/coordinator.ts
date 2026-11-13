@@ -29,7 +29,9 @@ interface Generation {
   readonly revision: Revision;
   retired: Promise<void>;
   startup?: Promise<DaemonConnection>;
+  readonly executable?: string;
   executableReplacement?: Promise<void>;
+  reloading?: boolean;
   connection?: DaemonConnection;
   discovery?: Promise<void>;
 }
@@ -40,9 +42,9 @@ export class RuntimeCoordinator {
   private readonly changes = new vscode.EventEmitter<void>();
   public readonly onDidChange = this.changes.event;
   private current?: Generation;
-  private pending = false;
+  private generationRequiresReload = false;
+  private readonly ownedWork = new Set<Promise<unknown>>();
   private replacing = false;
-  private reloadOperation?: Promise<void>;
   private usedDaemon = false;
   private activities = 0;
   private disposed = false;
@@ -55,6 +57,10 @@ export class RuntimeCoordinator {
     private readonly discover = listRuntimes,
   ) {}
 
+  private get pending(): boolean {
+    return this.generationRequiresReload || (this.current !== undefined && this.current.revision.config !== this.saved);
+  }
+
   public get view(): CatalogView {
     if (!this.pending || this.result.status === 'reload-required') return this.result;
     return { status: 'reload-required', message: reloadMessage };
@@ -62,11 +68,9 @@ export class RuntimeCoordinator {
 
   public save(config: RuntimeConfiguration): void {
     if (this.saved.entered === config.entered && this.saved.path === config.path && this.saved.problem === config.problem) return;
-    this.saved = config;
-    if (this.current) {
-      this.pending = true;
-      this.changes.fire();
-    }
+    // Each changed save has its own identity, even if it restores an earlier path.
+    this.saved = { ...config };
+    if (this.current) this.changes.fire();
   }
 
   public checkLaunch(selector?: unknown): void {
@@ -118,31 +122,33 @@ export class RuntimeCoordinator {
   public reload(): Promise<void> {
     if (this.disposed) return Promise.reject(new Error('Ferret is shutting down.'));
     if (this.activities) return Promise.reject(new Error('Wait for Ferret Run and Debug launches to finish before reloading runtimes.'));
-    if (this.reloadOperation) return this.reloadOperation;
+    if (!this.pending && this.current?.reloading && this.current.discovery) return this.current.discovery;
     this.replacing = true;
-    this.pending = false;
+    this.generationRequiresReload = false;
     const generation = this.replace({ config: this.saved });
-    const operation = this.load(generation).finally(() => {
-      if (this.reloadOperation === operation) this.reloadOperation = undefined;
-    });
-    this.reloadOperation = operation;
-    return operation;
+    generation.reloading = true;
+    return this.load(generation);
   }
 
-  public restartExecutable(): Promise<void> {
+  public restartExecutable(executable: string): Promise<void> {
     if (!this.usedDaemon || !this.current || this.disposed) return Promise.resolve();
-    if (this.current.executableReplacement) return this.current.executableReplacement;
-    if (this.replacing) this.pending = true;
-    const generation = this.replace(this.current.revision);
-    generation.executableReplacement = this.start(generation).then(() => undefined).finally(() => {
+    if (this.current.executableReplacement && this.current.executable === executable) {
+      return this.current.executableReplacement;
+    }
+    if (this.replacing) this.generationRequiresReload = true;
+    const generation = this.replace(this.current.revision, executable);
+    generation.executableReplacement = this.start(generation).then(() => undefined, (error: unknown) => {
+      if (this.current === generation && !this.disposed) throw error;
+    }).finally(() => {
       generation.executableReplacement = undefined;
     });
+    this.publish({ status: 'unloaded' });
     return generation.executableReplacement;
   }
 
   public holdCleanup(task: Promise<void>): void {
     this.activities++;
-    void task.then(() => this.activities--, () => this.activities--);
+    void this.track(task).then(() => this.activities--, () => this.activities--);
   }
 
   public closeAdmissions(): void {
@@ -151,22 +157,20 @@ export class RuntimeCoordinator {
 
   public shutdown(): Promise<void> {
     this.disposed = true;
-    const generation = this.current;
     this.current = undefined;
     this.changes.dispose();
     const stop = this.daemon.stop();
-    return Promise.allSettled([generation?.discovery, generation?.startup, stop]).then(() => stop);
+    return Promise.allSettled([...this.ownedWork, stop]).then(() => stop);
   }
 
   private adopt(): Generation {
     return this.current ??= { revision: { config: this.saved }, retired: Promise.resolve() };
   }
 
-  private replace(revision: Revision): Generation {
-    const generation: Generation = { revision, retired: Promise.resolve() };
+  private replace(revision: Revision, executable?: string): Generation {
+    const generation: Generation = { revision, executable, retired: Promise.resolve() };
     this.current = generation;
     generation.retired = this.daemon.stop();
-    this.publish({ status: 'unloaded' });
     return generation;
   }
 
@@ -177,7 +181,7 @@ export class RuntimeCoordinator {
   private start(generation: Generation): Promise<DaemonConnection> {
     this.usedDaemon = true;
     if (!generation.startup) {
-      generation.startup = this.startGeneration(generation).catch((error: unknown) => {
+      generation.startup = this.track(this.startGeneration(generation)).catch((error: unknown) => {
         generation.startup = undefined;
         throw error;
       });
@@ -192,7 +196,7 @@ export class RuntimeCoordinator {
     if (config.problem) throw new Error(config.problem);
     await this.verifyFile(generation);
     this.assertCurrent(generation);
-    await this.daemon.start(config.path);
+    await this.daemon.start(config.path, generation.executable);
     this.assertCurrent(generation);
     const connection = this.daemon.requireConnection();
     generation.connection = connection;
@@ -200,7 +204,7 @@ export class RuntimeCoordinator {
       if (this.current !== generation) return;
       // A new identity also prevents an old catalog callback publishing after loss.
       this.current = { revision: generation.revision, retired: Promise.resolve() };
-      if (this.replacing) this.pending = true;
+      if (this.replacing) this.generationRequiresReload = true;
       this.publish(this.replacing ? { status: 'reload-required', message: reloadMessage } : { status: 'unloaded' });
     }, { once: true });
     await this.verifyFile(generation);
@@ -219,7 +223,7 @@ export class RuntimeCoordinator {
     }
     this.assertCurrent(generation);
     if (revision.digest !== undefined && revision.digest !== digest) {
-      this.pending = true;
+      this.generationRequiresReload = true;
       const message = 'The runtime configuration file changed or became unreadable. Use Ferret: Reload Runtimes.';
       this.publish({ status: 'reload-required', message });
       throw new Error(message);
@@ -229,8 +233,9 @@ export class RuntimeCoordinator {
 
   private load(generation: Generation): Promise<void> {
     if (generation.discovery) return generation.discovery;
-    const discovery = this.loadCatalog(generation).finally(() => {
+    const discovery = this.track(this.loadCatalog(generation)).finally(() => {
       generation.discovery = undefined;
+      generation.reloading = false;
     });
     generation.discovery = discovery;
     this.publish({ status: 'loading' });
@@ -249,7 +254,7 @@ export class RuntimeCoordinator {
       this.publish({ status: 'ready', catalog });
     } catch (error) {
       if (this.disposed || this.current !== generation || this.pending) return;
-      if (this.replacing && !generation.connection) this.pending = true;
+      if (this.replacing && !generation.connection) this.generationRequiresReload = true;
       const detail = error instanceof Error ? error.message : String(error);
       if (this.pending) {
         this.publish({ status: 'reload-required', message: detail + ' ' + reloadMessage });
@@ -258,6 +263,12 @@ export class RuntimeCoordinator {
         this.publish({ status, message: detail });
       }
     }
+  }
+
+  private track<T>(work: Promise<T>): Promise<T> {
+    // Superseded operations can still be unwinding when the window closes.
+    this.ownedWork.add(work);
+    return work.finally(() => { this.ownedWork.delete(work); });
   }
 
   private publish(result: CatalogView): void {

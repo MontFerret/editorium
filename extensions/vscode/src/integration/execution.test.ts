@@ -361,6 +361,7 @@ class RealExecutionFixture {
   public readonly manager: FerretExecutionManager;
   public readonly output = new CaptureOutput();
   public readonly runtime: RuntimeCoordinator;
+  public selection = '';
   public readonly processes: ChildProcess[] = [];
   public readonly roots: ReadonlyMap<string, string>;
   private disposed = false;
@@ -390,7 +391,7 @@ class RealExecutionFixture {
     this.client = new InstrumentedExecutionClient(
       new FerretExecutionClient(this.daemon),
     );
-    this.runtime = new RuntimeCoordinator(this.daemon, { entered: '' }, () => '');
+    this.runtime = new RuntimeCoordinator(this.daemon, { entered: '' }, () => this.selection);
     this.manager = new FerretExecutionManager(
       this.daemon,
       this.client,
@@ -433,27 +434,10 @@ class RealExecutionFixture {
     );
     try {
       await fixture.daemon.updateWorkspaceFolders([...roots.values()]);
-      await fixture.startDaemon();
-      fixture.daemon.requireConnection();
-      assert.strictEqual(
-        fixture.daemon.workspaceRegistry.workspaces.length,
-        roots.size,
-      );
+      assert.equal(fixture.processes.length, 0);
       return fixture;
     } catch (error) {
       await fixture.dispose();
-      throw error;
-    }
-  }
-
-  public async startDaemon(): Promise<void> {
-    const firstLine = this.output.infos.length;
-    try {
-      await this.daemon.start();
-    } catch (error) {
-      if (error instanceof Error) {
-        error.message += `\nProcess log:\n${this.output.infos.slice(firstLine).join('\n')}`;
-      }
       throw error;
     }
   }
@@ -622,9 +606,13 @@ suite('ferretd execution integration', () => {
       assert.equal(fixture.runtime.view.catalog?.defaultRuntime, 'offline');
       await assert.rejects(fixture.manager.run(document), /Daemon default/);
       assert.throws(() => debug.createDebugAdapterDescriptor(session({})), /Daemon default/);
+      fixture.selection = 'offline';
       fixture.runtime.save({ entered: '' });
       await assert.rejects(fixture.manager.run(document), /Reload/);
       await fixture.runtime.reload();
+      await assert.rejects(fixture.manager.run(document), /Daemon default/);
+      assert.throws(() => debug.createDebugAdapterDescriptor(session({})), /Daemon default/);
+      fixture.selection = '';
       await assert.rejects(fixture.manager.run(document, {}, 'local'), /Daemon default/);
       assert.throws(() => debug.createDebugAdapterDescriptor(session({ runtimeName: 'local' })), /Daemon default/);
       assert.equal(resolutions, 0);
@@ -1036,12 +1024,11 @@ RETURN [first, second, third]`,
         'A crashed execution must not be recreated automatically',
       );
 
-      await fixture.startDaemon();
+      const recovered = await runToTerminal(fixture, quick);
       const freshWorkspace =
         fixture.daemon.workspaceRegistry.workspaces[0]?.id;
       assert.ok(freshWorkspace);
       assert.notStrictEqual(freshWorkspace, oldWorkspace);
-      const recovered = await runToTerminal(fixture, quick);
       assertFinished(recovered.change, 'completed');
       assert.notStrictEqual(recovered.handle.sessionId, initial.handle.sessionId);
 
@@ -1056,7 +1043,6 @@ RETURN [first, second, third]`,
 
       await replaceDocument(long, 'RETURN "after restart"\n');
       assert.strictEqual(await long.save(), true);
-      await fixture.startDaemon();
       const afterRestart = await runToTerminal(fixture, long);
       assertFinished(afterRestart.change, 'completed');
       assert.strictEqual(resultValue(afterRestart.change), 'after restart');
@@ -1100,6 +1086,7 @@ RETURN [first, second, third]`,
     ]);
 
     try {
+      await Promise.all([first.runtime.catalog(), second.runtime.catalog()]);
       assert.notStrictEqual(first.endpoints[0]?.cli, second.endpoints[0]?.cli);
       await first.dispose();
       second.daemon.requireConnection();

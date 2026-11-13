@@ -103,21 +103,111 @@ suite('owned Ferret debug adapter', () => {
     await runtime.shutdown();
   });
 
-  test('tracks simultaneous descriptors separately and rejects launch bypasses', async () => {
+  test('assembles a fragmented multi-megabyte payload and reads the following frame', () => {
+    const first = { value: '🦦'.repeat(600_000) };
+    const next = { value: 'next' };
+    const bytes = Buffer.concat([frame(first), frame(next)]);
+    const messages: object[] = [];
+    const reader = new DapFrameReader();
+    const split = bytes.indexOf('\r\n\r\n') + 1;
+    reader.push(bytes.subarray(0, split), message => messages.push(message));
+    reader.push(bytes.subarray(split, split + 2), message => messages.push(message));
+    for (let i = split + 2; i < bytes.length; i += 997) {
+      reader.push(bytes.subarray(i, i + 997), message => messages.push(message));
+    }
+    assert.deepEqual(messages, [first, next]);
+  });
+
+  test('first ordinary terminate forwards the request and forces a stalled child to close', async () => {
+    const child = new DebugChild();
+    let closed = 0;
+    const killed = new Promise<void>(resolve => child.once('killed', resolve));
+    const adapter = new FerretDebugTransport(executable, output, () => { closed++; }, () => child.process, 0);
+    const spawned = new Promise<void>(resolve => child.stdin.once('readable', resolve));
+    adapter.handleMessage(initialize);
+    await spawned;
+    child.stdin.read();
+    const terminate = { seq: 2, type: 'request', command: 'terminate' };
+    adapter.handleMessage(terminate);
+    assert.deepEqual(child.stdin.read(), frame(terminate));
+    await killed;
+    assert.ok(child.stdin.writableEnded);
+    assert.equal(closed, 0);
+    child.emit('close', 0);
+    await adapter.shutdown();
+    assert.equal(closed, 1);
+  });
+
+  test('forwards restart, terminate replies, and disconnect in order during graceful Stop', async () => {
+    const child = new DebugChild();
+    const adapter = new FerretDebugTransport(executable, output, () => {}, () => child.process);
+    const messages: object[] = [];
+    adapter.onDidSendMessage(message => messages.push(message));
+    const spawned = new Promise<void>(resolve => child.stdin.once('readable', resolve));
+    adapter.handleMessage(initialize);
+    await spawned;
+    child.stdin.read();
+    const restart = { seq: 2, type: 'request', command: 'terminate', arguments: { restart: true } };
+    const stop = { seq: 3, type: 'request', command: 'terminate' };
+    const disconnect = { seq: 4, type: 'request', command: 'disconnect' };
+    const refused = { type: 'response', request_seq: 2, command: 'terminate', success: false };
+    const stopped = { type: 'response', request_seq: 3, command: 'terminate', success: true };
+    const terminated = { type: 'event', event: 'terminated' };
+    adapter.handleMessage(restart);
+    child.stdout.write(frame(refused));
+    adapter.handleMessage(stop);
+    child.stdout.write(Buffer.concat([frame(stopped), frame(terminated)]));
+    assert.equal(child.stdin.writableEnded, false);
+    adapter.handleMessage(disconnect);
+    assert.deepEqual(child.stdin.read(), Buffer.concat([frame(restart), frame(stop), frame(disconnect)]));
+    assert.deepEqual(messages, [refused, stopped, terminated]);
+    child.emit('close');
+    await adapter.shutdown();
+    assert.equal(child.kills, 0);
+  });
+
+  test('protocol Stop before executable resolution suppresses spawn', async () => {
+    let ready!: (value: Awaited<ReturnType<typeof executable>>) => void;
+    const resolving = new Promise<Awaited<ReturnType<typeof executable>>>(resolve => { ready = resolve; });
+    let closed!: () => void;
+    const ended = new Promise<void>(resolve => { closed = resolve; });
+    let spawned = false;
+    const adapter = new FerretDebugTransport(() => resolving, output, closed, () => {
+      spawned = true;
+      return new DebugChild().process;
+    });
+    adapter.handleMessage(initialize);
+    adapter.handleMessage({ seq: 2, type: 'request', command: 'terminate' });
+    ready(await executable());
+    await ended;
+    await adapter.shutdown();
+    assert.equal(spawned, false);
+  });
+
+  test('owns overlapping descriptors with the same session ID and rejects launch bypasses', async () => {
     const runtime = new RuntimeCoordinator({
       start: async () => {}, stop: async () => {}, requireConnection: () => { throw new Error('unused'); },
     }, { entered: '' }, () => '');
-    const factory = new FerretDebugAdapterDescriptorFactory(executable, output, runtime);
+    const resolvers: Array<(value: Awaited<ReturnType<typeof executable>>) => void> = [];
+    const factory = new FerretDebugAdapterDescriptorFactory(() => new Promise(resolve => resolvers.push(resolve)), output, runtime);
     const session = (id: string, configuration = {}) => ({ id, configuration }) as vscode.DebugSession;
     assert.throws(() => factory.createDebugAdapterDescriptor(session('server', { debugServer: 22 })), /debugServer/);
-    assert.throws(() => factory.createDebugAdapterDescriptor(session('named', { runtimeName: 'local' })), /Daemon default/);
-    for (const id of ['a', 'b']) {
-      assert.ok(factory.createDebugAdapterDescriptor(session(id)) instanceof vscode.DebugAdapterInlineImplementation);
+    for (const options of [{ runtimeName: 'local' }, { RunTimeName: 'local' }, { runtimeName: '', RuntimeName: '' }, { RUNTIMENAME: 5 }]) {
+      assert.throws(() => factory.createDebugAdapterDescriptor(session('named', options)), /Daemon default|only once/);
     }
-    factory.terminate(session('b'));
+    assert.equal(resolvers.length, 0);
+    const first = factory.createDebugAdapterDescriptor(session('same'));
+    // VS Code's inline descriptor owns this implementation; its public type is opaque.
+    (first as { implementation: vscode.DebugAdapter }).implementation.dispose();
+    factory.createDebugAdapterDescriptor(session('same'));
+    let stopped = false;
+    const shutdown = factory.shutdown().then(() => { stopped = true; });
+    resolvers[1]!(await executable());
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(stopped, false);
     await assert.rejects(runtime.reload(), /finish/);
-    factory.terminate(session('a'));
-    await factory.shutdown();
+    resolvers[0]!(await executable());
+    await shutdown;
     await runtime.reload();
     await runtime.shutdown();
   });
@@ -129,5 +219,5 @@ class DebugChild extends EventEmitter {
   public readonly stderr = new PassThrough();
   public get process(): ChildProcessWithoutNullStreams { return this as unknown as ChildProcessWithoutNullStreams; }
   public kills = 0;
-  public kill(): boolean { this.kills++; return true; }
+  public kill(): boolean { this.kills++; this.emit('killed'); return true; }
 }

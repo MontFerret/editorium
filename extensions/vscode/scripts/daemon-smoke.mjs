@@ -79,12 +79,13 @@ if (process.exitCode === undefined) {
     }));
     await controller.start(config);
     const catalog = await listRuntimes(controller.requireConnection());
+    assert.equal(controller.workspaceRegistry.workspaces.length, 0);
     assert.equal(catalog.defaultRuntime, 'offline');
     assert.deepEqual(catalog.runtimes.find(entry => entry.name === 'offline'),
       { name: 'offline', label: 'Offline service', provider: 'wire' });
     await controller.stop();
     await controller.start();
-    controller.requireConnection();
+    await controller.prepareWorkspaces(controller.requireConnection().signal);
 
     const resolved = controller.workspaceRegistry.resolveDocument(
       join(root, 'query.fql'),

@@ -1,7 +1,7 @@
 import * as assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, win32 } from 'node:path';
 import { Metadata, status } from '@grpc/grpc-js';
 
 import type { DaemonConnection } from '../daemon/types';
@@ -21,10 +21,12 @@ function gate() {
 }
 
 class RuntimeDaemon {
+  public executables: (string | undefined)[] = [];
   public paths: (string | undefined)[] = [];
   public process = new AbortController();
   public beforeStart = async () => {};
-  public async start(path?: string): Promise<void> {
+  public async start(path?: string, executable?: string): Promise<void> {
+    this.executables.push(executable);
     this.paths.push(path);
     await this.beforeStart();
   }
@@ -63,7 +65,7 @@ suite('window runtime catalog', () => {
   test('adopts the latest pre-use save and coalesces discovery and startup', async () => {
     runtime.save(resolveRuntimeConfiguration('unapplied', dir));
     runtime.save(resolveRuntimeConfiguration(config));
-    await runtime.restartExecutable();
+    await runtime.restartExecutable('/override');
     assert.deepEqual(daemon.paths, []);
     const started = gate(), done = gate();
     discover = async () => { started.open(); await done.promise; return catalog; };
@@ -82,13 +84,13 @@ suite('window runtime catalog', () => {
 
   test('pins admitted launches across saves and binary restarts without adopting a pending path', async () => {
     const debug = runtime.admit();
-    await runtime.restartExecutable();
+    await runtime.restartExecutable('/override');
     assert.deepEqual(daemon.paths, []);
     runtime.save(resolveRuntimeConfiguration(config));
     await debug.prepareRun();
     assert.deepEqual(daemon.paths, [undefined]);
-    const restart = runtime.restartExecutable();
-    assert.equal(runtime.restartExecutable(), restart);
+    const restart = runtime.restartExecutable('/override');
+    assert.equal(runtime.restartExecutable('/override'), restart);
     await restart;
     assert.deepEqual(daemon.paths, [undefined, undefined]);
     await assert.rejects(runtime.reload(), /finish/);
@@ -157,6 +159,47 @@ suite('window runtime catalog', () => {
     assert.equal(runtime.view.catalog, undefined);
     await runtime.reload();
     assert.equal(runtime.view.status, 'ready');
+  });
+
+  for (const restoreOriginal of [false, true]) {
+    test(`explicit Reload supersedes the older replacement after ${restoreOriginal ? 'A → B → A' : 'A → B'}`, async () => {
+      const entered = gate(), release = gate();
+      discover = async () => { entered.open(); await release.promise; return catalog; };
+      const old = runtime.reload();
+      await entered.promise;
+      runtime.save(resolveRuntimeConfiguration(config));
+      if (restoreOriginal) runtime.save({ entered: '' });
+      const latest = { defaultRuntime: 'local', runtimes: [local] };
+      discover = async () => latest;
+      const replacement = runtime.reload();
+      assert.notEqual(replacement, old);
+      assert.equal(runtime.reload(), replacement);
+      await replacement;
+      if (restoreOriginal) runtime.admit().release();
+      else assert.throws(() => runtime.admit(), /Daemon default/);
+      release.open();
+      await old;
+      assert.deepEqual(runtime.view.catalog, latest);
+      assert.deepEqual(daemon.paths, [undefined, restoreOriginal ? undefined : config]);
+    });
+  }
+
+  test('a newer executable supersedes a starting binary replacement on the adopted revision', async () => {
+    await runtime.catalog();
+    runtime.save(resolveRuntimeConfiguration(config));
+    const entered = gate(), release = gate();
+    daemon.beforeStart = async () => { entered.open(); await release.promise; };
+    const first = runtime.restartExecutable('B');
+    await entered.promise;
+    daemon.beforeStart = async () => {};
+    const second = runtime.restartExecutable('C');
+    assert.equal(runtime.restartExecutable('C'), second);
+    await second;
+    release.open();
+    await first;
+    assert.deepEqual(daemon.executables, [undefined, 'B', 'C']);
+    assert.deepEqual(daemon.paths, [undefined, undefined, undefined]);
+    assert.equal(runtime.view.status, 'reload-required');
   });
 
   test('keeps ordinary launches independent of discovery failures and preserves live replacement on retry', async () => {
@@ -237,6 +280,21 @@ suite('window runtime catalog', () => {
     assert.throws(() => runtime.admit(), /shutting down/);
   });
 
+  test('shutdown joins superseded discovery even after its replacement has completed', async () => {
+    const entered = gate(), release = gate();
+    discover = async () => { entered.open(); await release.promise; return catalog; };
+    const old = runtime.catalog();
+    await entered.promise;
+    discover = async () => catalog;
+    await runtime.reload();
+    let stopped = false;
+    const shutdown = runtime.shutdown().then(() => { stopped = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(stopped, false);
+    release.open();
+    await Promise.all([old, shutdown]);
+  });
+
   test('resolves relative paths only against one host folder and fails explicit invalid files', async () => {
     assert.deepEqual(resolveRuntimeConfiguration('runtimes.json', dir), { entered: 'runtimes.json', path: config });
     assert.ok(resolveRuntimeConfiguration('runtimes.json').problem);
@@ -252,6 +310,16 @@ suite('window runtime catalog', () => {
     await runtime.reload();
     runtime.save(resolveRuntimeConfiguration('runtimes.json', resolve(dir, '..')));
     assert.equal(runtime.view.status, 'reload-required');
+  });
+
+  test('requires a fully qualified Windows root for absolute paths on any host', () => {
+    for (const entered of ['///runtimes.json', '//settings.json', '/cfg.json', 'C:cfg.json', '\\\\host', '//?/UNC/host', '//?/C:cfg.json']) {
+      assert.match(resolveRuntimeConfiguration(entered, 'C:\\workspace', win32).problem!, /fully qualified/);
+    }
+    for (const entered of ['C:/dir/cfg.json', '//server/share/cfg.json', '//?/UNC/host/share/cfg.json', '//?/C:/dir/cfg.json']) {
+      assert.equal(resolveRuntimeConfiguration(entered, undefined, win32).path, win32.normalize(entered));
+    }
+    assert.equal(resolveRuntimeConfiguration('sub/cfg.json', 'D:\\workspace', win32).path, 'D:\\workspace\\sub\\cfg.json');
   });
 
   test('validates descriptor identity, default membership, and negotiated discovery support', async () => {

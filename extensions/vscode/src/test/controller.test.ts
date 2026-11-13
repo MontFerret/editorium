@@ -9,12 +9,12 @@ suite('Ferret coordinated server lifecycle', () => {
       start: () => event('start LSP'), restart: () => event('restart LSP'), stop: () => event('stop LSP'),
     }, {
       restartExecutable: () => event('override'), shutdown: () => event('stop daemon'),
-    });
+    }, () => 'ferretd');
     await controller.start();
     await controller.restartLanguageServer();
     assert.deepEqual(events, ['start LSP', 'restart LSP']);
     await controller.restart();
-    await controller.stop();
-    assert.deepEqual(events.slice(2), ['restart LSP', 'override', 'stop daemon', 'stop LSP']);
+    await controller.stop(Promise.resolve(), Promise.resolve());
+    assert.deepEqual(events.slice(2), ['restart LSP', 'override', 'stop LSP', 'stop daemon']);
   });
 });

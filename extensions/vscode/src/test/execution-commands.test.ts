@@ -57,6 +57,7 @@ class FakeManager implements ExecutionCommandManager {
   public readonly cancelCalls: vscode.Uri[] = [];
   public cancelError: unknown;
   public readonly onDidChangeExecution = this.changeEmitter.event;
+  public selector?: unknown;
   public onRun: (() => void) | undefined;
   public readonly runCalls: vscode.TextDocument[] = [];
   public runError: unknown;
@@ -72,7 +73,8 @@ class FakeManager implements ExecutionCommandManager {
     return this.running.has(documentUri.toString());
   }
 
-  public async run(document: vscode.TextDocument): Promise<unknown> {
+  public async run(document: vscode.TextDocument, _parameters?: object, selector?: unknown): Promise<unknown> {
+    this.selector = selector;
     this.onRun?.();
     this.runCalls.push(document);
     if (this.runError !== undefined) {
@@ -132,7 +134,7 @@ class FakeManager implements ExecutionCommandManager {
 
 class FakeHost implements ExecutionCommandHost {
   private readonly activeEditorEmitter = new vscode.EventEmitter<void>();
-  private readonly handlers = new Map<string, () => Promise<void>>();
+  private readonly handlers = new Map<string, (options?: unknown) => Promise<void>>();
 
   public activeDocument: vscode.TextDocument | undefined;
   public readonly context = new Map<string, boolean>();
@@ -158,7 +160,7 @@ class FakeHost implements ExecutionCommandHost {
 
   public registerCommand(
     command: string,
-    handler: () => Promise<void>,
+    handler: (options?: unknown) => Promise<void>,
   ): vscode.Disposable {
     assert.strictEqual(this.handlers.has(command), false);
     this.handlers.set(command, handler);
@@ -189,10 +191,10 @@ class FakeHost implements ExecutionCommandHost {
     return Promise.resolve(this.nextInformationSelection);
   }
 
-  public async invoke(command: string): Promise<void> {
+  public async invoke(command: string, options?: unknown): Promise<void> {
     const handler = this.handlers.get(command);
     assert.ok(handler, `Expected ${command} to be registered`);
-    await handler();
+    await handler(options);
   }
 
   public setActiveDocument(document: vscode.TextDocument | undefined): void {
@@ -217,6 +219,21 @@ interface Fixture {
 }
 
 suite('Ferret execution commands', () => {
+  test('reads the exact selector value and rejects duplicate or invalid launch keys', async () => {
+    const fixture = createFixture(ferretDocument('/workspace/query.fql'));
+    try {
+      await fixture.host.invoke(runFileCommand, { RUNTIMENAME: 'LoCaL' });
+      assert.equal(fixture.manager.selector, 'LoCaL');
+      await fixture.host.invoke(runFileCommand, { runtimeName: '', RuntimeName: 'local' });
+      await fixture.host.invoke(runFileCommand, { RuntimeName: null });
+      assert.equal(fixture.manager.runCalls.length, 1);
+      assert.match(fixture.host.errorMessages[0]!, /only once/);
+      assert.match(fixture.host.errorMessages[1]!, /string/);
+    } finally {
+      disposeFixture(fixture);
+    }
+  });
+
   test('runs a saved Ferret document exactly once', async () => {
     const document = ferretDocument('/workspace/query.fql');
     const fixture = createFixture(document);

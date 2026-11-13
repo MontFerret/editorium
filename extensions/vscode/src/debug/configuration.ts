@@ -1,6 +1,7 @@
 import { dirname, extname } from 'node:path';
 
 import * as vscode from 'vscode';
+import { readRuntimeSelector } from '../runtime/selector';
 
 import { languageId } from '../config';
 import { ferretDebugType } from './adapter';
@@ -92,7 +93,7 @@ export class FerretDebugConfigurationProvider
 
     try {
       if ('debugServer' in debugConfiguration) throw new Error('Remove debugServer to use the owned Ferret debug adapter.');
-      this.checkLaunch?.(debugConfiguration.runtimeName);
+      this.checkLaunch?.(readRuntimeSelector(debugConfiguration));
     } catch (error) {
       return this.reject(error instanceof Error ? error.message : String(error));
     }

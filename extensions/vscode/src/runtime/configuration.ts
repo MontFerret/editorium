@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { open, stat } from 'node:fs/promises';
-import { isAbsolute, normalize, resolve } from 'node:path';
+import * as hostPath from 'node:path';
 
 export interface RuntimeConfiguration {
   readonly entered: unknown;
@@ -8,7 +8,11 @@ export interface RuntimeConfiguration {
   readonly problem?: string;
 }
 
-export function resolveRuntimeConfiguration(entered: unknown, base?: string): RuntimeConfiguration {
+export function resolveRuntimeConfiguration(
+  entered: unknown,
+  base?: string,
+  paths = hostPath,
+): RuntimeConfiguration {
   if (typeof entered !== 'string') {
     return { entered, problem: 'Set ferret.runtime.configPath to a string containing a filesystem path.' };
   }
@@ -16,15 +20,22 @@ export function resolveRuntimeConfiguration(entered: unknown, base?: string): Ru
   if (/\$\{[^}]*\}/.test(entered)) {
     return { entered, problem: 'Use a filesystem path in ferret.runtime.configPath. Variable expansion is unavailable.' };
   }
-  // A Windows drive-relative or root-relative path depends on process state.
-  if (process.platform === 'win32' && /^(?:[a-z]:(?![\\/])|[\\/](?![\\/]))/i.test(entered)) {
-    return { entered, problem: 'Use a fully qualified drive or UNC path in ferret.runtime.configPath.' };
+  const normalized = paths.normalize(entered);
+  if (paths.sep === '\\' && (/^[a-z]:/i.test(entered) || /^[\\/]/.test(entered))) {
+    // Node also treats a path rooted on the current drive as absolute. Check
+    // the underlying UNC or drive root for extended-length spellings as well.
+    const qualified = normalized.replace(/^\\\\[?.]\\UNC(?:\\|$)/i, '\\\\')
+      .replace(/^\\\\[?.]\\(?=[a-z]:)/i, '');
+    const root = paths.parse(qualified).root;
+    if (!/^(?:[a-z]:\\|\\\\[^\\]+\\[^\\]+\\?)$/i.test(root)) {
+      return { entered, problem: 'Use a fully qualified drive or UNC path in ferret.runtime.configPath.' };
+    }
   }
-  if (isAbsolute(entered)) return { entered, path: normalize(entered) };
-  if (!base || !isAbsolute(base)) {
+  if (paths.isAbsolute(entered)) return { entered, path: normalized };
+  if (!base || !paths.isAbsolute(base)) {
     return { entered, problem: 'Set an absolute ferret.runtime.configPath in a window without exactly one file-backed workspace folder.' };
   }
-  return { entered, path: resolve(base, entered) };
+  return { entered, path: paths.resolve(base, entered) };
 }
 
 export async function fingerprint(path: string): Promise<string> {

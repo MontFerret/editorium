@@ -104,11 +104,15 @@ Opening a document starts only language services. Built-in Debug starts its own
 adapter without starting the execution daemon. After first use, changing or
 clearing the setting requires **Ferret: Reload Runtimes**. Also use Reload after
 editing the file at the same path. Reload rereads it and replaces the execution
-daemon. Wait for every Run and Debug launch to finish cleanup before reloading.
+daemon. Catalog discovery reads daemon metadata. The first Run on each daemon
+registers the window’s workspace folders for execution. Wait for every Run and
+Debug launch to finish cleanup before reloading.
 
 **Ferret: Retry Runtime Discovery** repeats a failed catalog request on the
 current daemon. If a replacement failed to start or exited before discovery
-succeeded, use Reload again. A change saved during Reload needs another Reload.
+succeeded, use Reload again. If you save a newer configuration during Reload,
+invoke Reload again to adopt it. You can do this while the older request is
+still running. Repeating Reload for the same in-flight revision shares its result.
 Discovery requires daemon API 1.3 or a later minor version in major 1.
 
 **Run and Debug currently require an empty configuration path and Daemon

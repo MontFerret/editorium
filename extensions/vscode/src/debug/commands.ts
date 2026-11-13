@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 
+import { readRuntimeSelector } from '../runtime/selector';
 import { ferretDebugType } from './adapter';
 
 export const debugFileCommand = 'ferret.debugFile';
@@ -18,13 +19,12 @@ export interface FerretDebugCommandHost {
 export function registerFerretDebugCommand(
   host: FerretDebugCommandHost = vscodeFerretDebugCommandHost,
 ): vscode.Disposable {
-  return host.registerCommand(debugFileCommand, options =>
-    host.startDebugging(
-      undefined,
-      { type: ferretDebugType, ...(options && typeof options === 'object' && 'runtimeName' in options
-        ? { runtimeName: options.runtimeName } : {}) } as vscode.DebugConfiguration,
-    ),
-  );
+  return host.registerCommand(debugFileCommand, options => {
+    const runtimeName = readRuntimeSelector(options);
+    return host.startDebugging(undefined, {
+      type: ferretDebugType, ...(runtimeName === undefined ? {} : { runtimeName }),
+    } as vscode.DebugConfiguration);
+  });
 }
 
 const vscodeFerretDebugCommandHost: FerretDebugCommandHost = {
