@@ -78,11 +78,10 @@ JetBrains owns the process and protocol lifecycle, while `ferretd` owns the
 language behavior. Ferret Run configurations use a separate authenticated,
 project-scoped execution daemon and display terminal JSON results and failures
 in the Run console. The project base, or source parent when no base exists, is
-the local compilation workspace. Run uses the configured daemon default or an
+the local compilation workspace. Run and Debug use the configured daemon default or an
 exact runtime name. An optional native working directory resolves on the plugin
 host. Wire forwards an explicit directory to the application verbatim, and a
-blank field uses that application's default. Debug uses the same configuration
-with an empty runtime configuration file and the daemon-default selection.
+blank field uses that application's default. An unavailable runtime fails the launch.
 Each Debug session runs an independent `ferretd dap` process and provides
 native XDebugger breakpoints, control commands, stacks, and
 source navigation. Suspended frames provide lazy Locals/Parameters scopes,
@@ -101,8 +100,9 @@ and the daemon's nested-symlink restrictions still apply.
 bundled in distributions and the ferretd protocol schemas used to generate
 editor clients. The current pin is `1.0.0-alpha.11`, which advertises API 1.3.
 Both editors request API 1.1 for local execution and accept API major 1 with
-minor 1 or later. JetBrains Run requires API 1.3 for a configured runtime file
-or any explicit runtime selector, including `local`. See the
+minor 1 or later. JetBrains uses API 1.3 for catalog-based runtime selection.
+Debug additionally checks its own adapter’s `supportsFerretRuntimeSelection`
+capability for a configured file or explicit selector, including `local`. See the
 [alpha.11 validation record](extensions/jetbrains/docs/debugger-validation.md#november-12-2026-ferretd-alpha11-migration)
 for release availability and integration checks.
 

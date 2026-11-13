@@ -136,10 +136,9 @@ If replacement startup fails, correct the error and reload.
 The Run/Debug **Runtime** picker saves **Daemon default** as an empty selection,
 or saves an exact, case-sensitive runtime name, including explicit `local`.
 A saved name stays selected if the catalog changes or the application definition
-disappears. Run can use the configured default, a named Wire application, or
+disappears. Run and Debug can use the configured default, a named Wire application, or
 explicit `local` even when the default is Wire. If a saved runtime is missing,
-correct the definition and reload, or choose another runtime. Debug currently
-requires an empty **Runtime configuration file** and **Daemon default**.
+correct the definition and reload, or choose another runtime.
 
 ## Language intelligence
 
@@ -283,11 +282,27 @@ its Runs and shuts down the project daemon.
 ## Debugging
 
 Use **Debug** on the same Ferret configuration or current local `.fql` file.
-Debug requires the unconfigured daemon default. Source, typed parameters,
-compilation workspace, and the optional native working directory follow the
-local Run rules above. JetBrains saves the source before
-launch; an unsaved document is rejected. Every Debug launch starts its own
-bundled `ferretd dap` process, independently of Run, LSP, and other Debug sessions.
+JetBrains saves the source and uses the same local compilation workspace, typed
+parameters, and provider-specific working directory as Run. Every Debug launch
+starts an independent bundled `ferretd dap`. With an empty runtime selector and
+configuration path, it uses the built-in `local` directly. Otherwise it resolves
+the default or exact selector against the admitted project catalog. A configured
+adapter receives `--runtime-config` and the admitted absolute path at startup.
+
+Debug checks the configuration file against the content fingerprint recorded
+when the project daemon started. An edit or loss of readability detected before
+adapter startup or after initialization aborts the launch. Use **Reload runtimes**
+after active sessions finish cleanup. These checks detect ordinary edits across
+the two processes’ independent reads. Apply during startup leaves that launch
+bound to its original path.
+
+A configured file or explicit selector requires the adapter to advertise
+`supportsFerretRuntimeSelection`. Discovery and initialization can succeed
+while a Wire application is offline. Acquisition happens at launch. A supporting
+adapter must acknowledge the expected runtime after breakpoint configuration.
+A missing or incorrect acknowledgment ends the session. The query may already
+have started when the adapter replies. An older compatible adapter can still
+debug the unconfigured default.
 
 Set ordinary line breakpoints in the gutter before or during a session. They
 persist with the project. Enabled, disabled, moved, removed, and muted
@@ -341,9 +356,12 @@ The Debug console retains daemon stdout/stderr output and final results.
 Adapter stderr is drained without copying runtime content to IDE logs. Diagnostic
 logs record operation/error categories, excluding expressions, values, parameter
 contents, and protocol payloads. Console input is unavailable. Stop, detach, and
-project disposal clean up only the owned adapter;
-target exit codes are retained, with 1 for failures and 130 for local cancellation
-when the target has not supplied a code. Startup and protocol requests have
+project disposal release the query binding and its owned adapter. The external
+application and Wire server keep running. Stop during catalog preparation
+detaches this launch from shared project discovery. Reload stays unavailable
+until cleanup finishes. Loss of the project execution daemon leaves an already
+running Debug session usable. Target exit codes are retained, with 1 for
+failures and 130 for local cancellation when the target has not supplied a code. Startup and protocol requests have
 bounded deadlines; running queries have no execution time limit.
 
 Conditional breakpoints, logpoints, interactive console input,

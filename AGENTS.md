@@ -70,8 +70,8 @@ The current integration state is intentionally asymmetric:
   owned `ferretd dap` process per launch. Suspended frames provide lazy scopes,
   typed variables, expression evaluation, and native watches. Project settings support
   runtime catalog discovery. Run binds its daemon default or exact named runtime
-  at session creation. Debug requires an empty runtime configuration path and
-  the daemon-default selection.
+  at session creation. Debug resolves the same selection for its independent
+  adapter. Unconfigured default Debug uses built-in `local` directly.
 * Both integrations consume the daemon version from `ferretd.json`; neither may
   introduce a separate editor-local pin.
 
@@ -262,6 +262,14 @@ stepping, replacement stops, and disposal invalidate their handles and callbacks
 Ordinary inspection errors remain local to the node or evaluator; transport loss
 ends the session. Values use upstream types, display text, and child references;
 do not synthesize collection paging or nested evaluation expressions.
+
+Configured Debug launches use the fingerprint and absolute configuration path
+captured across admitted generation startup. Verify the bytes before spawning
+DAP and after initialize. A detected edit requires explicit Reload. Require the
+adapter’s own runtime-selection capability for any configured file or explicit
+selector. Validate its acknowledged name after initial breakpoint configuration
+before exposing a stop. Keep the activity lease through owned-process cleanup,
+including Stop during catalog preparation. Shared discovery belongs to the project.
 
 For execution, the canonical project base is the compilation workspace when it
 exists; otherwise the canonical source parent is used. The source must remain

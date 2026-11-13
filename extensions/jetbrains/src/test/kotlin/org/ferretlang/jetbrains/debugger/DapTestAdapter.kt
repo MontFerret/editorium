@@ -8,6 +8,7 @@ import java.util.Collections
 import java.util.concurrent.CompletableFuture
 
 internal class DapTestAdapter : IDebugProtocolServer {
+    var responseBody: (String, Any?) -> Any? = { _, result -> result }
     lateinit var client: IDebugProtocolClient
     val history: MutableList<String> = Collections.synchronizedList(mutableListOf())
     val initialized = CompletableFuture<InitializeRequestArguments>()
@@ -24,6 +25,7 @@ internal class DapTestAdapter : IDebugProtocolServer {
     var autoTerminate = true
     var autoInitialize = true
     val initializeResponse = CompletableFuture<Capabilities>()
+    var sendInitialized = true
     var autoConfigure = true
     val configurationRequested = CompletableFuture<ConfigurationDoneArguments>()
     val configurationResponse = CompletableFuture<Void>()
@@ -41,7 +43,7 @@ internal class DapTestAdapter : IDebugProtocolServer {
     override fun launch(args: Map<String, Any>): CompletableFuture<Void> {
         history.add("launch")
         launched.complete(args)
-        client.initialized()
+        if (sendInitialized) client.initialized()
         return launchResponse
     }
 

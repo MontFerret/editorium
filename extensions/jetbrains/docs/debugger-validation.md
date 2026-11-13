@@ -1,5 +1,30 @@
 # JetBrains debugger validation
 
+## November 12, 2026 selected-runtime Debug
+
+The macOS arm64 suite exercised the pinned `ferretd 1.0.0-alpha.11` through
+the JetBrains DAP transport. The following cases distinguish protocol behavior
+from execution against a live application.
+
+| Check | Observed result |
+| --- | --- |
+| Unconfigured default | The pinned adapter acknowledged `local` and hit a first-statement breakpoint. |
+| Offline Wire default | The configured adapter initialized. Launch reported the selected application as unavailable, omitted endpoint details, and produced no local result. |
+| Explicit `local` under the same Wire default | The adapter acknowledged `local` and stopped at a breakpoint. A concurrent Run finished. After the catalog daemon exited, the suspended DAP session returned its stack and resumed to completion. |
+| Native XDebugger | The configured explicit-local launch supported live breakpoint changes, mute, resume, pause, and cleanup on project-lifetime cancellation. |
+| Piped LSP4J transport | Framed responses exercised strict capability and acknowledgment decoding, legacy default support, exact names, provider-specific directories, and early stop and terminal events. |
+| Settings and lifecycle | Tests covered edits across daemon and adapter startup, Apply during admission, stale discovery, explicit Reload and Retry, Stop and timeout during preparation, pending launch, and cleanup ownership. |
+
+The full `make test` passed. JetBrains reported 229 unit/platform tests passed
+and 34 real-daemon tests passed. The optional hosted Run case skipped because
+`FERRETD_TEST_WIRE_ENDPOINT` was unset. Live embedded-application Run/Debug
+with a custom function and host survival after Stop are reserved for Task 6.
+`make lint`, `make package jetbrains`, and `make package-check jetbrains`
+passed. The verifier reported compatibility for IDEA and GoLand 2026.2 and
+2026.3. The universal ZIP contained the six expected daemon binaries and
+passed the packaged current-host smoke. Hosted CI and interactive IDE smoke
+were outside this local validation.
+
 ## November 12, 2026 ferretd alpha.11 migration
 
 The shared pin moved from `1.0.0-alpha.9` to `1.0.0-alpha.11`. Both clients

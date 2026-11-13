@@ -8,8 +8,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelChildren
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.isActive
@@ -22,6 +23,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.eclipse.lsp4j.debug.*
 import org.eclipse.lsp4j.debug.services.IDebugProtocolClient
 import org.eclipse.lsp4j.debug.services.IDebugProtocolServer
+import org.ferretlang.jetbrains.runtime.FerretDebugRuntime
 import org.ferretlang.jetbrains.daemon.FerretdBinary
 import org.ferretlang.jetbrains.launch.FerretLaunchInput
 import org.ferretlang.jetbrains.launch.FerretLaunchInputResolver
@@ -36,7 +38,7 @@ internal class FerretDapSession(
     private val input: FerretLaunchInput,
     private val listener: FerretDapListener,
     private val executable: () -> Path = { FerretdBinary.installed().resolve() },
-    private val startProcess: (Path) -> Process = { ProcessBuilder(it.toString(), "dap").start() },
+    private val startProcess: (List<String>) -> Process = { ProcessBuilder(it).start() },
     private val timeouts: FerretDapTimeouts = FerretDapTimeouts(),
 ) : IDebugProtocolClient {
     private val events = Channel<() -> Unit>(Channel.UNLIMITED)
@@ -51,6 +53,9 @@ internal class FerretDapSession(
     private var initializedSeen = false
     private var initialCollected = false
     private var configuring = false
+    private var configurationDone = false
+    private var launchAcknowledged = false
+    private val earlyTargetEvents = ArrayDeque<() -> Unit>()
     private var launched = false
     private var ending = false
     private var targetTerminated = false
@@ -73,63 +78,40 @@ internal class FerretDapSession(
     val completion = CompletableDeferred<Int>()
     val launchCompleted = CompletableDeferred<Unit>()
 
-    suspend fun run(): Unit = coroutineScope {
+    suspend fun run(prepareRuntime: suspend () -> FerretDebugRuntime): Unit = coroutineScope {
         check(started.compareAndSet(false, true)) { "A Ferret DAP session can only be launched once." }
         scope = this
+        var preparation: Job? = null
         try {
             startupTimer = launch {
                 delay(timeouts.startupMillis)
                 enqueue { fail(IllegalStateException("The Ferret debug launch timed out.")) }
             }
-            val resolved = withContext(Dispatchers.IO) { FerretLaunchInputResolver.resolve(input) }
-            resolvedInput = resolved
-            if (!stopRequested.get()) {
-                val binary = withContext(Dispatchers.IO) { executable() }
-                // Publish ownership inside the non-cancellable region: cancellation must not discard a new child.
-                withContext(NonCancellable) {
-                    withContext(Dispatchers.IO) { process = startProcess(binary) }
-                }
-                val adapter = requireNotNull(process)
-                if (!stopRequested.get()) {
-                    transport = FerretDapTransport(this, adapter.inputStream, adapter.outputStream, this@FerretDapSession) {
-                        enqueue { fail(IllegalStateException("The Ferret debug adapter connection failed.", it)) }
-                    }
-                    launch(Dispatchers.IO) {
-                        try {
-                            // Drain diagnostics without copying potentially sensitive runtime text into IDE logs.
-                            adapter.errorStream.use { it.copyTo(java.io.OutputStream.nullOutputStream()) }
-                        } catch (error: Exception) {
-                            FerretDapErrors.log("diagnostic stream", error)
+            preparation = launch(Dispatchers.IO) {
+                try {
+                    val runtime = prepareRuntime()
+                    val resolved = FerretLaunchInputResolver.resolve(input, runtime.descriptor.provider)
+                    val command = buildList {
+                        add(executable().toString())
+                        add("dap")
+                        runtime.configFile?.let { path ->
+                            add("--runtime-config")
+                            add(path.toString())
                         }
                     }
-                    launch(Dispatchers.IO) {
-                        runInterruptible { adapter.waitFor() }
-                        // Drain terminal events before classifying process exit as unexpected.
-                        withTimeoutOrNull(timeouts.shutdownMillis) { transport?.reader?.join() }
-                        enqueue { fail(IllegalStateException("The Ferret debug adapter exited unexpectedly.")) }
-                    }
-                    request("initialize", {
-                        server.initialize(InitializeRequestArguments().apply {
-                            clientID = "ferret-jetbrains"
-                            adapterID = "ferretd"
-                            linesStartAt1 = true
-                            columnsStartAt1 = true
-                            pathFormat = "path"
-                            supportsVariableType = true
-                            supportsRunInTerminalRequest = false
-                        })
-                    }) { result ->
-                        capabilities = result
-                        check(result.supportsConfigurationDoneRequest == true) { "The Ferret adapter does not support configurationDone." }
-                        launched = true
-                        request("launch", { server.launch(FerretDapLaunchArguments.from(resolved)) }, startup = true) {
-                            ready = true
-                            startupTimer?.cancel()
-                            launchCompleted.complete(Unit)
-                        }
-                    }
-                    while (!ending && !stopRequested.get()) events.receive().invoke()
+                    runtime.verifyConfiguration()
+                    ensureActive()
+                    if (stopRequested.get()) return@launch
+                    // Store ownership before any suspension. Cleanup joins this child even if process creation races Stop.
+                    val adapter = startProcess(command)
+                    process = adapter
+                    enqueue { initialize(adapter, resolved, runtime) }
+                } catch (error: Exception) {
+                    enqueue { fail(error) }
                 }
+            }
+            withContext(Dispatchers.IO) {
+                while (!ending && !stopRequested.get()) events.receive().invoke()
             }
         } catch (_: CancellationException) {
             stopRequested.set(true)
@@ -142,10 +124,12 @@ internal class FerretDapSession(
             confirmedStop = null
             inspectionEnded.complete(Unit)
             // Completed consoles can retain this session; release queued responses and their runtime values.
+            earlyTargetEvents.clear()
             events.cancel()
             coroutineContext.cancelChildren()
             withContext(NonCancellable) {
                 try {
+                    preparation?.join()
                     withContext(Dispatchers.IO) { cleanup() }
                 } catch (error: Exception) {
                     failure = true
@@ -162,6 +146,61 @@ internal class FerretDapSession(
                 } finally {
                     completion.complete(code)
                     if (!launchCompleted.isCompleted) launchCompleted.completeExceptionally(CancellationException("Ferret Debug did not launch."))
+                }
+            }
+        }
+    }
+
+    private fun initialize(adapter: Process, resolved: FerretResolvedLaunchInput, runtime: FerretDebugRuntime) {
+        resolvedInput = resolved
+        val connection = FerretDapTransport(scope, adapter.inputStream, adapter.outputStream, this) {
+            enqueue { fail(IllegalStateException("The Ferret debug adapter connection failed.", it)) }
+        }
+        transport = connection
+        scope.launch(Dispatchers.IO) {
+            try {
+                adapter.errorStream.use { it.copyTo(java.io.OutputStream.nullOutputStream()) }
+            } catch (error: Exception) {
+                FerretDapErrors.log("diagnostic stream", error)
+            }
+        }
+        scope.launch(Dispatchers.IO) {
+            runInterruptible { adapter.waitFor() }
+            withTimeoutOrNull(timeouts.shutdownMillis) { connection.reader.join() }
+            enqueue { fail(IllegalStateException("The Ferret debug adapter exited unexpectedly.")) }
+        }
+        request("initialize", {
+            connection.initialize(InitializeRequestArguments().apply {
+                clientID = "ferret-jetbrains"
+                adapterID = "ferretd"
+                linesStartAt1 = true
+                columnsStartAt1 = true
+                pathFormat = "path"
+                supportsVariableType = true
+                supportsRunInTerminalRequest = false
+            })
+        }) { result ->
+            capabilities = result
+            check(result.supportsConfigurationDoneRequest == true) { "The Ferret adapter does not support configurationDone." }
+            val selection = result.supportsRuntimeSelection()
+            check(selection || (runtime.configFile == null && input.runtimeName.isEmpty())) {
+                "The Ferret debug adapter does not support runtime selection."
+            }
+            scope.launch(Dispatchers.IO) {
+                try {
+                    runtime.verifyConfiguration()
+                    enqueue {
+                        launched = true
+                        val arguments = FerretDapLaunchArguments.from(resolved, input.runtimeName)
+                        request("launch", {
+                            connection.launch(arguments, runtime.descriptor.name.takeIf { selection })
+                        }, startup = true, failed = { fail(FerretDapErrors.launchFailure(it, runtime.descriptor)) }) {
+                            launchAcknowledged = true
+                            finishStartup()
+                        }
+                    }
+                } catch (error: Exception) {
+                    enqueue { fail(error) }
                 }
             }
         }
@@ -328,7 +367,7 @@ internal class FerretDapSession(
         }
     } }
 
-    override fun stopped(args: StoppedEventArguments) { enqueue {
+    override fun stopped(args: StoppedEventArguments) { targetEvent {
         invalidateInspection()
         val stop = FerretDapStop(
             ++generation, args.threadId ?: FERRET_THREAD, args.reason,
@@ -344,9 +383,9 @@ internal class FerretDapSession(
         listener.output(args.output, args.category == "stderr")
     } }
 
-    override fun exited(args: ExitedEventArguments) { enqueue { exitCode = args.exitCode } }
+    override fun exited(args: ExitedEventArguments) { targetEvent { exitCode = args.exitCode } }
 
-    override fun terminated(args: TerminatedEventArguments?) { enqueue {
+    override fun terminated(args: TerminatedEventArguments?) { targetEvent {
         invalidateInspection()
         targetTerminated = true
         ending = true
@@ -355,7 +394,22 @@ internal class FerretDapSession(
     private fun finishConfiguration() {
         if (!initialCollected || pendingBreakpoints != 0 || configuring || ending || stopRequested.get()) return
         configuring = true
-        request("configurationDone", { server.configurationDone(ConfigurationDoneArguments()) }) { }
+        request("configurationDone", { server.configurationDone(ConfigurationDoneArguments()) }) {
+            configurationDone = true
+            finishStartup()
+        }
+    }
+
+    private fun targetEvent(event: () -> Unit) = enqueue {
+        if (ready) event() else earlyTargetEvents.addLast(event)
+    }
+
+    private fun finishStartup() {
+        if (!configurationDone || !launchAcknowledged) return
+        ready = true
+        startupTimer?.cancel()
+        launchCompleted.complete(Unit)
+        while (earlyTargetEvents.isNotEmpty() && !ending) earlyTargetEvents.removeFirst().invoke()
     }
 
     private fun <T> request(

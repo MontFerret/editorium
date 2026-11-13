@@ -5,7 +5,6 @@ import com.intellij.execution.runners.ExecutionEnvironmentBuilder
 import com.intellij.execution.runners.ProgramRunner
 import com.intellij.execution.ui.RunContentDescriptor
 import com.intellij.openapi.command.WriteCommandAction
-import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.testFramework.PlatformTestUtil
@@ -21,6 +20,9 @@ import kotlinx.coroutines.cancel
 import org.ferretlang.jetbrains.debugger.FerretBreakpointType
 import org.ferretlang.jetbrains.debugger.FerretDebugLauncher
 import org.ferretlang.jetbrains.debugger.FerretDebugProcess
+import kotlinx.coroutines.runBlocking
+import org.ferretlang.jetbrains.daemon.FerretdInstallation
+import java.util.concurrent.TimeUnit
 import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
 import org.ferretlang.jetbrains.runtime.CatalogStatus
 import org.ferretlang.jetbrains.run.FerretRunConfiguration
@@ -36,6 +38,16 @@ class FerretNativeDebugIntegrationTest : HeavyPlatformTestCase() {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         project.replaceService(FerretDebugLauncher::class.java,
             FerretDebugLauncher.testing(scope, Path.of(requireNotNull(System.getenv("FERRETD_TEST_PATH")))), testRootDisposable)
+        val executable = Path.of(requireNotNull(System.getenv("FERRETD_TEST_PATH")))
+        val version = runBlocking(Dispatchers.IO) {
+            val process = ProcessBuilder(executable.toString(), "--version").start()
+            process.inputStream.bufferedReader().use { it.readText().trim().removePrefix("ferretd ") }.also {
+                check(process.waitFor(5, TimeUnit.SECONDS) && process.exitValue() == 0)
+            }
+        }
+        val connectionScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val connection = FerretdDaemonConnection.testing(connectionScope, FerretdInstallation(executable, version))
+        project.replaceService(FerretdDaemonConnection::class.java, connection, testRootDisposable)
         val path = Path.of(requireNotNull(project.basePath)).resolve(".tmp/test.fql")
         Files.createDirectories(path.parent)
         Files.writeString(path, "RETURN FOR i IN 1..1000000\n LET delay = WAIT(10)\n LET value = i + 1\n RETURN value")
@@ -48,6 +60,11 @@ class FerretNativeDebugIntegrationTest : HeavyPlatformTestCase() {
         val configuration = FerretRunConfigurationType.getInstance().configurationFactories.single()
             .createTemplateConfiguration(project) as FerretRunConfiguration
         configuration.sourcePath = path.toString()
+        val configFile = Files.writeString(path.resolveSibling("runtimes.json"), """{"defaultRuntime":"App","runtimes":[
+            {"name":"App","provider":"wire","endpoint":"tcp://127.0.0.1:1","insecure":true}
+        ]}""")
+        connection.applyConfigPath(configFile.toString())
+        configuration.runtimeName = "local"
         val content = AtomicReference<RunContentDescriptor>()
         val failure = AtomicReference<Throwable>()
         try {
@@ -87,7 +104,6 @@ class FerretNativeDebugIntegrationTest : HeavyPlatformTestCase() {
                 content.get()?.processHandler?.isProcessTerminated == true
             }, 15)
             assertEquals(130, content.get().processHandler?.exitCode)
-            val connection = project.service<FerretdDaemonConnection>()
             PlatformTestUtil.waitWithEventsDispatching("Debug reservation was not released", { !connection.catalogState.value.busy }, 10)
             connection.applyConfigPath("after-debug.json")
             connection.applyConfigPath("")
@@ -99,6 +115,8 @@ class FerretNativeDebugIntegrationTest : HeavyPlatformTestCase() {
             PlatformTestUtil.waitWithEventsDispatching("Native Debug cleanup did not finish", {
                 content.get()?.processHandler?.isProcessTerminated != false
             }, 15)
+            runBlocking { connection.closeForTest() }
+            connectionScope.cancel()
             WriteCommandAction.runWriteCommandAction(project) { manager.breakpointManager.removeBreakpoint(breakpoint) }
         }
     }

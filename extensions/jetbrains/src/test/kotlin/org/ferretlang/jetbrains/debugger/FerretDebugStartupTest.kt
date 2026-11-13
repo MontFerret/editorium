@@ -11,6 +11,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
 import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
 import org.ferretlang.jetbrains.launch.FerretLaunchInput
 import org.ferretlang.jetbrains.run.FerretParameterBindings
@@ -96,7 +97,10 @@ class FerretDebugStartupTest : BasePlatformTestCase() {
                 debugProcess = process
                 process.processHandler.startNotify()
                 process.sessionInitialized()
-                PlatformTestUtil.waitWithEventsDispatching("DAP launch did not start", { adapter.launched.isDone }, 10)
+                PlatformTestUtil.waitWithEventsDispatching("DAP launch did not start", {
+                    if (process.dap.launchCompleted.isCancelled) runBlocking { process.dap.launchCompleted.await() }
+                    adapter.launched.isDone
+                }, 10)
                 throw failure
             }
         }

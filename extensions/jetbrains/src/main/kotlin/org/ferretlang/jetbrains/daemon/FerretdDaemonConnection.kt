@@ -9,6 +9,8 @@ import org.ferretlang.jetbrains.runtime.CatalogStatus
 import org.ferretlang.jetbrains.runtime.FerretRuntimeCatalog
 import org.ferretlang.jetbrains.runtime.FerretRuntimeDescriptor
 import org.ferretlang.jetbrains.runtime.FerretCatalogState
+import org.ferretlang.jetbrains.runtime.FerretDebugRuntime
+import org.ferretlang.jetbrains.runtime.FerretRuntimeConfigFingerprint
 import org.ferretlang.jetbrains.runtime.FerretRuntimeConfigFile
 import org.ferretlang.jetbrains.runtime.FerretRuntimeSettings
 import com.intellij.openapi.diagnostic.Logger
@@ -109,11 +111,11 @@ internal class FerretdDaemonConnection private constructor(
         publish(if (pendingReload) CatalogStatus.RELOAD_REQUIRED else CatalogStatus.UNLOADED)
     }
 
-    fun admitRun(runtimeName: String): Launch = admit(runtimeName, debug = false)
+    fun admitRun(runtimeName: String): Launch = admit(runtimeName)
 
-    fun admitDebug(runtimeName: String): Launch = admit(runtimeName, debug = true)
+    fun admitDebug(runtimeName: String): Launch = admit(runtimeName)
 
-    private fun admit(runtimeName: String, debug: Boolean): Launch = synchronized(lock) {
+    private fun admit(runtimeName: String): Launch = synchronized(lock) {
         checkOpen()
         if (pendingReload) {
             val action = when (state.value.status) {
@@ -123,7 +125,6 @@ internal class FerretdDaemonConnection private constructor(
             }
             throw ExecutionException(action)
         }
-        if (debug && (saved.path.isNotEmpty() || runtimeName.isNotEmpty())) throw ExecutionException(DEBUG_LIMITATION)
         val launch = Launch(this, adoptSaved(), runtimeName)
         launches++
         state.value = state.value.copy(busy = true)
@@ -138,7 +139,9 @@ internal class FerretdDaemonConnection private constructor(
         state.value = state.value.copy(busy = launches > 0)
     }
 
-    internal class Configuration(val path: String)
+    internal class Configuration(val path: String) {
+        var stale = false // Guarded by the connection lock. Only Reload creates a fresh revision at the same path.
+    }
 
     internal class Launch internal constructor(
         private val owner: FerretdDaemonConnection,
@@ -155,7 +158,7 @@ internal class FerretdDaemonConnection private constructor(
                             "The daemon reported API ${generation.info.apiMajor}.${generation.info.apiMinor}.",
                     )
                 }
-                return FerretRuntimeDescriptor("local", "Built-in Ferret", "native")
+                return FerretRuntimeDescriptor.LOCAL
             }
             val catalog = owner.catalog(generation)
             val name = runtimeName.ifEmpty { catalog.defaultRuntime }
@@ -163,6 +166,15 @@ internal class FerretdDaemonConnection private constructor(
                 ?: throw ExecutionException(
                     "Ferret runtime '$name' is unavailable. Choose another runtime or correct its definition and reload runtimes.",
                 )
+        }
+
+        suspend fun prepareDebugRuntime(): FerretDebugRuntime {
+            if (config.path.isEmpty() && runtimeName.isEmpty()) return FerretDebugRuntime.LOCAL
+            val source = generation()
+            val fingerprint = source.fingerprint
+            return FerretDebugRuntime(resolveRuntime(source), fingerprint?.path) {
+                owner.verifyConfiguration(config, fingerprint)
+            }
         }
 
         override fun close() {
@@ -382,8 +394,17 @@ internal class FerretdDaemonConnection private constructor(
     }
 
     private suspend fun startGeneration(number: Long, config: Configuration, file: Path?): Generation {
-        val generation = Generation(number, launcher.start(file))
+        val fingerprint = file?.let { FerretRuntimeConfigFingerprint.capture(it) }
+        val daemon = try {
+            launcher.start(file)
+        } catch (error: Exception) {
+            currentCoroutineContext().ensureActive()
+            verifyConfiguration(config, fingerprint)
+            throw error
+        }
+        val generation = Generation(number, daemon, fingerprint)
         try {
+            verifyConfiguration(config, fingerprint)
             if (generation.lost.isCompleted) throw generation.lost.await()
             synchronized(lock) {
                 checkOpen()
@@ -399,6 +420,25 @@ internal class FerretdDaemonConnection private constructor(
         } catch (error: Throwable) {
             withContext(NonCancellable) { stopGeneration(generation, graceful = false) }
             throw error
+        }
+    }
+
+    private suspend fun verifyConfiguration(
+        config: Configuration,
+        fingerprint: FerretRuntimeConfigFingerprint?,
+    ) {
+        if (fingerprint == null) return
+        val matches = fingerprint.matches()
+        currentCoroutineContext().ensureActive()
+        synchronized(lock) {
+            if (matches && !config.stale) return
+            config.stale = true
+            if (!closed && saved === config) {
+                pendingReload = true
+                discardCatalog()
+                publish(CatalogStatus.RELOAD_REQUIRED, STALE_CONFIGURATION)
+            }
+            throw ExecutionException(STALE_CONFIGURATION)
         }
     }
 
@@ -480,6 +520,7 @@ internal class FerretdDaemonConnection private constructor(
     internal class Generation(
         val number: Long,
         daemon: StartedFerretdDaemon,
+        val fingerprint: FerretRuntimeConfigFingerprint?,
     ) {
         val info = daemon.info
         var catalog: Deferred<FerretRuntimeCatalog>? = null
@@ -497,7 +538,7 @@ internal class FerretdDaemonConnection private constructor(
     }
 
     companion object {
-        const val DEBUG_LIMITATION = "To debug, clear the Runtime configuration file field and select Daemon default."
+        private const val STALE_CONFIGURATION = "The runtime configuration file changed or became unreadable. Reload runtimes."
         private val LOG = Logger.getInstance(FerretdDaemonConnection::class.java)
         private const val SHUTDOWN_TIMEOUT_SECONDS = 5L
 

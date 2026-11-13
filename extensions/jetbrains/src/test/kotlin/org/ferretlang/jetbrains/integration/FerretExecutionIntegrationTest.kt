@@ -8,6 +8,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import org.ferretlang.jetbrains.debugger.FerretDapCommand
 import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
 import org.ferretlang.jetbrains.daemon.FerretdInstallation
 import org.ferretlang.jetbrains.daemon.FerretdDaemonLauncher
@@ -112,6 +113,51 @@ class FerretExecutionIntegrationTest {
         assertEquals(local.debug(), 0, local.exit.awaitResult())
         assertEquals("42", local.stdout.single().trim())
         assertEquals(generation.number, connection.generation().number)
+    }
+
+    @Test
+    fun offlineDefaultFailsDebugAndExplicitLocalSurvivesCatalogDaemonLoss() = runBlocking {
+        val file = write("debug runtimes.json", """{"defaultRuntime":"App","runtimes":[
+            {"name":"App","provider":"wire","endpoint":"tcp://127.0.0.1:1","insecure":true,"connectTimeout":"250ms"}
+        ]}""")
+        connection.applyConfigPath(file.toString())
+        val source = write("main.fql", "LET answer = 42\nRETURN answer")
+        val input = FerretLaunchInput(source.toString(), "", root.toString(), FerretParameterBindings.EMPTY)
+        connection.admitDebug("").use { admitted ->
+            val debug = RealDapLaunch(input, scope, 2, prepareRuntime = admitted::prepareDebugRuntime)
+            try {
+                assertEquals(1, withTimeout(15_000) { debug.session.completion.await() })
+                val diagnostic = debug.listener.errors.receive()
+                assertTrue(diagnostic.contains("App") && diagnostic.contains("unavailable", ignoreCase = true))
+                assertTrue(!diagnostic.contains("127.0.0.1"))
+                assertTrue(debug.listener.stops.tryReceive().isFailure)
+                assertTrue(debug.listener.output.tryReceive().isFailure)
+            } finally {
+                debug.session.stop()
+                debug.session.completion.await()
+            }
+        }
+        connection.admitDebug("local").use { admitted ->
+            val debug = RealDapLaunch(input.copy(runtimeName = "local"), scope, 2, prepareRuntime = admitted::prepareDebugRuntime)
+            try {
+                withTimeout(15_000) {
+                    debug.session.launchCompleted.await()
+                    val stop = debug.stopped()
+                    assertEquals("breakpoint", stop.reason)
+                    val concurrent = execute(source, runtimeName = "local")
+                    assertEquals(0, concurrent.exit.awaitResult())
+                    val catalog = admitted.generation()
+                    catalog.process.destroyForcibly()
+                    catalog.lost.await()
+                    assertEquals(2, debug.session.stackTrace(stop, 0, 1)?.stackFrames?.single()?.line)
+                    debug.session.command(FerretDapCommand.CONTINUE, stop)
+                    assertEquals(0, debug.session.completion.await())
+                }
+            } finally {
+                debug.session.stop()
+                debug.session.completion.await()
+            }
+        }
     }
 
     @Test

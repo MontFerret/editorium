@@ -3,7 +3,6 @@ package org.ferretlang.jetbrains.run
 import com.intellij.openapi.components.service
 import com.intellij.openapi.util.Disposer
 import org.ferretlang.jetbrains.runtime.FerretRuntimePicker
-import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.options.ConfigurationException
 import com.intellij.openapi.options.SettingsEditor
@@ -72,7 +71,6 @@ class FerretRunConfigurationEditor(
             .createFormBuilder()
             .addLabeledComponent("Runtime:", runtime.component)
             .addComponent(runtime.actions)
-            .addComponent(JBLabel(FerretdDaemonConnection.DEBUG_LIMITATION))
             .addLabeledComponent("Source file:", sourcePathField)
             .addLabeledComponent("Working directory:", workingDirectoryControl)
             .addComponent(JBLabel("Leave blank to use the selected runtime’s default. Wire paths are interpreted on the runtime host."))
