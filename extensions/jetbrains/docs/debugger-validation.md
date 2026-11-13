@@ -3,9 +3,10 @@
 ## November 12, 2026 embedded application validation
 
 **Release blocker.** With `ferretd 1.0.0-alpha.11`, killing a Wire application
-while FQL is suspended at a breakpoint leaves its DAP session suspended. The
-required integration regression fails after 20 seconds. Killing the host while
-a Debug command is executing does deliver a failure and releases the adapter.
+while FQL is suspended at a breakpoint leaves its DAP session suspended until
+another execution command. The passive host-loss reproducer times out after
+20 seconds. Killing the host while a Debug command is executing does deliver
+a failure and releases the adapter.
 
 ### Automated evidence on macOS 26.7.2 arm64
 
@@ -25,20 +26,22 @@ close hook reports intentional closure at fixture teardown.
 | Standard suites | Go tooling and all 235 JetBrains unit/platform cases passed. The real-process suite executed 44 cases with zero skips. Its sole failure was suspended Debug host loss. The unscoped `make test` stopped there. A separate `make test vscode` passed 143 unit and 13 integration cases. |
 | Lint, verifier and package | `make lint`, `make package jetbrains`, and `make package-check jetbrains` passed. Plugin Verifier reported compatibility for IDEA and GoLand 2026.2 and 2026.3. The universal ZIP contained six daemon executables. Archive inspection, including its JARs, found no fixture files or temporary runtime configuration. |
 
-The Ubuntu 24.04, macOS 26 and Windows 2025 GitHub Actions jobs run the same
-JetBrains Make target on fixture, daemon pin and integration changes. Hosted
-results for this local revision are pending.
+The initial PR jobs on Ubuntu 24.04, macOS 26 and Windows 2025 each reproduced
+the same single failure in 44 real-process tests.
+[PR 24 validation at `9cb239f`](https://github.com/MontFerret/editorium/actions/runs/43351699184).
 
 ### Reproduce the suspended host loss
 
-The live regression is
-`FerretHostedExecutionIntegrationTest.lostApplicationEndsSuspendedDebugWithoutAnotherCommand`.
-It is part of `make test jetbrains`. To isolate it after acquiring the native
-daemon, export `FERRETD_TEST_PATH` as its absolute executable path. From
-`extensions/jetbrains`, run:
+`make test jetbrains` kills the application at a confirmed breakpoint. With
+alpha.11 it sends Continue and requires exit code 1, no successful output,
+adapter exit and released admission. Every other daemon version must report
+the failure without Continue. To run that same passive assertion on alpha.11,
+export `FERRETD_TEST_PATH` as the absolute path of the acquired daemon, then
+run this from `extensions/jetbrains`:
 
 ```sh
-./gradlew ferretdIntegrationTest --tests '*lostApplicationEndsSuspendedDebugWithoutAnotherCommand'
+FERRET_TEST_PASSIVE_HOST_LOSS=1 ./gradlew ferretdIntegrationTest \
+  --tests 'FerretHostedExecutionIntegrationTest.lostApplicationWhileDebugIsSuspendedReportsFailure'
 ```
 
 A separate framed-stdio probe reproduced the gap directly with the release
@@ -50,8 +53,7 @@ and returns the binding, set a breakpoint on line two, and send
 12 seconds of observation the adapter stayed alive and emitted no exit or
 termination event. It then answered an explicit `disconnect`. The upstream
 acceptance check is a failing terminal event without an additional client
-command, followed by adapter and admission cleanup. The regression remains
-enabled for the next daemon pin.
+command, followed by adapter and admission cleanup.
 
 ### Packaged GoLand smoke
 
