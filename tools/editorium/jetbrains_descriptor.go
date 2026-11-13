@@ -4,13 +4,11 @@ import (
 	"archive/zip"
 	"bytes"
 	"crypto/sha256"
-	"maps"
-
 	"encoding/xml"
 	"fmt"
 	"io/fs"
+	"maps"
 	"path"
-	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -27,12 +25,17 @@ type jetbrainsDescriptor struct {
 	} `xml:"idea-version"`
 }
 
-func checkPluginDescriptor(archivePath, resources, version, since, commit string, libraries map[string]string) error {
+func checkPluginDescriptor(archivePath, resourceDir, version, since, commit string, libraries map[string]string) error {
 	archive, err := zip.OpenReader(archivePath)
 	if err != nil {
 		return err
 	}
 	defer archive.Close()
+	resources, err := treeFiles(resourceDir)
+	if err != nil {
+		return fmt.Errorf("list plugin resources: %w", err)
+	}
+
 	mainJar := jetbrainsArchiveRoot + "/lib/" + jetbrainsArchiveRoot + "-" + version + ".jar"
 	seen := make(map[string]bool, len(libraries))
 	for _, entry := range archive.File {
@@ -99,7 +102,7 @@ func checkPluginEntry(entry *zip.File) error {
 	return nil
 }
 
-func checkPluginJar(jar *zip.Reader, primary bool, resources, version, since, commit string) error {
+func checkPluginJar(jar *zip.Reader, primary bool, resources map[string]string, version, since, commit string) error {
 	var descriptor, manifest *zip.File
 	seen := make(map[string]bool, len(jar.File))
 	for _, entry := range jar.File {
@@ -165,12 +168,13 @@ func checkPluginJar(jar *zip.Reader, primary bool, resources, version, since, co
 }
 
 // Compiled classes, Kotlin module metadata and declared main resources belong in the plugin JAR.
-func productionPluginEntry(name, resources string) bool {
+func productionPluginEntry(name string, resources map[string]string) bool {
 	if strings.HasSuffix(name, ".class") {
 		return strings.HasPrefix(name, "org/ferretlang/jetbrains/") && !strings.HasPrefix(name, "org/ferretlang/jetbrains/integration/")
 	}
 	if path.Dir(name) == "META-INF" && strings.HasSuffix(name, ".kotlin_module") {
 		return true
 	}
-	return regularFile(filepath.Join(resources, filepath.FromSlash(name)))
+	_, ok := resources[name]
+	return ok
 }

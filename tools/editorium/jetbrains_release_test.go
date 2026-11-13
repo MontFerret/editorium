@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -111,6 +112,12 @@ func TestJetBrainsReleaseQualification(t *testing.T) {
 
 func TestJetBrainsDescriptorAndDistribution(t *testing.T) {
 	dir := t.TempDir()
+	resources := filepath.Join(dir, "resources")
+	const icon = "icons/ferret.png"
+	writeTestFile(t, filepath.Join(resources, icon), []byte("icon"), 0o644)
+	outside := t.TempDir()
+	writeTestFile(t, filepath.Join(outside, "other.png"), []byte("other icon"), 0o644)
+	linkErr := os.Symlink(outside, filepath.Join(resources, "linked"))
 	const version = "0.1.0"
 	const commit = "98a63bb3ae9740becb71f9e217f422df32b58296"
 	const xml = `<idea-plugin><id>org.ferretlang.jetbrains</id><name>Ferret</name><vendor>Ferret</vendor><version>0.1.0</version><idea-version since-build="262"/></idea-plugin>`
@@ -135,6 +142,8 @@ func TestJetBrainsDescriptorAndDistribution(t *testing.T) {
 		}},
 		{"commit", func(j, z map[string][]byte) { j["META-INF/MANIFEST.MF"] = []byte("Ferret-Release-Commit: other\n") }},
 		{"temporary config", func(j, z map[string][]byte) { j["local-override.json"] = []byte("{}") }},
+		{"undeclared resource", func(j, z map[string][]byte) { j["icons/other.png"] = nil }},
+		{"symlinked resource directory", func(j, z map[string][]byte) { j["linked/other.png"] = nil }},
 		{"fixture in JAR", func(j, z map[string][]byte) { j["test-fixtures/wire-host"] = nil }},
 		{"extra ZIP entry", func(j, z map[string][]byte) { z["ferret-jetbrains/runtime.json"] = nil }},
 		{"second descriptor", func(j, z map[string][]byte) { z[lib+"options.jar"] = testZip(t, j) }},
@@ -146,7 +155,17 @@ func TestJetBrainsDescriptorAndDistribution(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			nested := map[string][]byte{"META-INF/plugin.xml": []byte(xml), "META-INF/MANIFEST.MF": []byte("Manifest-Version: 1.0\r\nFerret-Release-Commit: " + commit + "\r\n\r\n")}
+			if tc.name == "symlinked resource directory" && linkErr != nil {
+				if runtime.GOOS == "windows" {
+					t.Skipf("cannot create directory symlink: %v", linkErr)
+				}
+				t.Fatal(linkErr)
+			}
+			nested := map[string][]byte{
+				"META-INF/plugin.xml":  []byte(xml),
+				"META-INF/MANIFEST.MF": []byte("Manifest-Version: 1.0\r\nFerret-Release-Commit: " + commit + "\r\n\r\n"),
+				icon:                   []byte("icon"),
+			}
 			outer := map[string][]byte{lib + dependency: payload, lib + "options.jar": testZip(t, nil)}
 			if tc.edit != nil {
 				tc.edit(nested, outer)
@@ -155,11 +174,17 @@ func TestJetBrainsDescriptorAndDistribution(t *testing.T) {
 			archive := filepath.Join(dir, "plugin.zip")
 			data := testZip(t, outer)
 			writeTestFile(t, archive, data, 0o644)
-			err := checkPluginDescriptor(archive, dir, version, "262", commit, libs)
+			err := checkPluginDescriptor(archive, resources, version, "262", commit, libs)
 			if (tc.edit == nil) != (err == nil) {
 				t.Fatalf("descriptor: %v", err)
 			}
-			want := map[string]string{"missing runtime library": "missing plugin library " + dependency, "unexpected runtime library": "unexpected plugin library " + lib + "stale.jar", "changed runtime library": "checksum mismatch: " + lib + dependency}
+			want := map[string]string{
+				"missing runtime library":      "missing plugin library " + dependency,
+				"unexpected runtime library":   "unexpected plugin library " + lib + "stale.jar",
+				"changed runtime library":      "checksum mismatch: " + lib + dependency,
+				"undeclared resource":          "unexpected file in plugin JAR: icons/other.png",
+				"symlinked resource directory": "unexpected file in plugin JAR: linked/other.png",
+			}
 			if message := want[tc.name]; message != "" && !strings.Contains(err.Error(), message) {
 				t.Fatalf("got %v, want %s", err, message)
 			}
@@ -182,7 +207,7 @@ func TestJetBrainsDescriptorAndDistribution(t *testing.T) {
 		}
 		archive := filepath.Join(dir, "duplicate.zip")
 		writeTestFile(t, archive, out.Bytes(), 0o644)
-		if err := checkPluginDescriptor(archive, dir, version, "262", commit, libs); err == nil || !strings.Contains(err.Error(), "duplicate plugin library "+lib+dependency) {
+		if err := checkPluginDescriptor(archive, resources, version, "262", commit, libs); err == nil || !strings.Contains(err.Error(), "duplicate plugin library "+lib+dependency) {
 			t.Fatalf("duplicate archive: %v", err)
 		}
 	})
