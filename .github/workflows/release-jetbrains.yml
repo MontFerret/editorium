@@ -63,7 +63,7 @@ jobs:
   preflight:
     needs: [metadata, qualify]
     runs-on: ubuntu-24.04
-    environment: jetbrains-release
+    environment: jetbrains-marketplace
     permissions:
       contents: write
     outputs:
@@ -100,7 +100,7 @@ jobs:
     needs: [metadata, qualify, preflight]
     if: needs.preflight.outputs.action == 'create'
     runs-on: ubuntu-24.04
-    environment: jetbrains-release
+    environment: jetbrains-marketplace
     env: *qualified
     outputs:
       artifact-id: ${{ steps.assets.outputs.artifact-id }}
@@ -155,7 +155,7 @@ jobs:
   publish:
     needs: [metadata, sign]
     runs-on: ubuntu-24.04
-    environment: jetbrains-release
+    environment: jetbrains-marketplace
     env: *qualified
     permissions:
       contents: write
@@ -182,7 +182,7 @@ jobs:
       ${{ !cancelled() && needs.preflight.result == 'success' &&
           (needs.preflight.outputs.action == 'noop' || needs.publish.result == 'success') }}
     runs-on: ubuntu-24.04
-    environment: jetbrains-release
+    environment: jetbrains-marketplace
     env: *qualified
     steps:
       - *checkout
@@ -207,7 +207,7 @@ jobs:
         id: policy
         env:
           GH_TOKEN: ${{ github.token }}
-          JETBRAINS_MARKETPLACE_ENABLED: ${{ vars.JETBRAINS_MARKETPLACE_ENABLED }}
+          JETBRAINS_MARKETPLACE_ENABLED: ${{ vars.JB_MARKETPLACE_ENABLED }}
           CREATED: ${{ needs.publish.outputs.created || 'false' }}
           RECOVERY: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
@@ -222,7 +222,7 @@ jobs:
         if: steps.policy.outputs.upload == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          JETBRAINS_MARKETPLACE_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
+          JETBRAINS_MARKETPLACE_TOKEN: ${{ secrets.JB_MARKETPLACE_TOKEN }}
           SHA256: ${{ steps.verified.outputs.digest }}
         run: |
           go -C tools/editorium run . release-ci marketplace-upload --tag "$RELEASE_TAG" --directory published --sha256 "$SHA256" >> "$GITHUB_STEP_SUMMARY"
