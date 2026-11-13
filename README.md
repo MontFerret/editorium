@@ -24,7 +24,9 @@ Every extension runs its full test suite on Linux, macOS, and Windows for
 relevant pushes and pull requests. CI also builds, lints, packages, and verifies
 each extension. VS Code checks all six native VSIX artifacts and exercises the
 installed Linux x64 package. JetBrains verifies its universal ZIP and checks
-IDE compatibility with Plugin Verifier.
+IDE compatibility with Plugin Verifier. Its real-process suite builds the independent
+Go module in `fixtures/wire-host` (Go 1.26.1 or newer) and runs embedded-application
+queries with the current-host daemon.
 
 ## Repository commands
 

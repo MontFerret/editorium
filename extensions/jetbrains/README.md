@@ -140,6 +140,42 @@ disappears. Run and Debug can use the configured default, a named Wire applicati
 explicit `local` even when the default is Wire. If a saved runtime is missing,
 correct the definition and reload, or choose another runtime.
 
+### Run and debug an embedded application
+
+1. From the repository's `fixtures/wire-host` directory, run
+   `GOWORK=off go run -mod=readonly . -root .` in a terminal with Go 1.26.1
+   or newer. In PowerShell, set `$env:GOWORK = 'off'` before running
+   `go run -mod=readonly . -root .`. Keep stdin open. Copy the endpoint
+   from the JSON `ready` event.
+2. Save the runtime configuration above in a local JSON file. Replace the
+   endpoint with the printed address, set `defaultRuntime` to `"application"`,
+   and keep `insecure` enabled for this loopback fixture. Apply the file in
+   **Settings → Languages & Frameworks → Ferret**, then open **Runtime catalog**
+   and confirm that `application` is the default Wire runtime.
+3. In a local project, save this query as `hosted.fql`. Create a Ferret Run
+   configuration for it with parameters `{"value":41.5}`, a blank working
+   directory, and **Daemon default**. Run it and check the console for `42.5`.
+
+   ```fql
+   LET answer = DEMO::IDENTITY(@value)
+   LET result = answer + 1
+   RETURN result
+   ```
+
+4. Set a breakpoint on line 2 and Debug the same configuration. Inspect
+   `answer` in Locals, evaluate or watch `answer + 1`, step over to line 3,
+   and continue to the console result. Debugging follows the local FQL source.
+5. Debug again, stop at the breakpoint, and click **Stop**. The host prints
+   `released` with the same ID as the launch's `connected` event. Run again
+   against the same terminal and endpoint. The application owns the embedded
+   engine. Each IDE launch starts a new FQL query and owns its session and
+   connection. Stop releases those resources. Existing application queries
+   continue independently.
+6. To switch endpoints, start another host, edit the JSON, and choose **Reload
+   runtimes** after active launches finish. If you select a different config
+   file, **Apply** saves the path and **Reload runtimes** adopts it. Close stdin
+   in the fixture terminal for graceful shutdown and an `engineClosed` event.
+
 ## Language intelligence
 
 Ferret language intelligence is implemented by `ferretd` and exposed to the
@@ -411,12 +447,11 @@ current-host daemon, runs unit tests, and then runs `ferretdIntegrationTest` wit
 `FERRETD_TEST_PATH`. Running that Gradle task directly without an executable
 `FERRETD_TEST_PATH` is an error, not a skip.
 
-For the optional live Wire check, start `go run ./examples/wire-host` in a
-MontFerret CLI checkout. Set `FERRETD_TEST_WIRE_ENDPOINT` to its printed
-loopback endpoint when running `make test jetbrains`. The test invokes the
-host’s `DEMO::IDENTITY` function, stops another hosted Run, and invokes the
-function again. The standard suite exercises offline Wire and explicit local
-selection with the pinned daemon.
+The integration task builds the standalone Go module in `fixtures/wire-host`
+with its workspace disabled. It checks the linked Core, API, and Wire versions
+against the acquired daemon and starts an independently owned application for
+each hosted test. The integration suite runs on every invocation. Its host
+executable is under `build/test-fixtures/`, outside the plugin sandbox and ZIP.
 
 `make lint jetbrains` and `make package jetbrains` both invoke `verifyPlugin`
 against all four distributions in the compatibility matrix. Reports are written
@@ -449,7 +484,12 @@ RETURN FOR value IN 1..3
     RETURN doubled
 ```
 
-Record the exact IDE build and observed result for each step. A successful
+For embedded-runtime release smoke, repeat the walkthrough in the isolated
+installation. Record the ZIP filename and SHA-256, bundled daemon version,
+exact IDE build, and observed result for each step. See
+[Run and debug an embedded application](#run-and-debug-an-embedded-application).
+
+A successful
 build, Plugin Verifier run, or IDE launch alone does not complete this smoke
 test. Its actual status and any remaining manual steps are recorded in the
 [validation report](docs/debugger-validation.md).

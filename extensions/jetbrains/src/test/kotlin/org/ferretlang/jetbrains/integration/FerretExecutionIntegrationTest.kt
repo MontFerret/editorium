@@ -1,6 +1,5 @@
 package org.ferretlang.jetbrains.integration
 
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -10,66 +9,23 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.ferretlang.jetbrains.debugger.FerretDapCommand
 import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
-import org.ferretlang.jetbrains.daemon.FerretdInstallation
-import org.ferretlang.jetbrains.daemon.FerretdDaemonLauncher
-import org.ferretlang.jetbrains.daemon.GrpcFerretdRpc
-import org.ferretlang.jetbrains.execution.FerretExecutionClient
 import org.ferretlang.jetbrains.launch.FerretLaunchInput
-import org.ferretlang.jetbrains.execution.FerretExecutionSink
 import org.ferretlang.jetbrains.run.FerretParameterBindings
 import org.ferretlang.jetbrains.run.FerretParameterValue
 import org.ferretlang.jetbrains.runtime.CatalogStatus
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Test
 import org.junit.experimental.categories.Category
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.Collections
 import java.util.concurrent.TimeUnit
 import com.google.gson.JsonParser
 import org.ferretlang.jetbrains.run.FerretParameterBindingsJson
 
 @Category(FerretdIntegrationTest::class)
-class FerretExecutionIntegrationTest {
-    private lateinit var scope: CoroutineScope
-    private lateinit var connection: FerretdDaemonConnection
-    private lateinit var root: Path
-    private lateinit var installation: FerretdInstallation
-    private var port = 0
-
-    @Before
-    fun setUp() {
-        val executable = Path.of(requireNotNull(System.getenv("FERRETD_TEST_PATH")))
-        val version = executableVersion(executable)
-        scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        installation = FerretdInstallation(executable, version)
-        connection = FerretdDaemonConnection.testing(scope, FerretdDaemonLauncher.testing(
-            scope,
-            { installation },
-            { installed, credential, configFile ->
-                ProcessBuilder(FerretdDaemonLauncher.command(installed, configFile)).apply {
-                    environment()["FERRETD_AUTH_TOKEN"] = credential
-                }.start()
-            },
-            { readyPort, credential ->
-                port = readyPort
-                GrpcFerretdRpc.connect(readyPort, credential)
-            },
-        ))
-        root = Files.createTempDirectory("ferret-jetbrains-integration-")
-    }
-
-    @After
-    fun tearDown() {
-        runBlocking { connection.closeForTest() }
-        scope.cancel()
-        root.toFile().deleteRecursively()
-    }
-
+internal class FerretExecutionIntegrationTest : RealExecutionTestCase() {
     @Test
     fun discoversOfflineWireAndRereadsOnlyOnReloadBeforeReturningToLocalRun() = runBlocking {
         val file = write("runtime config.json", """{"defaultRuntime":"App","runtimes":[
@@ -216,30 +172,6 @@ class FerretExecutionIntegrationTest {
             } finally {
                 debug.session.stop()
                 debug.session.completion.await()
-            }
-        }
-    }
-
-    @Test
-    fun hostedApplicationExecutesAfterAnotherHostedRunIsStopped() = runBlocking {
-        val endpoint = System.getenv("FERRETD_TEST_WIRE_ENDPOINT")
-        org.junit.Assume.assumeTrue("Requires the CLI examples/wire-host fixture", !endpoint.isNullOrEmpty())
-        val file = write("hosted.json", """{"defaultRuntime":"App","runtimes":[
-            {"name":"App","provider":"wire","endpoint":"$endpoint","insecure":true}
-        ]}""")
-        connection.applyConfigPath(file.toString())
-        val source = write("hosted.fql", "RETURN DEMO::IDENTITY(@value)")
-        val bindings = FerretParameterBindingsJson.parse("""{"value":42}""")
-        for (selector in listOf("", "App")) {
-            val run = execute(source, bindings, workingDirectory = null, runtimeName = selector)
-            val exit = run.exit.awaitResult()
-            assertEquals(run.debug(), 0, exit)
-            assertEquals("42", run.stdout.single().trim())
-            if (selector.isEmpty()) {
-                val wait = execute(write("wait.fql", "WAIT(30s)\nRETURN DEMO::IDENTITY(1)"), workingDirectory = null)
-                wait.awaitStarted()
-                assertTrue(wait.handle.cancel())
-                assertEquals(130, wait.exit.awaitResult())
             }
         }
     }
@@ -595,88 +527,4 @@ class FerretExecutionIntegrationTest {
             assertTrue(channel.awaitTermination(5, TimeUnit.SECONDS))
         }
     }
-
-    private fun execute(
-        source: Path,
-        parameters: FerretParameterBindings = FerretParameterBindings.EMPTY,
-        workingDirectory: Path? = root,
-        projectRoot: Path = root,
-        daemon: FerretdDaemonConnection = connection,
-        runtimeName: String = "",
-    ): RecordingExecution {
-        val sink = RecordingExecution()
-        sink.handle = FerretExecutionClient(daemon).start(
-            FerretLaunchInput(
-                source.toString(),
-                workingDirectory?.toString().orEmpty(),
-                projectRoot.toString(),
-                parameters,
-                runtimeName,
-            ),
-            sink,
-        )
-        return sink
-    }
-
-    private fun write(relativePath: String, source: String): Path {
-        val path = root.resolve(relativePath)
-        Files.createDirectories(path.parent)
-        return Files.writeString(path, source)
-    }
-
-    private fun executableVersion(executable: Path): String {
-        val process = ProcessBuilder(executable.toString(), "--version").redirectErrorStream(true).start()
-        val output = process.inputStream.bufferedReader().readText().trim()
-        check(process.waitFor(5, TimeUnit.SECONDS) && process.exitValue() == 0) {
-            "Cannot read ferretd version from $executable: $output"
-        }
-        return output.removePrefix("ferretd ").trim().also { check(it.isNotBlank()) }
-    }
-
-    private class RecordingExecution : FerretExecutionSink {
-        val started = CompletableDeferred<Unit>()
-        val events = Collections.synchronizedList(mutableListOf<String>())
-        val debug = Collections.synchronizedList(mutableListOf<String>())
-        val system = Collections.synchronizedList(mutableListOf<String>())
-        val stdout = Collections.synchronizedList(mutableListOf<String>())
-        val stderr = Collections.synchronizedList(mutableListOf<String>())
-        val internal = Collections.synchronizedList(mutableListOf<String>())
-        val exit = CompletableDeferred<Int>()
-        lateinit var handle: org.ferretlang.jetbrains.execution.FerretExecutionHandle
-
-        override fun started() { started.complete(Unit) }
-
-        override fun debug(message: String) { debug += message }
-
-        override fun system(message: String) {
-            system += message
-        }
-
-        override fun stdout(message: String) {
-            stdout += message
-            events += "output"
-        }
-
-        override fun stderr(message: String) {
-            stderr += message
-        }
-
-        override fun internal(message: String, cause: Throwable?) {
-            internal += "$message: ${cause?.javaClass?.name}: ${cause?.message}"
-        }
-
-        override fun terminate(exitCode: Int) {
-            events += "terminated:$exitCode"
-            internal += "terminated=$exitCode"
-            exit.complete(exitCode)
-        }
-
-        suspend fun awaitStarted() {
-            withTimeout(15_000L) { started.await() }
-        }
-
-        fun debug(): String = "system=$system stdout=$stdout stderr=$stderr internal=$internal"
-    }
-
-    private suspend fun <T> CompletableDeferred<T>.awaitResult(): T = withTimeout(20_000L) { this@awaitResult.await() }
 }

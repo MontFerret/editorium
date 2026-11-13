@@ -1,5 +1,72 @@
 # JetBrains debugger validation
 
+## November 12, 2026 embedded application validation
+
+**Release blocker.** With `ferretd 1.0.0-alpha.11`, killing a Wire application
+while FQL is suspended at a breakpoint leaves its DAP session suspended. The
+required integration regression fails after 20 seconds. Killing the host while
+a Debug command is executing does deliver a failure and releases the adapter.
+
+### Automated evidence on macOS 26.7.2 arm64
+
+The standard integration task built the standalone Go fixture and ran against
+the checksum-verified current-host daemon. Both binaries linked Core alpha.62,
+API alpha.21 and Wire alpha.4. Go 1.26.5 and Temurin JDK 25 were used locally.
+The fixture reports release after the Wire Connect handler returns. Its engine
+close hook reports intentional closure at fixture teardown.
+
+| Layer | Observed result |
+| --- | --- |
+| Native Run runner | An empty selector with Wire default and explicit `App` with local default both returned the supplied object through the Run console, retaining its number, boolean and string. Explicit local under the Wire default opened no host connection. |
+| Native Debug runner | The configured default ran `DEMO::IDENTITY(@value)`. XDebugger stopped on the second local FQL line, showed `answer` as Float `41.5`, evaluated `answer + 1` as `42.5`, stepped to line three and printed `42.5` on continuation. The adapter exited, admission cleared and a new hosted Run succeeded. |
+| Production execution client and DAP session | Run and Debug read the application marker with a blank directory and the override marker with an explicit directory. The workspace had different contents. The debugger retained the local query path and breakpoint line. |
+| Cancellation and disposal | After entry into the blocking function, Run Stop cancelled it and completed its Wire connection. The paused sibling still evaluated and resumed. Stop at a breakpoint released its adapter and connection. Disposing a real IntelliJ project with both launches active reaped both child processes. Fresh custom-function queries succeeded against each surviving application. |
+| Host loss during execution | Both running queries failed with exit code 1. After explicit Reload of the replacement endpoint, a deliberate new query succeeded. The replacement received one connection and no replay of either interrupted call. |
+| Standard suites | Go tooling and all 235 JetBrains unit/platform cases passed. The real-process suite executed 44 cases with zero skips. Its sole failure was suspended Debug host loss. The unscoped `make test` stopped there. A separate `make test vscode` passed 143 unit and 13 integration cases. |
+| Lint, verifier and package | `make lint`, `make package jetbrains`, and `make package-check jetbrains` passed. Plugin Verifier reported compatibility for IDEA and GoLand 2026.2 and 2026.3. The universal ZIP contained six daemon executables. Archive inspection, including its JARs, found no fixture files or temporary runtime configuration. |
+
+The Ubuntu 24.04, macOS 26 and Windows 2025 GitHub Actions jobs run the same
+JetBrains Make target on fixture, daemon pin and integration changes. Hosted
+results for this local revision are pending.
+
+### Reproduce the suspended host loss
+
+The live regression is
+`FerretHostedExecutionIntegrationTest.lostApplicationEndsSuspendedDebugWithoutAnotherCommand`.
+It is part of `make test jetbrains`. To isolate it after acquiring the native
+daemon, export `FERRETD_TEST_PATH` as its absolute executable path. From
+`extensions/jetbrains`, run:
+
+```sh
+./gradlew ferretdIntegrationTest --tests '*lostApplicationEndsSuspendedDebugWithoutAnotherCommand'
+```
+
+A separate framed-stdio probe reproduced the gap directly with the release
+binary. Launch `ferretd dap --runtime-config <file>` against the fixture,
+initialize, launch a local two-line query that assigns `DEMO::IDENTITY(41)`
+and returns the binding, set a breakpoint on line two, and send
+`configurationDone`. After the adapter acknowledges the launch and emits
+`stopped`, kill only the application and leave the DAP input open. During
+12 seconds of observation the adapter stayed alive and emitted no exit or
+termination event. It then answered an explicit `disconnect`. The upstream
+acceptance check is a failing terminal event without an additional client
+command, followed by adapter and admission cleanup. The regression remains
+enabled for the next daemon pin.
+
+### Packaged GoLand smoke
+
+The universal `ferret-jetbrains-0.1.0.zip` had SHA-256
+`3e7d7eb9aed4b4b25f9c1a23dbc46f4a35ccb0549ff28e4e2ee98e22ceb16db1`
+and bundled `ferretd 1.0.0-alpha.11`. The ZIP was extracted into a disposable
+plugin directory. The isolated GoLand 2026.3 log confirmed build
+`GO-263.7307.211`, its temporary profile, and loading Ferret 0.1.0.
+Computer Use timed out selecting GoLand, including a second attempt after
+the isolated plugin loaded. The isolated IDE was shut down. Interactive
+catalog discovery, Run output, breakpoint inspection, watch, stepping, Stop,
+relaunch and Reload are pending. Use the
+[packaged smoke procedure](../README.md#smoke-test-the-packaged-plugin).
+
+
 ## November 12, 2026 selected-runtime startup fixes
 
 On macOS arm64, 51 focused unit and platform tests passed. Three integration

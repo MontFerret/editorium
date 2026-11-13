@@ -1,5 +1,6 @@
 package org.ferretlang.jetbrains.integration
 
+import com.google.gson.JsonParser
 import com.intellij.execution.executors.DefaultRunExecutor
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder
 import com.intellij.execution.runners.ProgramRunner
@@ -16,27 +17,63 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
-import org.ferretlang.jetbrains.daemon.FerretdInstallation
 import org.ferretlang.jetbrains.run.FerretRunConfiguration
 import org.ferretlang.jetbrains.run.FerretRunConfigurationType
 import org.junit.experimental.categories.Category
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 @Category(FerretdIntegrationTest::class)
 class FerretNativeRunIntegrationTest : BasePlatformTestCase() {
-    fun testNativeRunnerSavesTheEditedDocumentAndTerminatesWithoutStop() {
-        val executable = Path.of(requireNotNull(System.getenv("FERRETD_TEST_PATH")))
-        val version = runBlocking(Dispatchers.IO) {
-            val process = ProcessBuilder(executable.toString(), "--version").start()
-            val output = process.inputStream.bufferedReader().readText().trim()
-            check(process.waitFor(5, TimeUnit.SECONDS) && process.exitValue() == 0)
-            output.removePrefix("ferretd ").trim()
-        }
+    fun testHostedSelectionsReachNativeRunConsoleAndReleaseConnection() {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        val connection = FerretdDaemonConnection.testing(scope, FerretdInstallation(executable, version))
+        val connection = FerretdDaemonConnection.testing(scope, pinnedTestInstallation())
+        project.replaceService(FerretdDaemonConnection::class.java, connection, testRootDisposable)
+        val root = Files.createDirectories(Path.of(requireNotNull(project.basePath)).resolve(".tmp/native-wire"))
+        val hosted = Files.writeString(root.resolve("query.fql"), "RETURN DEMO::IDENTITY(@value)")
+        val local = Files.writeString(root.resolve("local.fql"), "RETURN \"local marker\"")
+        val config = root.resolve("runtimes.json")
+        val value = """{"number":42,"flag":true,"text":"42"}"""
+        val bindings = """{"value":$value}"""
+        val executor = DefaultRunExecutor.getRunExecutorInstance()
+        try {
+            WireHost.start(root).use { host ->
+                connection.applyConfigPath(host.configure(config).toString())
+                for ((ordinal, selector) in listOf("", "App").withIndex()) {
+                    if (selector == "App") {
+                        host.configure(config, default = "local")
+                        runBlocking { connection.reloadRuntimes().join() }
+                    }
+                    NativeFerretLaunch(project, executor).use { launch ->
+                        launch.start(hosted, selector, bindings)
+                        val lines = launch.outputLines()
+                        val start = lines.indexOfFirst { it.startsWith("{") }
+                        val end = lines.indexOfLast { it.endsWith("}") }
+                        check(start >= 0 && end >= start) { "Missing native JSON result: $lines" }
+                        val output = lines.subList(start, end + 1).joinToString("\n")
+                        assertEquals("Parameter types in native Run output", JsonParser.parseString(value), JsonParser.parseString(output))
+                    }
+                    host.released(host.connection(ordinal + 1))
+                    PlatformTestUtil.waitWithEventsDispatching("Run admission was not released", { !connection.catalogState.value.busy }, 10)
+                    if (selector.isEmpty()) {
+                        NativeFerretLaunch(project, executor).use { launch ->
+                            launch.start(local, "local", "{}")
+                            assertTrue(launch.outputLines().any { it.contains("local marker") })
+                        }
+                        assertEquals(1, host.count("connected"))
+                    }
+                }
+            }
+        } finally {
+            runBlocking { connection.closeForTest() }
+            scope.cancel()
+        }
+    }
+
+    fun testNativeRunnerSavesTheEditedDocumentAndTerminatesWithoutStop() {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val connection = FerretdDaemonConnection.testing(scope, pinnedTestInstallation())
         project.replaceService(FerretdDaemonConnection::class.java, connection, testRootDisposable)
         val path = Path.of(requireNotNull(project.basePath)).resolve(".tmp/test.fql")
         Files.createDirectories(path.parent)
