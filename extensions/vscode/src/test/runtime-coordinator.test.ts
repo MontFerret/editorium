@@ -1,7 +1,9 @@
 import * as assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, win32 } from 'node:path';
+import { promisify } from 'node:util';
 import { Metadata, status } from '@grpc/grpc-js';
 
 import type { DaemonConnection } from '../daemon/types';
@@ -310,6 +312,19 @@ suite('window runtime catalog', () => {
     await runtime.reload();
     runtime.save(resolveRuntimeConfiguration('runtimes.json', resolve(dir, '..')));
     assert.equal(runtime.view.status, 'reload-required');
+  });
+
+  test('rejects a runtime configuration FIFO without waiting for a writer', async function () {
+    if (process.platform === 'win32') this.skip();
+
+    const fifo = join(dir, 'runtime.fifo');
+    const exec = promisify(execFile);
+    await exec('mkfifo', [fifo]);
+    const { stdout } = await exec('node', [
+      '-e', 'require(process.argv[1]).fingerprint(process.argv[2]).catch(error => console.log(error.message))',
+      require.resolve('../runtime/configuration'), fifo,
+    ], { timeout: 5_000, killSignal: 'SIGKILL' });
+    assert.equal(stdout.trimEnd(), `Runtime configuration is not a regular file: ${fifo}`);
   });
 
   test('requires a fully qualified Windows root for absolute paths on any host', () => {

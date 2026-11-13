@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { open, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { open } from 'node:fs/promises';
 import * as hostPath from 'node:path';
 
 export interface RuntimeConfiguration {
@@ -39,9 +40,9 @@ export function resolveRuntimeConfiguration(
 }
 
 export async function fingerprint(path: string): Promise<string> {
-  // Check before opening as well: opening a named pipe can block.
-  if (!(await stat(path)).isFile()) throw new Error(`Runtime configuration is not a regular file: ${path}`);
-  const file = await open(path, 'r');
+  // A POSIX FIFO must not wait for a writer before we can check its type.
+  const flags = process.platform === 'win32' ? constants.O_RDONLY : constants.O_RDONLY | constants.O_NONBLOCK;
+  const file = await open(path, flags);
   try {
     if (!(await file.stat()).isFile()) throw new Error(`Runtime configuration is not a regular file: ${path}`);
     return createHash('sha256').update(await file.readFile()).digest('hex');
