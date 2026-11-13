@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -66,7 +69,7 @@ func jetbrainsGitHubState(ctx context.Context, repositoryAPI, token string, m re
 					return "", fmt.Errorf("GitHub release list contains an entry without a tag")
 				}
 				if release.Tag == m.Tag {
-					return "", fmt.Errorf("GitHub lists %s but its published release is unavailable (draft=%t); inspect its original assets before recovery", m.Tag, release.Draft)
+					return "", fmt.Errorf("GitHub lists %s but its published release is unavailable (draft=%t); recover the original %s", m.Tag, release.Draft, strings.Join(m.Assets, " and "))
 				}
 			}
 			if len(releases) < 100 {
@@ -77,5 +80,57 @@ func jetbrainsGitHubState(ctx context.Context, repositoryAPI, token string, m re
 	if status != http.StatusOK {
 		return "", fmt.Errorf("cannot inspect GitHub release %s (HTTP %d)", m.Tag, status)
 	}
-	return decideReleaseAction(&githubRelease{TagName: remote.Tag, Name: remote.Name, IsDraft: remote.Draft, IsPrerelease: remote.Prerelease, Assets: remote.Assets}, m)
+	action, err := decideReleaseAction(&githubRelease{TagName: remote.Tag, Name: remote.Name, IsDraft: remote.Draft, IsPrerelease: remote.Prerelease, Assets: remote.Assets}, m)
+	if err != nil {
+		return "", fmt.Errorf("%w; recover the original %s", err, strings.Join(m.Assets, " and "))
+	}
+	return action, nil
+}
+
+func publishJetBrainsRelease(ctx context.Context, root, api, dir, digest string, m releaseMetadata) (bool, error) {
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(root, dir)
+	}
+	if _, err := validateReleaseAssets(dir, m.Assets); err != nil {
+		return false, err
+	}
+	zip := filepath.Join(dir, m.Assets[0])
+	sum, err := sha256File(zip)
+	if err != nil {
+		return false, err
+	}
+	checksum, err := os.ReadFile(zip + ".sha256")
+	if err != nil {
+		return false, err
+	}
+	if sum != digest || string(checksum) != sum+"  "+m.Assets[0]+"\n" {
+		return false, fmt.Errorf("signed artifact or checksum differs from the signing job digest")
+	}
+	token := os.Getenv("GH_TOKEN")
+	action, err := jetbrainsGitHubState(ctx, api, token, m)
+	if err != nil {
+		return false, err
+	}
+	if err := requireRemoteTag(ctx, root, m); err != nil {
+		return false, err
+	}
+	if action == "noop" {
+		return false, nil
+	}
+	args := []string{"release", "create", m.Tag, zip, zip + ".sha256", "--verify-tag", "--title", m.Title, "--generate-notes", "--latest=false"}
+	if m.Prerelease {
+		args = append(args, "--prerelease")
+	}
+	if _, err := commandOutput(ctx, root, nil, "gh", args...); err != nil {
+		// A concurrent create or lost response can leave a complete release. Verify its original bytes downstream.
+		state, inspectErr := jetbrainsGitHubState(ctx, api, token, m)
+		if inspectErr != nil {
+			return false, fmt.Errorf("%w; inspect publication: %w", err, inspectErr)
+		}
+		if state == "noop" {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }

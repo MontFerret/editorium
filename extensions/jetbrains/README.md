@@ -456,9 +456,11 @@ executable is under `build/test-fixtures/`, outside the plugin sandbox and ZIP.
 `make lint jetbrains` and `make package jetbrains` both invoke `verifyPlugin`
 against all four distributions in the compatibility matrix. Reports are written
 under `build/reports/pluginVerifier/`; the JetBrains CI packaging job uploads
-them even after a failed check. The root package check additionally verifies
-every bundled daemon's bytes, version, and Unix executable mode and runs the
-native daemon's `--version` smoke check.
+them even after a failed check. The root package check verifies the complete
+set of JARs and hashes each external dependency against Gradle's resolved
+production libraries. It checks daemons against the verified release cache,
+checks the version and Unix executable modes, and runs the native daemon's
+`--version` smoke check.
 
 ## Release the plugin
 

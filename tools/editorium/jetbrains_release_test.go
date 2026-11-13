@@ -1,8 +1,12 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -111,6 +115,10 @@ func TestJetBrainsDescriptorAndDistribution(t *testing.T) {
 	const commit = "98a63bb3ae9740becb71f9e217f422df32b58296"
 	const xml = `<idea-plugin><id>org.ferretlang.jetbrains</id><name>Ferret</name><vendor>Ferret</vendor><version>0.1.0</version><idea-version since-build="262"/></idea-plugin>`
 	jar := jetbrainsArchiveRoot + "/lib/ferret-jetbrains-0.1.0.jar"
+	const dependency = "org.eclipse.lsp4j.debug-0.24.0.jar"
+	const lib = "ferret-jetbrains/lib/"
+	payload := testZip(t, map[string][]byte{"debug.class": {42}})
+	libs := map[string]string{filepath.Base(jar): "", dependency: fmt.Sprintf("%x", sha256.Sum256(payload)), "options.jar": ""}
 	tests := []struct {
 		name string
 		edit func(map[string][]byte, map[string][]byte)
@@ -129,25 +137,55 @@ func TestJetBrainsDescriptorAndDistribution(t *testing.T) {
 		{"temporary config", func(j, z map[string][]byte) { j["local-override.json"] = []byte("{}") }},
 		{"fixture in JAR", func(j, z map[string][]byte) { j["test-fixtures/wire-host"] = nil }},
 		{"extra ZIP entry", func(j, z map[string][]byte) { z["ferret-jetbrains/runtime.json"] = nil }},
-		{"second descriptor", func(j, z map[string][]byte) { z["ferret-jetbrains/lib/stale.jar"] = testZip(t, j) }},
+		{"second descriptor", func(j, z map[string][]byte) { z[lib+"options.jar"] = testZip(t, j) }},
+		{"missing runtime library", func(j, z map[string][]byte) { delete(z, lib+dependency) }},
+		{"unexpected runtime library", func(j, z map[string][]byte) { z[lib+"stale.jar"] = payload }},
+		{"changed runtime library", func(j, z map[string][]byte) { z[lib+dependency] = testZip(t, map[string][]byte{"debug.class": {0}}) }},
+
 		{"missing descriptor", func(j, z map[string][]byte) { delete(j, "META-INF/plugin.xml") }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			nested := map[string][]byte{"META-INF/plugin.xml": []byte(xml), "META-INF/MANIFEST.MF": []byte("Manifest-Version: 1.0\r\nFerret-Release-Commit: " + commit + "\r\n\r\n")}
-			outer := map[string][]byte{}
+			outer := map[string][]byte{lib + dependency: payload, lib + "options.jar": testZip(t, nil)}
 			if tc.edit != nil {
 				tc.edit(nested, outer)
 			}
 			outer[jar] = testZip(t, nested)
 			archive := filepath.Join(dir, "plugin.zip")
-			writeTestFile(t, archive, testZip(t, outer), 0o644)
-			err := checkPluginDescriptor(archive, dir, version, "262", commit)
+			data := testZip(t, outer)
+			writeTestFile(t, archive, data, 0o644)
+			err := checkPluginDescriptor(archive, dir, version, "262", commit, libs)
 			if (tc.edit == nil) != (err == nil) {
 				t.Fatalf("descriptor: %v", err)
 			}
+			want := map[string]string{"missing runtime library": "missing plugin library " + dependency, "unexpected runtime library": "unexpected plugin library " + lib + "stale.jar", "changed runtime library": "checksum mismatch: " + lib + dependency}
+			if message := want[tc.name]; message != "" && !strings.Contains(err.Error(), message) {
+				t.Fatalf("got %v, want %s", err, message)
+			}
 		})
 	}
+	t.Run("duplicate runtime library", func(t *testing.T) {
+		var out bytes.Buffer
+		w := zip.NewWriter(&out)
+		for range 2 {
+			f, err := w.Create(lib + dependency)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = f.Write(payload); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		archive := filepath.Join(dir, "duplicate.zip")
+		writeTestFile(t, archive, out.Bytes(), 0o644)
+		if err := checkPluginDescriptor(archive, dir, version, "262", commit, libs); err == nil || !strings.Contains(err.Error(), "duplicate plugin library "+lib+dependency) {
+			t.Fatalf("duplicate archive: %v", err)
+		}
+	})
 	path := filepath.Join(dir, "oversize.zip")
 	writeTestFile(t, path, []byte{1}, 0o644)
 	if err := os.Truncate(path, marketplaceMaxBytes+1); err != nil {
@@ -155,5 +193,57 @@ func TestJetBrainsDescriptorAndDistribution(t *testing.T) {
 	}
 	if err := checkMarketplaceSize(path); err == nil || !strings.Contains(err.Error(), "400000001") {
 		t.Fatalf("size failure: %v", err)
+	}
+}
+
+func TestJetBrainsRemoteAnnotation(t *testing.T) {
+	f := newReleaseGitFixture(t)
+	const tag = "jetbrains/v0.1.0"
+	ref := "refs/tags/" + tag
+	head := f.git(t, "rev-parse", "HEAD")
+	f.git(t, "tag", "-a", tag, "-m", "qualified")
+	f.git(t, "push", "origin", ref)
+	m, err := metadataFromTag(f.work, tag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Commit != head || m.TagObject != f.git(t, "rev-parse", ref) {
+		t.Fatal("incorrect qualified IDs")
+	}
+	t.Setenv("JETBRAINS_QUALIFIED_TAG_OBJECT", m.TagObject)
+	t.Setenv("JETBRAINS_RELEASE_COMMIT", m.Commit)
+	if err := requireRemoteTag(context.Background(), f.work, m); err != nil {
+		t.Fatal(err)
+	}
+	// Only change the bare remote. Checkout and local tag still describe the qualified commit.
+	f.git(t, "commit", "--allow-empty", "-m", "newer")
+	newer := f.git(t, "rev-parse", "HEAD")
+	f.git(t, "tag", "-a", "moved", "-m", "another commit", newer)
+	f.git(t, "tag", "-a", "replaced", "-m", "same commit", head)
+	f.git(t, "push", "origin", "refs/tags/moved", "refs/tags/replaced")
+	f.git(t, "checkout", "--detach", head)
+	for _, tc := range []struct{ name, id string }{
+		{"lightweight", head}, {"moved", f.git(t, "rev-parse", "refs/tags/moved")}, {"replaced", f.git(t, "rev-parse", "refs/tags/replaced")}, {"deleted", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.id == "" {
+				bareGit(t, f.remote, "update-ref", "-d", ref)
+			} else {
+				bareGit(t, f.remote, "update-ref", ref, tc.id)
+			}
+			if err := requireRemoteTag(context.Background(), f.work, m); err == nil {
+				t.Fatal("accepted changed tag")
+			}
+			for _, op := range []string{"sign", "publish", "marketplace-upload", "verify-signed"} {
+				err := runReleaseCI(f.work, []string{op, "--tag", tag})
+				if err == nil || !strings.Contains(err.Error(), "tag") {
+					t.Fatalf("%s reached operation: %v", op, err)
+				}
+			}
+		})
+	}
+	f.git(t, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "unavailable"))
+	if err := requireRemoteTag(context.Background(), f.work, m); err == nil || !strings.Contains(err.Error(), "ls-remote") {
+		t.Fatalf("transport failure: %v", err)
 	}
 }

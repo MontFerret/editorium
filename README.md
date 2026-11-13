@@ -175,9 +175,10 @@ make package jetbrains
 make package-check jetbrains
 ```
 
-The package check verifies the descriptor in the shipped plugin JAR, the
-complete six-target matrix against the verified daemon release, the version
-marker, Unix executable modes, and native `ferretd --version` output. Downloads remain
+The package check verifies the descriptor in the shipped plugin JAR, the exact
+runtime library set and external JAR hashes from Gradle, and the complete
+six-target matrix against the verified daemon release. It also checks the
+version marker, Unix executable modes, and native `ferretd --version` output. Downloads remain
 cached under `.dist/`; no daemon binary is committed to Git.
 
 ## JetBrains releases

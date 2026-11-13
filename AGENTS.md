@@ -582,7 +582,12 @@ and annotated `jetbrains/v<semver>` tags. Local release tests and all three CI
 test jobs require `FERRET_TEST_PASSIVE_HOST_LOSS=1` in the test JVM. The tagged
 build embeds its commit. Verify the descriptor in the packaged JAR, all six
 daemon payloads, author signature, size, and SHA-256 before publication.
-The protected `jetbrains-release` environment signs a selected ZIP once.
+Compare the packaged runtime libraries with Gradle’s production inputs and
+check dependencies by SHA-256. Compare daemon bytes directly with the verified cache.
+The protected `jetbrains-release` environment signs the qualified ZIP in a
+read-only job. Remote tag object and peeled commit must match qualification at
+signing, GitHub publication and Marketplace upload. GitHub write access belongs
+to draft inspection and publication.
 Recovery uses the original GitHub release assets. Marketplace updates require
 manual first-listing bootstrap and an exact stable plugin version. Keep the
 packaged IDE smoke status in the integration's validation record.

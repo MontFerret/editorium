@@ -52,6 +52,12 @@ func jetbrainsReleaseArtifact(ctx context.Context, root, operation, directory, u
 		if err := checkJetBrainsArtifact(ctx, root, unsigned, m.Version, m.Commit); err != nil {
 			return err
 		}
+		// Disposable signer tests use an untagged local build. The release-ci caller supplies both remote IDs.
+		if m.TagObject != "" {
+			if err := requireRemoteTag(ctx, root, m); err != nil {
+				return err
+			}
+		}
 		if err := runJetBrainsSigner(ctx, root, "signPlugin", unsigned, signed); err != nil {
 			return err
 		}
@@ -97,7 +103,16 @@ func runJetBrainsSigner(ctx context.Context, root, task, input, output string) e
 	if input != "" {
 		environment = append(environment, "JETBRAINS_UNSIGNED_ZIP="+input)
 	}
-	return runJetBrainsGradleEnvironment(ctx, root, environment, task, "--no-configuration-cache", "--no-build-cache", "--rerun-tasks", "--quiet")
+	args := []string{task, "--no-configuration-cache", "--no-build-cache", "--rerun-tasks", "--quiet"}
+	if task == "verifyPluginSignature" {
+		dir, err := os.MkdirTemp("", "ferret-author-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(dir)
+		args = append(args, "-PverificationAnchorFile="+filepath.Join(dir, "anchor.pem"))
+	}
+	return runJetBrainsGradleEnvironment(ctx, root, environment, args...)
 }
 
 func checkMarketplaceSize(path string) error {

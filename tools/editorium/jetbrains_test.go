@@ -147,22 +147,20 @@ func TestPrepareJetBrainsFerretdStagesEveryTargetCachesAndPreservesPriorOutput(t
 
 		return testResponse(http.StatusOK, contents), nil
 	})
-	prepared, err := prepareJetBrainsFerretd(context.Background(), root, client)
+	err := prepareJetBrainsFerretd(context.Background(), root, client)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if prepared.Version != "2.0.0-alpha.2" || len(prepared.Acquired) != len(ferretdTargets) {
-		t.Fatalf("prepared = %#v", prepared)
-	}
+	stage := jetbrainsGeneratedRoot(root)
 
 	if requests != len(ferretdTargets)*2 {
 		t.Fatalf("release requests = %d, want %d", requests, len(ferretdTargets)*2)
 	}
 
-	assertTestContents(t, filepath.Join(prepared.Root, jetbrainsFerretdVersionFile), "2.0.0-alpha.2\n")
+	assertTestContents(t, filepath.Join(stage, jetbrainsFerretdVersionFile), "2.0.0-alpha.2\n")
 	for _, target := range ferretdTargets {
-		path := filepath.Join(prepared.Root, target.Platform, target.Architecture, target.BinaryName)
+		path := filepath.Join(stage, target.Platform, target.Architecture, target.BinaryName)
 		assertTestContents(t, path, "binary "+target.ID)
 		info, err := os.Stat(path)
 		if err != nil {
@@ -179,7 +177,7 @@ func TestPrepareJetBrainsFerretdStagesEveryTargetCachesAndPreservesPriorOutput(t
 		}
 	}
 
-	if _, err := prepareJetBrainsFerretd(context.Background(), root, doerFunc(func(*http.Request) (*http.Response, error) {
+	if err := prepareJetBrainsFerretd(context.Background(), root, doerFunc(func(*http.Request) (*http.Response, error) {
 		t.Fatal("verified cache performed a request")
 		return nil, nil
 	})); err != nil {
@@ -187,18 +185,26 @@ func TestPrepareJetBrainsFerretdStagesEveryTargetCachesAndPreservesPriorOutput(t
 	}
 
 	writeTestFile(t, filepath.Join(root, "ferretd.json"), []byte("{\"ferretd\":\"2.0.0-alpha.3\"}\n"), 0o644)
-	_, err = prepareJetBrainsFerretd(context.Background(), root, doerFunc(func(*http.Request) (*http.Response, error) {
+	err = prepareJetBrainsFerretd(context.Background(), root, doerFunc(func(*http.Request) (*http.Response, error) {
 		return testResponse(http.StatusBadGateway, []byte("unavailable")), nil
 	}))
 	if err == nil || !strings.Contains(err.Error(), "HTTP Bad Gateway") {
 		t.Fatalf("failed preparation error = %v", err)
 	}
 
-	assertTestContents(t, filepath.Join(prepared.Root, jetbrainsFerretdVersionFile), "2.0.0-alpha.2\n")
+	assertTestContents(t, filepath.Join(stage, jetbrainsFerretdVersionFile), "2.0.0-alpha.2\n")
 }
 
 func TestValidateJetBrainsArchiveChecksMatrixVersionBytesAndModes(t *testing.T) {
-	root := t.TempDir()
+	root := pinnedTestRoot(t)
+	archives, checksums := jetbrainsReleaseFixtures(t)
+	client := doerFunc(func(r *http.Request) (*http.Response, error) {
+		asset := filepath.Base(r.URL.Path)
+		if asset == checksumAsset {
+			return testResponse(http.StatusOK, checksums), nil
+		}
+		return testResponse(http.StatusOK, archives[asset]), nil
+	})
 	stagedRoot := filepath.Join(root, "generated", "ferretd")
 	version := "2.0.0-alpha.2"
 	writeTestFile(t, filepath.Join(stagedRoot, jetbrainsFerretdVersionFile), []byte(version+"\n"), 0o644)
@@ -216,12 +222,23 @@ func TestValidateJetBrainsArchiveChecksMatrixVersionBytesAndModes(t *testing.T) 
 	writeJetBrainsTestArchive(t, path, stagedRoot, version, nil)
 	smoked := ""
 
-	if err := validateJetBrainsArchiveWithSmoke(context.Background(), path, stagedRoot, version, func(_ context.Context, _ []byte, target ferretdTarget, _ string) error {
+	if err := validateJetBrainsArchiveWithSmoke(context.Background(), path, root, version, client, func(_ context.Context, _ []byte, target ferretdTarget, _ string) error {
 		smoked = target.ID
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	stage := jetbrainsGeneratedRoot(root)
+	if _, err := os.Stat(stage); !os.IsNotExist(err) {
+		t.Fatalf("verification created stage: %v", err)
+	}
+	marker := filepath.Join(stage, jetbrainsFerretdVersionFile)
+	writeTestFile(t, marker, []byte("sentinel"), 0o644)
+	if err := validateJetBrainsArchiveWithSmoke(context.Background(), path, root, version, client, func(context.Context, []byte, ferretdTarget, string) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	assertTestContents(t, marker, "sentinel")
 
 	if native, err := detectHostFerretdTarget(runtime.GOOS, runtime.GOARCH); err == nil && smoked != native.ID {
 		t.Fatalf("smoked target = %q, want %q", smoked, native.ID)
@@ -250,7 +267,7 @@ func TestValidateJetBrainsArchiveChecksMatrixVersionBytesAndModes(t *testing.T) 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			writeJetBrainsTestArchive(t, path, stagedRoot, version, test.change)
-			err := validateJetBrainsArchiveWithSmoke(context.Background(), path, stagedRoot, version, func(context.Context, []byte, ferretdTarget, string) error { return nil })
+			err := validateJetBrainsArchiveWithSmoke(context.Background(), path, root, version, client, func(context.Context, []byte, ferretdTarget, string) error { return nil })
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("validation error = %v, want %q", err, test.want)
 			}

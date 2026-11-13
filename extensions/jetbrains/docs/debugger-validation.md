@@ -18,6 +18,18 @@ in its composed JAR and signed with a disposable test certificate, measured
 SHA-256 were verified. Verification rejected an unsigned ZIP, modified signed
 bytes, a different certificate, and a conflicting checksum.
 
+After the release-verification changes, another macOS arm64 run of the strict
+suite again failed only `lostApplicationWhileDebugIsSuspendedReportsFailure`
+(1 of 44). The assertion reported a live adapter and no exit code after the
+Wire host died. Ordinary `make test`, `make lint`, packaging and standalone
+package verification passed. A universal ZIP signed with a disposable CA and
+leaf measured 78,731,812 bytes. Public-only verification accepted the original
+chain and rejected a sibling author under the same CA, a different CA, a reversed
+chain, and malformed PEM. A separate self-signed author case also passed.
+Release tests covered changed remote annotations, missing and substituted
+libraries, and an existing GitHub release appearing during publication using
+local remotes and a fake GitHub endpoint.
+
 The installed GoLand 2026.3 interactive smoke remains pending. These results
 cover local infrastructure testing. Hosted release CI, production signing,
 the first Marketplace listing, and public availability remain unverified.

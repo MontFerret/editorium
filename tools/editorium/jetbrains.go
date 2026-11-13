@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,17 +19,10 @@ const (
 	maximumJetBrainsEntrySize   = 128 * 1024 * 1024
 )
 
-type preparedJetBrainsFerretd struct {
-	Root     string
-	Version  string
-	Acquired map[string]acquiredFerretd
-}
-
 func runJetBrainsOperation(ctx context.Context, root, operation string) error {
 	switch operation {
 	case "prepare":
-		_, err := prepareJetBrainsFerretd(ctx, root, nil)
-		return err
+		return prepareJetBrainsFerretd(ctx, root, nil)
 	case "build":
 		return runJetBrainsGradle(ctx, root, "buildPlugin", "verifyPluginProjectConfiguration", "verifyPluginStructure")
 	case "test":
@@ -109,30 +103,29 @@ func packageJetBrains(ctx context.Context, root string) error {
 	return checkJetBrainsPackage(ctx, root)
 }
 
-func prepareJetBrainsFerretd(ctx context.Context, root string, client httpDoer) (preparedJetBrainsFerretd, error) {
+func prepareJetBrainsFerretd(ctx context.Context, root string, client httpDoer) error {
 	version, err := readFerretdVersion(root)
 	if err != nil {
-		return preparedJetBrainsFerretd{}, err
+		return err
 	}
 
 	generatedRoot := jetbrainsGeneratedRoot(root)
 	if err := os.MkdirAll(filepath.Dir(generatedRoot), 0o755); err != nil {
-		return preparedJetBrainsFerretd{}, err
+		return err
 	}
 
 	stagingRoot, err := os.MkdirTemp(filepath.Dir(generatedRoot), ".ferretd-stage-")
 	if err != nil {
-		return preparedJetBrainsFerretd{}, err
+		return err
 	}
 
 	defer os.RemoveAll(stagingRoot)
 
-	acquired := make(map[string]acquiredFerretd, len(ferretdTargets))
 	for _, target := range ferretdTargets {
 		binary, acquireErr := acquireFerretd(ctx, root, target, client)
 
 		if acquireErr != nil {
-			return preparedJetBrainsFerretd{}, fmt.Errorf("prepare JetBrains ferretd target %s: %w", target.ID, acquireErr)
+			return fmt.Errorf("prepare JetBrains ferretd target %s: %w", target.ID, acquireErr)
 		}
 
 		mode := os.FileMode(0o644)
@@ -142,23 +135,21 @@ func prepareJetBrainsFerretd(ctx context.Context, root string, client httpDoer) 
 
 		destination := filepath.Join(stagingRoot, target.Platform, target.Architecture, target.BinaryName)
 		if err := copyFileAtomic(binary.BinaryPath, destination, mode); err != nil {
-			return preparedJetBrainsFerretd{}, fmt.Errorf("stage JetBrains ferretd target %s: %w", target.ID, err)
+			return fmt.Errorf("stage JetBrains ferretd target %s: %w", target.ID, err)
 		}
-
-		acquired[target.ID] = binary
 	}
 
 	if err := writeFileAtomic(filepath.Join(stagingRoot, jetbrainsFerretdVersionFile), []byte(version+"\n"), 0o644); err != nil {
-		return preparedJetBrainsFerretd{}, err
+		return err
 	}
 
 	if err := replaceDirectoryAtomic(stagingRoot, generatedRoot); err != nil {
-		return preparedJetBrainsFerretd{}, err
+		return err
 	}
 
 	fmt.Printf("Prepared ferretd %s for JetBrains (%d targets): %s\n", version, len(ferretdTargets), generatedRoot)
 
-	return preparedJetBrainsFerretd{Root: generatedRoot, Version: version, Acquired: acquired}, nil
+	return nil
 }
 
 func checkJetBrainsPackage(ctx context.Context, root string) error {
@@ -188,22 +179,47 @@ func checkJetBrainsArtifact(ctx context.Context, root, path, version, commit str
 		return err
 	}
 	resources := filepath.Join(jetbrainsPackageRoot(root), "src", "main", "resources")
-	if err := checkPluginDescriptor(path, resources, version, since, commit); err != nil {
-		return err
-	}
-	// Reacquire verified bytes even when checking a downloaded or previously staged ZIP.
-	prepared, err := prepareJetBrainsFerretd(ctx, root, nil)
+	libraries, err := jetbrainsLibraryInventory(ctx, root)
 	if err != nil {
 		return err
 	}
-	if err := validateJetBrainsArchiveWithSmoke(ctx, path, prepared.Root, prepared.Version, smokePackagedJetBrainsFerretd); err != nil {
+	if err := checkPluginDescriptor(path, resources, version, since, commit, libraries); err != nil {
+		return err
+	}
+	// Reacquire verified bytes even when checking a downloaded or previously staged ZIP.
+	daemonVersion, err := readFerretdVersion(root)
+	if err != nil {
+		return err
+	}
+	if err := validateJetBrainsArchiveWithSmoke(ctx, path, root, daemonVersion, nil, smokePackagedJetBrainsFerretd); err != nil {
 		return err
 	}
 	fmt.Printf("Verified %s\n", path)
 	return nil
 }
 
-func validateJetBrainsArchiveWithSmoke(ctx context.Context, path, stagedRoot, version string, smoke func(context.Context, []byte, ferretdTarget, string) error) error {
+func jetbrainsLibraryInventory(ctx context.Context, root string) (map[string]string, error) {
+	dir, err := os.MkdirTemp("", "ferret-plugin-libraries-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "libraries.json")
+	if err := runJetBrainsGradle(ctx, root, "pluginLibraryInventory", "-PlibraryInventoryFile="+path, "--no-configuration-cache", "--quiet"); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var libraries map[string]string
+	if err := json.Unmarshal(data, &libraries); err != nil {
+		return nil, err
+	}
+	return libraries, nil
+}
+
+func validateJetBrainsArchiveWithSmoke(ctx context.Context, path, root, version string, client httpDoer, smoke func(context.Context, []byte, ferretdTarget, string) error) error {
 	archive, err := zip.OpenReader(path)
 	if err != nil {
 		return err
@@ -267,13 +283,15 @@ func validateJetBrainsArchiveWithSmoke(ctx context.Context, path, stagedRoot, ve
 			return err
 		}
 
-		stagedPath := filepath.Join(stagedRoot, target.Platform, target.Architecture, target.BinaryName)
-		staged, err := os.ReadFile(stagedPath)
+		binary, err := acquireFerretd(ctx, root, target, client)
 		if err != nil {
-			return fmt.Errorf("read staged JetBrains ferretd target %s: %w", target.ID, err)
+			return fmt.Errorf("verify JetBrains ferretd target %s: %w", target.ID, err)
 		}
-
-		if !bytes.Equal(contents, staged) {
+		original, err := os.ReadFile(binary.BinaryPath)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(contents, original) {
 			return fmt.Errorf("packaged JetBrains ferretd bytes differ for %s", target.ID)
 		}
 

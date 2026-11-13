@@ -28,6 +28,7 @@ type (
 		Title               string   `json:"title"`
 		Assets              []string `json:"assets"`
 		Commit              string   `json:"commit,omitempty"`
+		TagObject           string   `json:"tag_object,omitempty"`
 		description         releaseDescription
 	}
 
@@ -106,8 +107,8 @@ func runReleaseWithValidator(ctx context.Context, root, extension, version strin
 }
 
 func reconcileFailedTagPush(ctx context.Context, root, tag, head string, pushErr error) error {
-	landed, confirmErr := remoteTagCommit(ctx, root, tag)
-	if confirmErr == nil && landed == head {
+	landed, confirmErr := remoteTag(ctx, root, tag)
+	if confirmErr == nil && landed.commit == head {
 		fmt.Println("Tag push completed despite a local transport error; confirmed the remote ref.")
 
 		return nil
@@ -380,18 +381,39 @@ func gitRefExists(ctx context.Context, root, ref string) (bool, error) {
 	return false, err
 }
 
-func remoteTagCommit(ctx context.Context, root, tag string) (string, error) {
-	output, err := gitOutput(ctx, root, "ls-remote", releaseRemote, "refs/tags/"+tag+"^{}")
+type remoteTagRef struct{ object, commit string }
+
+func remoteTag(ctx context.Context, root, tag string) (remoteTagRef, error) {
+	ref := "refs/tags/" + tag
+	output, err := gitOutput(ctx, root, "ls-remote", releaseRemote, ref, ref+"^{}")
 	if err != nil {
-		return "", err
+		return remoteTagRef{}, fmt.Errorf("inspect remote tag %s: %w", tag, err)
 	}
-
-	fields := strings.Fields(output)
-	if len(fields) == 0 {
-		return "", nil
+	var result remoteTagRef
+	for line := range strings.Lines(output) {
+		id, name, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		if !ok {
+			return remoteTagRef{}, fmt.Errorf("invalid ls-remote output for %s", tag)
+		}
+		switch name {
+		case ref:
+			result.object = id
+		case ref + "^{}":
+			result.commit = id
+		}
 	}
+	return result, nil
+}
 
-	return fields[0], nil
+func requireRemoteTag(ctx context.Context, root string, m releaseMetadata) error {
+	current, err := remoteTag(ctx, root, m.Tag)
+	if err != nil {
+		return err
+	}
+	if m.TagObject == "" || m.Commit == "" || current.object != m.TagObject || current.commit != m.Commit {
+		return fmt.Errorf("remote annotated tag %s changed: expected object %s at %s, found %q at %q", m.Tag, m.TagObject, m.Commit, current.object, current.commit)
+	}
+	return nil
 }
 
 func runReleaseCI(root string, args []string) error {
@@ -436,7 +458,7 @@ func runReleaseCI(root string, args []string) error {
 		case "github":
 			fmt.Printf("version=%s\nprerelease=%t\nmarketplace_eligible=%t\ntitle=%s\n", metadata.Version, metadata.Prerelease, metadata.MarketplaceEligible, metadata.Title)
 			if metadata.Commit != "" {
-				fmt.Printf("commit=%s\n", metadata.Commit)
+				fmt.Printf("commit=%s\ntag-object=%s\n", metadata.Commit, metadata.TagObject)
 			}
 		default:
 			return fmt.Errorf("unknown metadata format: %s", *format)
@@ -495,7 +517,7 @@ func metadataFromTag(root, tag string) (releaseMetadata, error) {
 	}
 	if metadata.description.checkTagCommit {
 		ctx := context.Background()
-		commit, err := gitOutput(ctx, root, "rev-parse", "--verify", "refs/tags/"+tag+"^{commit}")
+		remote, err := remoteTag(ctx, root, tag)
 		if err != nil {
 			return releaseMetadata{}, err
 		}
@@ -503,13 +525,17 @@ func metadataFromTag(root, tag string) (releaseMetadata, error) {
 		if err != nil {
 			return releaseMetadata{}, err
 		}
-		if commit != head {
-			return releaseMetadata{}, fmt.Errorf("tag %s points to %s, checkout is %s", tag, commit, head)
+		if remote.commit == "" || remote.object == "" {
+			return releaseMetadata{}, fmt.Errorf("missing remote annotated tag %s", tag)
+		}
+		if remote.commit != head {
+			return releaseMetadata{}, fmt.Errorf("tag %s points to %s, checkout is %s", tag, remote.commit, head)
 		}
 		if err := requireTrackedManifest(ctx, root, extension); err != nil {
 			return releaseMetadata{}, err
 		}
-		metadata.Commit = commit
+		metadata.Commit = remote.commit
+		metadata.TagObject = remote.object
 	}
 
 	return metadata, nil

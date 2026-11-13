@@ -38,9 +38,13 @@ on:
         default: false
       commit:
         type: string
+      tag-object:
+        type: string
       version:
         type: string
     outputs:
+      artifact-id:
+        value: ${{ jobs.package.outputs.artifact-id }}
       unsigned-sha256:
         value: ${{ jobs.package.outputs.sha256 }}
 
@@ -62,6 +66,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit || github.sha }}
 
       - name: Set up Java
         uses: actions/setup-java@v5
@@ -102,11 +108,14 @@ jobs:
       JETBRAINS_RELEASE_COMMIT: ${{ inputs.commit }}
     outputs:
       sha256: ${{ steps.digest.outputs.sha256 }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
     runs-on: ubuntu-24.04
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit || github.sha }}
 
       - name: Set up Java
         uses: actions/setup-java@v5
@@ -163,15 +172,17 @@ jobs:
         id: digest
         env:
           VERSION: ${{ inputs.version }}
+          JETBRAINS_QUALIFIED_TAG_OBJECT: ${{ inputs.tag-object }}
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$JETBRAINS_RELEASE_COMMIT"
+          go -C tools/editorium run . release-ci check-tag --tag "$GITHUB_REF_NAME"
           path="extensions/jetbrains/build/distributions/ferret-jetbrains-$VERSION.zip"
           echo "sha256=$(sha256sum "$path" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "path=$path" >> "$GITHUB_OUTPUT"
 
       - name: Upload unsigned release candidate
+        id: upload
         if: inputs.strict-qualification
         uses: actions/upload-artifact@v4
         with:

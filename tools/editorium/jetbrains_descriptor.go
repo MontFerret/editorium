@@ -3,6 +3,9 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
+	"maps"
+
 	"encoding/xml"
 	"fmt"
 	"io/fs"
@@ -24,14 +27,14 @@ type jetbrainsDescriptor struct {
 	} `xml:"idea-version"`
 }
 
-func checkPluginDescriptor(archivePath, resources, version, since, commit string) error {
+func checkPluginDescriptor(archivePath, resources, version, since, commit string, libraries map[string]string) error {
 	archive, err := zip.OpenReader(archivePath)
 	if err != nil {
 		return err
 	}
 	defer archive.Close()
 	mainJar := jetbrainsArchiveRoot + "/lib/" + jetbrainsArchiveRoot + "-" + version + ".jar"
-	found := false
+	seen := make(map[string]bool, len(libraries))
 	for _, entry := range archive.File {
 		name := strings.TrimSuffix(entry.Name, "/")
 		if err := checkPluginEntry(entry); err != nil {
@@ -47,9 +50,21 @@ func checkPluginDescriptor(archivePath, resources, version, since, commit string
 		if path.Dir(name) != jetbrainsArchiveRoot+"/lib" || path.Ext(name) != ".jar" {
 			return fmt.Errorf("unexpected plugin ZIP entry %q", entry.Name)
 		}
+		base := path.Base(name)
+		digest, ok := libraries[base]
+		if !ok {
+			return fmt.Errorf("unexpected plugin library %s", name)
+		}
+		if seen[base] {
+			return fmt.Errorf("duplicate plugin library %s", name)
+		}
+		seen[base] = true
 		contents, err := readJetBrainsZipEntry(entry)
 		if err != nil {
 			return err
+		}
+		if digest != "" && fmt.Sprintf("%x", sha256.Sum256(contents)) != digest {
+			return fmt.Errorf("plugin library checksum mismatch: %s", name)
 		}
 		jar, err := zip.NewReader(bytes.NewReader(contents), int64(len(contents)))
 		if err != nil {
@@ -58,15 +73,14 @@ func checkPluginDescriptor(archivePath, resources, version, since, commit string
 		if err := checkPluginJar(jar, name == mainJar, resources, version, since, commit); err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
-		if name == mainJar {
-			if found {
-				return fmt.Errorf("duplicate plugin JAR %s", name)
-			}
-			found = true
-		}
 	}
-	if !found {
+	if !seen[path.Base(mainJar)] {
 		return fmt.Errorf("missing plugin JAR %s", mainJar)
+	}
+	for _, name := range slices.Sorted(maps.Keys(libraries)) {
+		if !seen[name] {
+			return fmt.Errorf("missing plugin library %s", name)
+		}
 	}
 	return nil
 }

@@ -28,13 +28,20 @@ existing tag, runs Go tooling, preparation, build, lint, strict tests, packaging
 and package checks, then rechecks the checkout. It creates the annotated
 `jetbrains/v<version>` tag at that commit and pushes only the tag.
 
-Tag CI validates the version and runs the full JetBrains tests with the owned
-Wire fixture on Linux, macOS, and Windows. It also checks all four configured
-IDE builds, packages the plugin, and transfers the selected ZIP and digest.
-After qualification, the protected job signs that archive with the Marketplace
-ZIP Signer, verifies the author certificate, packaged descriptor and source
-commit, six pinned daemon binaries, and native executable. It enforces a
-400,000,000-byte ceiling and publishes exactly these GitHub assets:
+Tag CI reads the annotated tag object and its peeled commit from `origin`.
+The Linux, macOS and Windows test jobs check out that commit. The package job
+checks all four configured IDE builds and transfers the qualified ZIP by
+Actions artifact ID and SHA-256. Signing, GitHub publication, and Marketplace
+upload each recheck the remote annotation and commit before proceeding.
+
+After qualification, publication preflight checks for drafts and existing
+releases. Only an absent release proceeds to signing. The read-only signing
+job verifies the packaged descriptor, commit, complete runtime library set
+and external JAR hashes against the tagged Gradle configuration. It compares
+all six daemons to the verified release binaries and runs the native smoke.
+The publication job checks the signed artifact ID's ZIP and sidecar against
+the signing job's digest and rechecks release state. GitHub stores exactly
+these two assets, with a 400,000,000-byte ceiling on the ZIP.
 
 ```text
 ferret-jetbrains-<version>-signed.zip
@@ -54,8 +61,11 @@ or untrusted creation, and configure the repository's release reviewers.
 Ordinary plugin development uses the unsigned package and needs no credentials.
 
 - Set the environment variable `JETBRAINS_SIGNING_CERTIFICATE` to the trusted
-  public PEM certificate chain, with the signing certificate first. Retain its
-  identity for verification of historical releases.
+  public PEM certificate chain, with the Ferret signing leaf first, followed by
+  its issuers in order. A self-signed author uses one PEM certificate.
+  Verification checks the signer’s embedded chain and uses the final configured
+  certificate as the trust anchor. Retain the original public chain for
+  recovery of releases made with it.
 - Set the environment secret `JETBRAINS_SIGNING_KEY` to its matching PEM
   private key. The job accepts an **unencrypted PEM** stored as a GitHub
   environment secret, writes it to a private temporary file for the signer,
@@ -89,7 +99,10 @@ Ordinary plugin development uses the unsigned package and needs no credentials.
 
 - If GitHub publication already succeeded, the workflow checks its tag, title,
   prerelease flag, asset names, signature, descriptor, commit and checksum.
-  Existing releases supply the original signed bytes. On conflicting metadata
+  The read-only verification job downloads both original assets even when
+  Marketplace upload is disabled. If a completed release appears after
+  preflight, publication uses those assets and skips automatic Marketplace
+  submission. On conflicting metadata
   or an incomplete draft, inspect the release and original run. Recover only
   the original verified assets from that attempt's `jetbrains-signed-<commit>-<attempt>`
   Actions artifact. Confirm its checksum and author signature against the
