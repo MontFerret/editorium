@@ -7,15 +7,14 @@ import {
 } from './config';
 import { FerretServerController } from './controller';
 import { DaemonController } from './daemon/manager';
-import { registerFerretDebugAdapter } from './debug/adapter';
+import { FerretDebugAdapterDescriptorFactory, ferretDebugType } from './debug/adapter';
 import { registerFerretDebugCommand } from './debug/commands';
 import { registerFerretDebugConfigurationProvider } from './debug/configuration';
+import { FerretExecutionClient } from './execution/client';
 import {
   registerExecutionCommands,
-  type ExecutionCommandController,
 } from './execution/commands';
 import {
-  type ExecutionFeedbackController,
   registerExecutionFeedback,
 } from './execution/feedback';
 import { FerretExecutionManager } from './execution/manager';
@@ -24,13 +23,14 @@ import {
   requireFerretdExecutable,
 } from './ferretd';
 import { createLanguageClient } from './language-client';
+import { RuntimeCoordinator } from './runtime/coordinator';
+import { readRuntimeConfiguration, registerRuntimeCommands } from './runtime/commands';
+import { runtimeNameKey } from './runtime/picker';
+
 import { LanguageServerController, showOutputAction } from './server';
 import { ConfiguredTraceOutputChannel } from './trace-output';
 
-let controller: FerretServerController | undefined;
-let executionCommands: ExecutionCommandController | undefined;
-let executionFeedback: ExecutionFeedbackController | undefined;
-let executionManager: FerretExecutionManager | undefined;
+let shutdown: (() => Promise<void>) | undefined;
 
 interface ServerLifecycleController {
   restart(): Promise<void>;
@@ -83,16 +83,16 @@ export async function activate(
     },
   );
   const daemon = new DaemonController(readExecutable, output);
-  const activeController = new FerretServerController(
-    languageServer,
-    daemon,
-    output,
+  const runtimes = new RuntimeCoordinator(
+    daemon, readRuntimeConfiguration(), () => context.workspaceState.get(runtimeNameKey, ''),
   );
+  const activeController = new FerretServerController(languageServer, runtimes);
   const activeExecutionManager = new FerretExecutionManager(
     daemon,
-    activeController.executions,
+    new FerretExecutionClient(daemon),
     daemon.workspaceRegistry,
     output,
+    runtimes,
   );
   const activeExecutionCommands = registerExecutionCommands(
     activeExecutionManager,
@@ -102,19 +102,26 @@ export async function activate(
     activeExecutionManager,
     output,
   );
-  const debugAdapterRegistration = registerFerretDebugAdapter(
+  const factory = new FerretDebugAdapterDescriptorFactory(
     () => requireFerretdExecutable(readExecutable()),
     output,
+    runtimes,
   );
   const debugConfigurationRegistration =
-    registerFerretDebugConfigurationProvider();
+    registerFerretDebugConfigurationProvider(selector => runtimes.checkLaunch(selector));
   const debugCommandRegistration = registerFerretDebugCommand();
 
-  controller = activeController;
-  executionCommands = activeExecutionCommands;
-  executionFeedback = activeExecutionFeedback;
-  executionManager = activeExecutionManager;
-  await activeController.updateWorkspaceFolders(workspaceRoots());
+  shutdown = async () => {
+    runtimes.closeAdmissions();
+    activeExecutionFeedback.dispose();
+    activeExecutionCommands.dispose();
+    try {
+      const results = await Promise.allSettled([activeExecutionManager.dispose(), factory.shutdown()]);
+      for (const result of results) if (result.status === 'rejected') throw result.reason;
+    } finally {
+      await activeController.stop();
+    }
+  };
   const serverConfigurationListener =
     vscode.workspace.onDidChangeConfiguration((event) => {
       const restart = restartForServerConfigurationChange(
@@ -137,7 +144,9 @@ export async function activate(
     serverConfigurationListener,
     activeExecutionCommands,
     activeExecutionFeedback,
-    debugAdapterRegistration,
+    registerRuntimeCommands(runtimes, context.workspaceState),
+    vscode.debug.registerDebugAdapterDescriptorFactory(ferretDebugType, factory),
+    vscode.debug.onDidTerminateDebugSession(session => factory.terminate(session)),
     debugConfigurationRegistration,
     debugCommandRegistration,
     vscode.commands.registerCommand(
@@ -145,7 +154,7 @@ export async function activate(
       () => activeController.restartLanguageServer(),
     ),
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
-      void activeController
+      void daemon
         .updateWorkspaceFolders(workspaceRoots())
         .catch((error: unknown) => {
           output.error(
@@ -155,23 +164,14 @@ export async function activate(
     }),
   );
 
+  await daemon.updateWorkspaceFolders(workspaceRoots());
   await activeController.start();
 }
 
 export async function deactivate(): Promise<void> {
-  const activeController = controller;
-  const activeExecutionCommands = executionCommands;
-  const activeExecutionFeedback = executionFeedback;
-  const activeExecutionManager = executionManager;
-  controller = undefined;
-  executionCommands = undefined;
-  executionFeedback = undefined;
-  executionManager = undefined;
-
-  activeExecutionFeedback?.dispose();
-  activeExecutionCommands?.dispose();
-  await activeExecutionManager?.dispose();
-  await activeController?.stop();
+  const stop = shutdown;
+  shutdown = undefined;
+  await stop?.();
 }
 
 function workspaceRoots(): readonly string[] {

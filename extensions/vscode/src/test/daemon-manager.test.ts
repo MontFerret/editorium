@@ -149,6 +149,25 @@ suite('Ferret daemon lifecycle', () => {
     assert.deepStrictEqual(invalidationOrder, ['generation', 'workspace']);
   });
 
+  test('supersedes startup during endpoint preparation without spawning the retired process', async () => {
+    let preparing!: () => void, release!: () => void;
+    const entered = new Promise<void>(resolve => { preparing = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const endpoint = fakeEndpoint();
+    let spawned = false;
+    const controller = new DaemonController(configuration, new FakeOutput(), () => {
+      spawned = true;
+      return new FakeProcess();
+    }, async () => { preparing(); await gate; return endpoint; });
+    const rejected = assert.rejects(controller.start());
+    await entered;
+    const stopped = controller.stop();
+    release();
+    await Promise.all([rejected, stopped]);
+    assert.equal(spawned, false);
+    assert.equal(endpoint.disposeCalls, 1);
+  });
+
   test('marks unexpected exit unavailable without restarting', async () => {
     const process = new FakeProcess();
     const endpoint = fakeEndpoint();
@@ -439,6 +458,7 @@ function connection(
   getInfo: DaemonGeneratedClient['getInfo'],
 ): DaemonConnection {
   const daemon: DaemonGeneratedClient = {
+    listRuntimes: () => { throw new Error('Unexpected discovery'); },
     getInfo: (request, metadata, options, callback) => {
       state.getInfoCalls += 1;
       return getInfo(request, metadata, options, callback);

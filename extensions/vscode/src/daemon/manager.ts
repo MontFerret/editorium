@@ -44,6 +44,7 @@ const defaultTiming: DaemonTiming = {
 
 export interface DaemonProcess {
   readonly stderr: Readable | null;
+  readonly pid?: number;
 
   kill(signal?: NodeJS.Signals): boolean;
   once(
@@ -96,6 +97,8 @@ interface ActiveDaemon {
 
 export class DaemonController implements DaemonConnectionProvider {
   private active: ActiveDaemon | undefined;
+  private startupRevision = 0;
+  private survivingProcess?: Promise<ProcessExit>;
   private desiredRoots = new Set<string>();
   private readonly cleanupTasks = new Set<Promise<void>>();
   private lastError: DaemonError | undefined;
@@ -114,18 +117,25 @@ export class DaemonController implements DaemonConnectionProvider {
   ) {}
 
   public requireConnection(): DaemonConnection {
-    if (this.active?.ready === true) {
+    if (this.active?.ready === true && !this.active.abort.signal.aborted) {
       return this.active.connection;
     }
 
     throw this.lastError ?? unavailableDaemon();
   }
 
-  public start(): Promise<void> {
-    return this.enqueue(() => this.startNow());
+  public start(configPath?: string): Promise<void> {
+    const revision = this.startupRevision;
+    return this.enqueue(() => this.startNow(revision, configPath));
   }
 
   public stop(): Promise<void> {
+    this.startupRevision++;
+    // Interrupt readiness and workspace RPCs before joining the lifecycle queue.
+    if (this.active) {
+      this.active.stopping = true;
+      this.active.abort.abort(new DaemonDisposedError());
+    }
     return this.enqueue(() => this.stopNow());
   }
 
@@ -144,7 +154,9 @@ export class DaemonController implements DaemonConnectionProvider {
     return next;
   }
 
-  private async startNow(): Promise<void> {
+  private async startNow(revision: number, configPath?: string): Promise<void> {
+    if (revision !== this.startupRevision) throw new DaemonDisposedError();
+    if (this.survivingProcess) throw new Error('The previous Ferret daemon is still stopping.');
     if (this.active !== undefined) {
       return;
     }
@@ -152,22 +164,26 @@ export class DaemonController implements DaemonConnectionProvider {
     const selection = this.readExecutable();
     let endpoint: DaemonEndpoint | undefined;
     let active: ActiveDaemon | undefined;
+    let connection: DaemonConnection | undefined;
 
     try {
       endpoint = await this.createEndpoint();
+      if (revision !== this.startupRevision) throw new DaemonDisposedError();
       const args = ['serve', '--endpoint', endpoint.cli];
+      if (configPath) args.push('--runtime-config', configPath);
       this.output.info('Starting Ferret daemon');
       this.output.info(`Ferret daemon arguments: ${JSON.stringify(args)}`);
 
+      const abort = new AbortController();
+      connection = this.connect(endpoint.grpc, abort.signal);
       const process = this.createProcess(
         selection.executable,
         args,
       );
-      const abort = new AbortController();
       const exited = observeExit(process);
       active = {
         abort,
-        connection: this.connect(endpoint.grpc, abort.signal),
+        connection,
         endpoint,
         exited,
         process,
@@ -178,6 +194,8 @@ export class DaemonController implements DaemonConnectionProvider {
       this.active = active;
 
       const info = await this.waitUntilReady(active);
+      active.abort.signal.throwIfAborted();
+      active.connection = { ...active.connection, apiVersion: info.serverInfo?.apiVersion };
       active.ready = true;
       this.lastError = undefined;
       this.output.info(
@@ -188,6 +206,7 @@ export class DaemonController implements DaemonConnectionProvider {
       );
 
       await this.reconcileWorkspaces();
+      active.abort.signal.throwIfAborted();
     } catch (error) {
       const mapped = mapStartupError(error);
       this.lastError = mapped;
@@ -197,9 +216,11 @@ export class DaemonController implements DaemonConnectionProvider {
           this.active = undefined;
         }
 
-        await this.cleanup(active, false, mapped);
+        await this.cleanup(active, active.ready, mapped);
+        this.workspaceRegistry.clear();
       } else {
         try {
+          connection?.channel.close();
           await endpoint?.dispose();
         } catch (cleanupError) {
           this.output.error(
@@ -243,6 +264,7 @@ export class DaemonController implements DaemonConnectionProvider {
     let lastError: unknown;
 
     while (Date.now() < deadline) {
+      active.abort.signal.throwIfAborted();
       // A connection attempted before the named pipe exists can stay unavailable.
       // Retry only the startup handshake. The first successful channel owns all RPCs.
       if (lastError !== undefined) {
@@ -452,6 +474,10 @@ export class DaemonController implements DaemonConnectionProvider {
         );
       }
       if (!(await waitForExit(active.exited, this.timing.shutdownTimeout))) {
+        this.survivingProcess = active.exited;
+        void active.exited.then(() => {
+          if (this.survivingProcess === active.exited) this.survivingProcess = undefined;
+        });
         this.output.error('Ferret daemon did not exit after termination');
       }
     }
@@ -498,9 +524,9 @@ function observeExit(process: DaemonProcess): Promise<ProcessExit> {
       }
     };
 
-    process.once('error', (error) =>
-      finish({ code: null, error, signal: null }),
-    );
+    process.once('error', (error) => {
+      if (process.pid === undefined) finish({ code: null, error, signal: null });
+    });
     process.once('exit', (code, signal) =>
       finish({ code, signal }),
     );

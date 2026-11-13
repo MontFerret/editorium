@@ -7,7 +7,7 @@ export const debugFileCommand = 'ferret.debugFile';
 export interface FerretDebugCommandHost {
   registerCommand(
     command: string,
-    handler: () => Thenable<boolean>,
+    handler: (options?: unknown) => Thenable<boolean>,
   ): vscode.Disposable;
   startDebugging(
     folder: vscode.WorkspaceFolder | undefined,
@@ -18,10 +18,11 @@ export interface FerretDebugCommandHost {
 export function registerFerretDebugCommand(
   host: FerretDebugCommandHost = vscodeFerretDebugCommandHost,
 ): vscode.Disposable {
-  return host.registerCommand(debugFileCommand, () =>
+  return host.registerCommand(debugFileCommand, options =>
     host.startDebugging(
       undefined,
-      { type: ferretDebugType } as vscode.DebugConfiguration,
+      { type: ferretDebugType, ...(options && typeof options === 'object' && 'runtimeName' in options
+        ? { runtimeName: options.runtimeName } : {}) } as vscode.DebugConfiguration,
     ),
   );
 }

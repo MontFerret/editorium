@@ -343,6 +343,7 @@ suite('Ferret debug configuration provider', () => {
     const registrationHost = new FakeRegistrationHost();
     const configurationHost = new FakeConfigurationHost();
     const registration = registerFerretDebugConfigurationProvider(
+      () => {},
       registrationHost,
       configurationHost,
     );

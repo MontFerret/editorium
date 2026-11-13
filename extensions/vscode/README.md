@@ -78,12 +78,44 @@ parameters, or entry behavior:
 }
 ```
 
-Explicit Ferret values and ordinary VS Code launch metadata are passed to the
-adapter unchanged. Native launch debugging connects VS Code directly to
-`ferretd dap` over stdio. Each session receives its own adapter process, and
-debugging semantics remain implemented by `ferretd`; the extension does not
-proxy DAP messages or independently implement breakpoint, stepping, stack,
-variable, or evaluation behavior.
+Each Debug session owns one `ferretd dap` process on the extension host.
+The extension forwards DAP messages over stdio, including ordinary VS Code
+launch metadata. The daemon implements breakpoints, stepping, inspection, and
+evaluation. Remove `debugServer` from Ferret launches so the extension can own
+the adapter and wait for it to exit.
+
+## Runtime catalog
+
+Set `ferret.runtime.configPath` to a daemon runtime configuration file on the
+extension host. Relative paths resolve against the workspace folder in a window
+with exactly one file-backed folder. Use an absolute path in multi-root or
+folderless windows. Enter the path literally. Variable expansion is unavailable.
+An empty setting uses the built-in configuration.
+
+**Ferret: Select Runtime** opens the catalog for this window. Each entry shows
+its exact name, label, and provider. **Daemon default** shows the configured
+default when discovery succeeds. Wire entries can appear while the application
+is offline. Accepting an entry saves its case-sensitive name in workspace state
+for future launches. Cancelling leaves the selection alone. If a saved name
+disappears, the picker marks it unavailable until you choose another entry.
+
+The first catalog request or admitted Run or Debug captures the current setting.
+Opening a document starts only language services. Built-in Debug starts its own
+adapter without starting the execution daemon. After first use, changing or
+clearing the setting requires **Ferret: Reload Runtimes**. Also use Reload after
+editing the file at the same path. Reload rereads it and replaces the execution
+daemon. Wait for every Run and Debug launch to finish cleanup before reloading.
+
+**Ferret: Retry Runtime Discovery** repeats a failed catalog request on the
+current daemon. If a replacement failed to start or exited before discovery
+succeeded, use Reload again. A change saved during Reload needs another Reload.
+Discovery requires daemon API 1.3 or a later minor version in major 1.
+
+**Run and Debug currently require an empty configuration path and Daemon
+default.** Configured and named launches, including explicit `local`, are
+unavailable. To resume built-in launches, clear the setting, select **Daemon
+default**, remove any explicit `runtimeName` from the launch configuration, and
+complete any required Reload.
 
 ## Run a Ferret file
 
@@ -144,11 +176,10 @@ server arguments can be appended after the required `lsp` command:
 }
 ```
 
-Changing `ferret.server.path` automatically restarts both the language server
-and execution daemon because both use the selected executable; this invalidates
-active executions. Existing debug sessions keep the adapter process that VS
-Code already started, while later sessions use the new selection. Changing
-`ferret.server.args` automatically restarts only the language server and does
+Changing `ferret.server.path` restarts the language server and replaces a
+previously used execution daemon using its adopted runtime configuration. This
+invalidates active executions. Existing Debug adapters keep their executable.
+Changing `ferret.server.args` automatically restarts only the language server and does
 not change the exact `dap` command. The extension never downloads or updates
 executables at activation time.
 

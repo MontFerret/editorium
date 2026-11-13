@@ -1,5 +1,7 @@
 import * as assert from 'node:assert/strict';
-import { relative } from 'node:path';
+import { relative, join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 
 import * as vscode from 'vscode';
 
@@ -12,16 +14,91 @@ const currentFileSessionName = 'Debug Current Ferret File';
 const eventTimeout = 15_000;
 
 suite('ferretd DAP integration', () => {
-  test('starts the active file through the standard F5 action', async () => {
-    await runCurrentFileDebugSession(() =>
-      vscode.commands.executeCommand('workbench.action.debug.start'),
-    );
+  test('restores standard F5 after clearing an adopted Wire configuration and reloading', async () => {
+    await configureFerretd();
+    await vscode.extensions.getExtension(extensionId)!.activate();
+    const root = await mkdtemp(join(tmpdir(), 'ferret-debug-runtime-'));
+    const config = join(root, 'runtimes.json');
+    const settings = vscode.workspace.getConfiguration('ferret');
+    const save = (path?: string) => settings.update('runtime.configPath', path, vscode.ConfigurationTarget.Global);
+    const program = vscode.Uri.joinPath(vscode.workspace.workspaceFolders![0]!.uri, 'sample.fql').fsPath;
+    const launch = { type: debugType, request: 'launch', name: 'Guarded Ferret launch', program };
+    try {
+      await writeFile(config, JSON.stringify({ defaultRuntime: 'offline', runtimes: [{
+        name: 'offline', label: 'Offline', provider: 'wire', endpoint: 'tcp://127.0.0.1:1', insecure: true,
+      }] }));
+      await save(config);
+      await vscode.commands.executeCommand('ferret.reloadRuntimes');
+      assert.equal(await vscode.debug.startDebugging(undefined, launch), false);
+      await save();
+      assert.equal(await vscode.debug.startDebugging(undefined, launch), false);
+      await vscode.commands.executeCommand('ferret.reloadRuntimes');
+      assert.equal(await vscode.debug.startDebugging(undefined, { ...launch, runtimeName: 'local' }), false);
+      assert.equal(await vscode.debug.startDebugging(undefined, { ...launch, debugServer: 1234 }), false);
+      await runCurrentFileDebugSession(() => vscode.commands.executeCommand('workbench.action.debug.start'));
+    } finally {
+      await save();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test('starts the active file through the Ferret debug command', async () => {
     await runCurrentFileDebugSession(() =>
       vscode.commands.executeCommand(debugFileCommand),
     );
+  });
+
+  test('forwards a breakpoint, frame inspection, evaluation, and a step through the owned process', async () => {
+    await configureFerretd();
+    const root = await mkdtemp(join(tmpdir(), 'ferret-dap-inspect-'));
+    const program = join(root, 'inspect.fql');
+    const name = 'Inspect Ferret runtime transport';
+    const breakpoint = new vscode.SourceBreakpoint(
+      new vscode.Location(vscode.Uri.file(program), new vscode.Position(1, 0)),
+    );
+    const stops = new vscode.EventEmitter<{ threadId: number; reason: string }>();
+    const tracker = vscode.debug.registerDebugAdapterTrackerFactory(debugType, {
+      createDebugAdapterTracker: session => session.name === name ? {
+        onDidSendMessage: message => {
+          if (message.type === 'event' && message.event === 'stopped') stops.fire(message.body);
+        },
+      } : undefined,
+    });
+    const nextStop = () => new Promise<{ threadId: number; reason: string }>(resolve => {
+      const listener = stops.event(stop => { listener.dispose(); resolve(stop); });
+    });
+    let session: vscode.DebugSession | undefined;
+    try {
+      await writeFile(program, 'LET value = 1\nLET nextValue = value + 1\nRETURN nextValue\n');
+      vscode.debug.addBreakpoints([breakpoint]);
+      const started = waitForDebugSession(vscode.debug.onDidStartDebugSession, 'start', name);
+      const first = nextStop();
+      await vscode.debug.startDebugging(undefined, { type: debugType, request: 'launch', name, cwd: root, program });
+      session = await started;
+      const stop = await first;
+      assert.equal(stop.reason, 'breakpoint');
+      const { stackFrames } = await session.customRequest('stackTrace', { threadId: stop.threadId });
+      const frameId = stackFrames[0].id;
+      const { scopes } = await session.customRequest('scopes', { frameId });
+      const { variables } = await session.customRequest('variables', { variablesReference: scopes[0].variablesReference });
+      assert.ok(variables.some((v: { name: string; value: string }) => v.name === 'value' && v.value === '1'));
+      const evaluated = await session.customRequest('evaluate', { frameId, expression: 'value + 1', context: 'watch' });
+      assert.equal(evaluated.result, '2');
+      const second = nextStop();
+      await session.customRequest('next', { threadId: stop.threadId });
+      const stepped = await second;
+      assert.equal(stepped.reason, 'step');
+      const ended = waitForDebugSession(vscode.debug.onDidTerminateDebugSession, 'terminate', name);
+      await session.customRequest('continue', { threadId: stepped.threadId });
+      await ended;
+      session = undefined;
+    } finally {
+      if (session) await vscode.debug.stopDebugging(session);
+      vscode.debug.removeBreakpoints([breakpoint]);
+      stops.dispose();
+      tracker.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test('launches and terminates through the registered debug adapter', async () => {

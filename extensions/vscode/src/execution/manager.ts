@@ -4,6 +4,8 @@ import * as vscode from 'vscode';
 
 import type { FerretWorkspaceInvalidation } from '../daemon/workspaces';
 import type { ResolvedFerretDocument } from '../daemon/types';
+import type { RuntimeCoordinator } from '../runtime/coordinator';
+import { RuntimeLaunchError } from '../runtime/errors';
 import { isFerretDocument } from '../language-client';
 import {
   ExecutionManagerError,
@@ -28,6 +30,7 @@ export interface ManagedExecution {
 }
 
 export type ManagedExecutionChange =
+  | { readonly kind: 'preparing' | 'preparation-ended'; readonly documentUri: vscode.Uri }
   | {
       readonly kind: 'started';
       readonly execution: ManagedExecution;
@@ -108,6 +111,8 @@ interface CachedSession {
 }
 
 interface PendingRun {
+  cancelled?: boolean;
+  readonly settled: Promise<void>;
   readonly documentKey: string;
   readonly documentVersion: number;
   executionId?: string;
@@ -185,6 +190,7 @@ export class FerretExecutionManager {
     private readonly client: ExecutionClient,
     private readonly workspaces: ExecutionWorkspaceResolver,
     private readonly output: ExecutionManagerOutput,
+    private readonly runtime: Pick<RuntimeCoordinator, 'admit' | 'holdCleanup'>,
     documents: ExecutionDocumentEvents = vscode.workspace,
   ) {
     this.documentSaveListener = documents.onDidSaveTextDocument(
@@ -196,7 +202,8 @@ export class FerretExecutionManager {
   }
 
   public isRunning(documentUri: vscode.Uri): boolean {
-    return this.active.has(documentIdentity(documentUri));
+    const key = documentIdentity(documentUri);
+    return this.active.has(key) || this.pending.has(key);
   }
 
   public get activeCount(): number {
@@ -212,6 +219,7 @@ export class FerretExecutionManager {
   public async run(
     document: vscode.TextDocument,
     parameters: Readonly<Record<string, unknown>> = {},
+    selector?: unknown,
   ): Promise<ManagedExecution> {
     this.ensureUsable();
     this.validateDocument(document);
@@ -225,7 +233,11 @@ export class FerretExecutionManager {
       );
     }
 
+    const reservation = this.runtime.admit(selector);
+    let finishSetup!: () => void;
+    let observing = false;
     const pending: PendingRun = {
+      settled: new Promise(resolve => { finishSetup = resolve; }),
       documentKey,
       documentVersion: document.version,
     };
@@ -233,12 +245,19 @@ export class FerretExecutionManager {
     this.pending.set(documentKey, pending);
 
     try {
+      this.changeEmitter.fire({ kind: 'preparing', documentUri: document.uri });
+      const connection = await reservation.prepareRun();
+      this.ensureUsable();
       const generation = this.resolveGeneration();
+      if (connection.signal !== generation) {
+        throw managerError('workspace-unavailable', 'Ferret daemon changed during startup.');
+      }
       pending.generation = generation;
       const target = this.resolveTarget(document.uri);
       pending.workspaceId = target.workspaceId;
       pending.relativePath = target.relativePath;
 
+      this.assertCanStart(document, pending, target);
       let cached = this.cache.get(documentKey);
       if (
         cached !== undefined &&
@@ -261,7 +280,7 @@ export class FerretExecutionManager {
           this.assertCanStart(document, pending, target);
         } catch (error) {
           if (this.canCleanUp(pending)) {
-            this.scheduleSessionClose(session.id);
+            await this.scheduleSessionClose(session.id);
           }
           throw error;
         }
@@ -292,7 +311,7 @@ export class FerretExecutionManager {
           pending.executionId !== undefined &&
           this.canCleanUp(pending)
         ) {
-          this.scheduleExecutionClose(pending.executionId);
+          await this.scheduleExecutionClose(pending.executionId);
         }
         throw error;
       }
@@ -307,7 +326,7 @@ export class FerretExecutionManager {
         );
       } catch (error) {
         if (this.canCleanUp(pending)) {
-          this.scheduleExecutionClose(execution.id);
+          await this.scheduleExecutionClose(execution.id);
         }
         throw error;
       }
@@ -318,12 +337,21 @@ export class FerretExecutionManager {
       } catch (error) {
         watchAbort.abort();
         if (this.canCleanUp(pending)) {
-          this.scheduleExecutionClose(execution.id);
+          await this.scheduleExecutionClose(execution.id);
         }
         throw error;
       }
 
-      this.assertGenerationStillUsable(pending, document.uri);
+      try {
+        this.assertGenerationStillUsable(pending, document.uri);
+      } catch (error) {
+        watchAbort.abort();
+        if (this.canCleanUp(pending)) {
+          try { await this.client.cancelExecution(execution.id); }
+          finally { await this.scheduleExecutionClose(execution.id); }
+        }
+        throw error;
+      }
       const handle = new ManagedExecutionHandle(
         this,
         document.uri,
@@ -336,7 +364,8 @@ export class FerretExecutionManager {
       handle.update(started);
       this.active.set(documentKey, handle);
       this.changeEmitter.fire({ kind: 'started', execution: handle });
-      void this.observeExecution(documentKey, handle, watch);
+      observing = true;
+      void this.observeExecution(documentKey, handle, watch).finally(reservation.release);
 
       return handle;
     } catch (error) {
@@ -347,8 +376,11 @@ export class FerretExecutionManager {
         this.pending.delete(documentKey);
       }
       if (pending.sessionId !== undefined) {
-        this.releaseRetiredSession(pending.sessionId);
+        await this.releaseRetiredSession(pending.sessionId);
       }
+      if (!observing) reservation.release();
+      finishSetup();
+      this.changeEmitter.fire({ kind: 'preparation-ended', documentUri: document.uri });
     }
   }
 
@@ -377,9 +409,16 @@ export class FerretExecutionManager {
   }
 
   public async cancel(documentUri: vscode.Uri): Promise<void> {
-    const handle = this.active.get(documentIdentity(documentUri));
+    const key = documentIdentity(documentUri);
+    const handle = this.active.get(key);
+    const pending = this.pending.get(key);
+    if (!handle && pending) {
+      pending.cancelled = true;
+      await pending.settled;
+      return;
+    }
     if (handle !== undefined) {
-      await this.client.cancelExecution(handle.id);
+      await this.cancelHandle(handle);
     }
   }
 
@@ -389,11 +428,16 @@ export class FerretExecutionManager {
       return Promise.resolve();
     }
 
-    return this.client.cancelExecution(handle.id).then(() => undefined);
+    const cancel = this.client.cancelExecution(handle.id).then(() => undefined);
+    this.runtime.holdCleanup(cancel);
+    return cancel;
   }
 
   public dispose(): Promise<void> {
-    this.disposePromise ??= this.disposeNow();
+    if (!this.disposePromise) {
+      this.disposePromise = this.disposeNow();
+      this.runtime.holdCleanup(this.disposePromise);
+    }
 
     return this.disposePromise;
   }
@@ -402,6 +446,9 @@ export class FerretExecutionManager {
     this.disposed = true;
     this.documentSaveListener.dispose();
     this.workspaceListener.dispose();
+    const preparing = [...this.pending.values()];
+    for (const run of preparing) run.cancelled = true;
+    await Promise.all(preparing.map(run => run.settled));
     this.detachGeneration();
 
     const active = [...this.active.values()];
@@ -409,13 +456,6 @@ export class FerretExecutionManager {
     for (const handle of active) {
       handle.watchAbort.abort();
     }
-    const pending = [...this.pending.values()];
-    for (const run of pending) {
-      run.invalidated = 'daemon-generation';
-      run.watchAbort?.abort();
-    }
-    this.pending.clear();
-
     const sessions = unique([
       ...this.cache.values(),
       ...this.retiredSessions.values(),
@@ -423,14 +463,8 @@ export class FerretExecutionManager {
     this.cache.clear();
     this.retiredSessions.clear();
 
-    const executionIds = new Set([
-      ...active.map(({ id }) => id),
-      ...pending.flatMap(({ executionId }) =>
-        executionId === undefined ? [] : [executionId],
-      ),
-    ]);
     await Promise.allSettled(
-      [...executionIds].map(async (executionId) => {
+      active.map(async ({ id: executionId }) => {
         try {
           await this.client.cancelExecution(executionId);
         } catch (error) {
@@ -514,8 +548,6 @@ export class FerretExecutionManager {
       pending.invalidated = 'daemon-generation';
       pending.watchAbort?.abort();
     }
-    this.pending.clear();
-
     for (const [key, handle] of this.active) {
       this.active.delete(key);
       handle.watchAbort.abort();
@@ -542,14 +574,13 @@ export class FerretExecutionManager {
         this.retiredSessions.delete(id);
       }
     }
-    for (const [key, pending] of this.pending) {
+    for (const pending of this.pending.values()) {
       if (
         pending.workspaceId !== undefined &&
         invalid.has(pending.workspaceId)
       ) {
         pending.invalidated = 'workspace';
         pending.watchAbort?.abort();
-        this.pending.delete(key);
       }
     }
     for (const [key, handle] of this.active) {
@@ -598,20 +629,15 @@ export class FerretExecutionManager {
 
   private releaseRetiredSession(
     sessionId: string,
-    after?: Promise<void>,
-  ): void {
-    if (after !== undefined) {
-      void after.then(() => this.releaseRetiredSession(sessionId));
-      return;
-    }
-
+  ): Promise<void> {
     if (
       this.retiredSessions.has(sessionId) &&
       !this.isSessionInUse(sessionId)
     ) {
       this.retiredSessions.delete(sessionId);
-      this.scheduleSessionClose(sessionId);
+      return this.scheduleSessionClose(sessionId);
     }
+    return Promise.resolve();
   }
 
   private async observeExecution(
@@ -634,11 +660,8 @@ export class FerretExecutionManager {
             execution: handle,
             event,
           });
-          const executionClose = this.scheduleExecutionClose(handle.id);
-          this.releaseRetiredSession(
-            handle.sessionId,
-            executionClose,
-          );
+          await this.scheduleExecutionClose(handle.id);
+          await this.releaseRetiredSession(handle.sessionId);
           return;
         }
 
@@ -666,8 +689,8 @@ export class FerretExecutionManager {
         execution: handle,
         error,
       });
-      const executionClose = this.scheduleExecutionClose(handle.id);
-      this.releaseRetiredSession(handle.sessionId, executionClose);
+      await this.scheduleExecutionClose(handle.id);
+      await this.releaseRetiredSession(handle.sessionId);
     }
   }
 
@@ -721,6 +744,7 @@ export class FerretExecutionManager {
       this.output.error(failureMessage, error);
     });
     this.cleanupTasks.add(settled);
+    this.runtime.holdCleanup(settled);
     void settled.finally(() => this.cleanupTasks.delete(settled));
 
     return settled;
@@ -800,6 +824,7 @@ export class FerretExecutionManager {
     pending: PendingRun,
     documentUri: vscode.Uri,
   ): void {
+    if (pending.cancelled) throw new RuntimeLaunchError('Starting the Ferret execution was cancelled.');
     if (this.disposed) {
       throw managerError(
         'disposed',

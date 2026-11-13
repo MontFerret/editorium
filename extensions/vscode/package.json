@@ -136,6 +136,21 @@
         "command": "ferret.showOutput",
         "title": "Show Output",
         "category": "Ferret"
+      },
+      {
+        "command": "ferret.selectRuntime",
+        "title": "Select Runtime",
+        "category": "Ferret"
+      },
+      {
+        "command": "ferret.reloadRuntimes",
+        "title": "Reload Runtimes",
+        "category": "Ferret"
+      },
+      {
+        "command": "ferret.retryRuntimeDiscovery",
+        "title": "Retry Runtime Discovery",
+        "category": "Ferret"
       }
     ],
     "menus": {
@@ -164,7 +179,7 @@
           "type": "string",
           "default": "",
           "scope": "window",
-          "markdownDescription": "Overrides the `ferretd` binary bundled with the Ferret extension for language features, execution, and debugging. Intended primarily for development and troubleshooting. If the override is invalid, the extension will not fall back to the bundled executable. Changing this setting restarts the language server and execution daemon, invalidating active executions; existing debug sessions keep their current adapter process, while new sessions use the updated selection."
+          "markdownDescription": "Overrides the `ferretd` binary bundled with the Ferret extension for language features, execution, and debugging. Intended primarily for development and troubleshooting. If the override is invalid, the extension will not fall back to the bundled executable. Changing this setting restarts the language server and any previously used execution daemon, invalidating active executions; existing debug sessions keep their current adapter process, while new sessions use the updated selection."
         },
         "ferret.server.args": {
           "type": "array",
@@ -190,6 +205,12 @@
           "default": "off",
           "scope": "window",
           "markdownDescription": "Controls Language Server Protocol tracing in the **Ferret** output channel for troubleshooting."
+        },
+        "ferret.runtime.configPath": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "markdownDescription": "Runtime configuration file on the extension host. Relative paths require a single file-backed workspace folder. After first use, run **Ferret: Reload Runtimes** to adopt changes. Run and Debug currently require an empty path and **Daemon default**."
         }
       }
     }
