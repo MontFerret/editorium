@@ -7,6 +7,7 @@ on:
     paths:
       - '.gitattributes'
       - '.github/workflows/jetbrains-validation.yml'
+      - '.github/workflows/release-jetbrains.yml'
       - 'Makefile'
       - 'buf.yaml'
       - 'ferretd.json'
@@ -20,6 +21,7 @@ on:
     paths:
       - '.gitattributes'
       - '.github/workflows/jetbrains-validation.yml'
+      - '.github/workflows/release-jetbrains.yml'
       - 'Makefile'
       - 'buf.yaml'
       - 'ferretd.json'
@@ -29,6 +31,18 @@ on:
       - 'tools/editorium/**'
       - '!tools/editorium/vscode.go'
       - '!tools/editorium/vscode_test.go'
+  workflow_call:
+    inputs:
+      strict-qualification:
+        type: boolean
+        default: false
+      commit:
+        type: string
+      version:
+        type: string
+    outputs:
+      unsigned-sha256:
+        value: ${{ jobs.package.outputs.sha256 }}
 
 permissions:
   contents: read
@@ -71,10 +85,23 @@ jobs:
         run: choco install make --no-progress --yes
 
       - name: Test plugin and pinned daemon
+        env:
+          FERRET_TEST_PASSIVE_HOST_LOSS: ${{ inputs.strict-qualification && '1' || '0' }}
         run: make test jetbrains
+
+      - name: Preserve test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jetbrains-tests-${{ matrix.os }}-${{ github.run_attempt }}
+          path: extensions/jetbrains/build/reports/tests/
 
   package:
     name: Build, verify, and package
+    env:
+      JETBRAINS_RELEASE_COMMIT: ${{ inputs.commit }}
+    outputs:
+      sha256: ${{ steps.digest.outputs.sha256 }}
     runs-on: ubuntu-24.04
 
     steps:
@@ -98,6 +125,14 @@ jobs:
             fixtures/wire-host/go.sum
             tools/editorium/go.sum
 
+      - name: Check release tooling
+        shell: bash
+        working-directory: tools/editorium
+        run: |
+          go test ./...
+          go vet ./...
+          test -z "$(gofmt -l .)"
+
       - name: Build plugin
         run: make build jetbrains
 
@@ -115,4 +150,32 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: jetbrains-plugin-verifier
+          overwrite: true
           path: extensions/jetbrains/build/reports/pluginVerifier/
+
+      - name: Exercise signing with disposable credentials
+        env:
+          EDITORIUM_TEST_SIGNING: '1'
+        run: go -C tools/editorium test -count=1 -run '^TestJetBrainsReleaseSigning$' .
+
+      - name: Identify qualified build artifact
+        if: inputs.strict-qualification
+        id: digest
+        env:
+          VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$JETBRAINS_RELEASE_COMMIT"
+          path="extensions/jetbrains/build/distributions/ferret-jetbrains-$VERSION.zip"
+          echo "sha256=$(sha256sum "$path" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+
+      - name: Upload unsigned release candidate
+        if: inputs.strict-qualification
+        uses: actions/upload-artifact@v4
+        with:
+          name: jetbrains-unsigned-${{ inputs.commit }}
+          path: ${{ steps.digest.outputs.path }}
+          overwrite: true
+          if-no-files-found: error

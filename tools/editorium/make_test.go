@@ -31,6 +31,7 @@ func TestMakeFacadeHelpListingAndArgumentForwarding(t *testing.T) {
 	if strings.TrimSpace(listing) != "vscode" {
 		t.Fatalf("make extensions = %q", listing)
 	}
+	runMakeTestCommand(t, root, environment, "TOOL="+fakeTool, "release", "jetbrains", "0.1.0")
 	runMakeTestCommand(t, root, environment, "TOOL="+fakeTool, "prepare")
 	runMakeTestCommand(t, root, environment, "TOOL="+fakeTool, "prepare", "vscode")
 	runMakeTestCommand(t, root, environment, "TOOL="+fakeTool, "prepare", "vscode", "jetbrains")
@@ -42,6 +43,7 @@ func TestMakeFacadeHelpListingAndArgumentForwarding(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, expected := range []string{
+		"release jetbrains 0.1.0|TARGET=|FORCE=|CODE=",
 		"run prepare|TARGET=|FORCE=|CODE=",
 		"run prepare vscode|TARGET=|FORCE=|CODE=",
 		"run prepare vscode jetbrains|TARGET=|FORCE=|CODE=",

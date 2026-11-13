@@ -21,11 +21,14 @@ const (
 
 type (
 	releaseMetadata struct {
-		Tag                 string `json:"tag"`
-		Version             string `json:"version"`
-		Prerelease          bool   `json:"prerelease"`
-		MarketplaceEligible bool   `json:"marketplace_eligible"`
-		Title               string `json:"title"`
+		Tag                 string   `json:"tag"`
+		Version             string   `json:"version"`
+		Prerelease          bool     `json:"prerelease"`
+		MarketplaceEligible bool     `json:"marketplace_eligible"`
+		Title               string   `json:"title"`
+		Assets              []string `json:"assets"`
+		Commit              string   `json:"commit,omitempty"`
+		description         releaseDescription
 	}
 
 	githubRelease struct {
@@ -84,11 +87,15 @@ func runReleaseWithValidator(ctx context.Context, root, extension, version strin
 		return err
 	}
 
-	if err := runCommand(ctx, root, nil, "git", "tag", "-a", metadata.Tag, "-m", "Release "+metadata.Tag); err != nil {
+	if err := requireTrackedManifest(ctx, root, extension); err != nil {
 		return err
 	}
 
-	pushErr := runCommand(ctx, root, nil, "git", "push", releaseRemote, "refs/tags/"+metadata.Tag+":refs/tags/"+metadata.Tag)
+	if err := runCommand(ctx, root, nil, "git", "tag", "-a", metadata.Tag, head, "-m", "Release "+metadata.Tag); err != nil {
+		return err
+	}
+
+	pushErr := runCommand(ctx, root, nil, "git", "push", "--no-follow-tags", releaseRemote, "refs/tags/"+metadata.Tag+":refs/tags/"+metadata.Tag)
 	if pushErr != nil {
 		return reconcileFailedTagPush(ctx, root, metadata.Tag, head, pushErr)
 	}
@@ -116,21 +123,20 @@ func reconcileFailedTagPush(ctx context.Context, root, tag, head string, pushErr
 }
 
 func resolveReleaseMetadata(extension, version, root string) (releaseMetadata, error) {
-	if !validVersion(version) {
+	if !fullReleaseVersion(version) {
 		return releaseMetadata{}, fmt.Errorf("invalid release version %q; expected canonical SemVer", version)
 	}
 
-	if extension != "vscode" {
-		return releaseMetadata{}, fmt.Errorf("extension %q does not implement releases", extension)
-	}
-
-	manifest, err := readVSCodeManifest(root)
+	desc, err := describeRelease(extension)
 	if err != nil {
 		return releaseMetadata{}, err
 	}
-
-	if manifest.Version != version {
-		return releaseMetadata{}, fmt.Errorf("release version %s does not match extensions/vscode/package.json version %s", version, manifest.Version)
+	tracked, err := desc.readVersion(root)
+	if err != nil {
+		return releaseMetadata{}, err
+	}
+	if tracked != version {
+		return releaseMetadata{}, fmt.Errorf("release version %s does not match %s version %s", version, desc.versionSource, tracked)
 	}
 
 	tag := extension + "/v" + version
@@ -139,14 +145,22 @@ func resolveReleaseMetadata(extension, version, root string) (releaseMetadata, e
 		Version:             version,
 		Prerelease:          semver.Prerelease("v"+version) != "",
 		MarketplaceEligible: marketplaceVersionEligible(version),
-		Title:               "Ferret VS Code " + version,
+		Title:               desc.title + " " + version,
+		Assets:              desc.assets(version),
+		description:         desc,
 	}, nil
+}
+
+func fullReleaseVersion(version string) bool {
+	core, _, _ := strings.Cut(version, "+")
+	core, _, _ = strings.Cut(core, "-")
+	return strings.Count(core, ".") == 2 && validVersion(version)
 }
 
 func marketplaceVersionEligible(version string) bool {
 	canonical := "v" + version
 
-	return validVersion(version) && semver.Prerelease(canonical) == "" && semver.Build(canonical) == ""
+	return fullReleaseVersion(version) && semver.Prerelease(canonical) == "" && semver.Build(canonical) == ""
 }
 
 func requireReleaseRepositoryState(ctx context.Context, root, extension string) (string, error) {
@@ -211,7 +225,11 @@ func requireReleaseRepositoryState(ctx context.Context, root, extension string) 
 }
 
 func requireTrackedManifest(ctx context.Context, root, extension string) error {
-	manifest := filepath.ToSlash(filepath.Join("extensions", extension, "package.json"))
+	desc, err := describeRelease(extension)
+	if err != nil {
+		return err
+	}
+	manifest := desc.versionSource
 
 	if _, err := gitOutput(ctx, root, "ls-files", "--error-unmatch", manifest); err != nil {
 		return fmt.Errorf("release manifest is not tracked: %s", manifest)
@@ -281,10 +299,18 @@ func validateReleaseBuild(ctx context.Context, root, extension string) error {
 		return fmt.Errorf("go files are not formatted:\n%s", strings.Join(formatted, "\n"))
 	}
 
-	for _, operation := range []string{"prepare", "build", "lint", "test"} {
+	for _, operation := range []string{"prepare", "build", "lint"} {
 		if err := runExtensions(ctx, root, operation, []string{extension}); err != nil {
 			return err
 		}
+	}
+
+	desc, err := describeRelease(extension)
+	if err != nil {
+		return err
+	}
+	if err := desc.qualify(ctx, root, desc.testEnvironment); err != nil {
+		return err
 	}
 
 	if err := runExplicitExtension(ctx, root, "package", extension); err != nil {
@@ -370,7 +396,7 @@ func remoteTagCommit(ctx context.Context, root, tag string) (string, error) {
 
 func runReleaseCI(root string, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("release-ci requires metadata, check-assets, or state\n%s", usage)
+		return fmt.Errorf("release-ci requires an operation\n%s", usage)
 	}
 
 	flags := flag.NewFlagSet("release-ci "+args[0], flag.ContinueOnError)
@@ -378,6 +404,10 @@ func runReleaseCI(root string, args []string) error {
 	tag := flags.String("tag", "", "release tag")
 	format := flags.String("format", "json", "metadata output format")
 	directory := flags.String("directory", "", "release asset directory")
+	archive := flags.String("archive", "", "absolute unsigned archive path")
+	digest := flags.String("sha256", "", "validated unsigned checksum")
+	created := flags.Bool("created", false, "GitHub release created in this run")
+	recovery := flags.Bool("recovery", false, "operator confirmed Marketplace version absent")
 	releaseJSON := flags.String("release-json", "", "existing release JSON")
 
 	if err := flags.Parse(args[1:]); err != nil {
@@ -405,6 +435,9 @@ func runReleaseCI(root string, args []string) error {
 			fmt.Println(string(encoded))
 		case "github":
 			fmt.Printf("version=%s\nprerelease=%t\nmarketplace_eligible=%t\ntitle=%s\n", metadata.Version, metadata.Prerelease, metadata.MarketplaceEligible, metadata.Title)
+			if metadata.Commit != "" {
+				fmt.Printf("commit=%s\n", metadata.Commit)
+			}
 		default:
 			return fmt.Errorf("unknown metadata format: %s", *format)
 		}
@@ -418,7 +451,7 @@ func runReleaseCI(root string, args []string) error {
 			assetDirectory = filepath.Join(root, assetDirectory)
 		}
 
-		assets, err := validateReleaseAssets(assetDirectory, metadata.Version)
+		assets, err := validateReleaseAssets(assetDirectory, metadata.Assets)
 		if err != nil {
 			return err
 		}
@@ -442,6 +475,9 @@ func runReleaseCI(root string, args []string) error {
 
 		fmt.Println(action)
 	default:
+		if metadata.description.runCI != nil {
+			return metadata.description.runCI(root, args[0], metadata, releaseCIOptions{archive: *archive, digest: *digest, directory: *directory, created: *created, recovery: *recovery})
+		}
 		return fmt.Errorf("unknown release-ci operation %q", args[0])
 	}
 
@@ -449,26 +485,37 @@ func runReleaseCI(root string, args []string) error {
 }
 
 func metadataFromTag(root, tag string) (releaseMetadata, error) {
-	const prefix = "vscode/v"
-
-	if !strings.HasPrefix(tag, prefix) {
-		return releaseMetadata{}, fmt.Errorf("invalid VS Code release tag %q; expected %s<semver>", tag, prefix)
+	extension, version, ok := strings.Cut(tag, "/v")
+	if !ok {
+		return releaseMetadata{}, fmt.Errorf("invalid release tag %q", tag)
 	}
-
-	version := strings.TrimPrefix(tag, prefix)
-	metadata, err := resolveReleaseMetadata("vscode", version, root)
+	metadata, err := resolveReleaseMetadata(extension, version, root)
 	if err != nil {
 		return releaseMetadata{}, err
 	}
-
-	if metadata.Tag != tag {
-		return releaseMetadata{}, fmt.Errorf("invalid VS Code release tag %q", tag)
+	if metadata.description.checkTagCommit {
+		ctx := context.Background()
+		commit, err := gitOutput(ctx, root, "rev-parse", "--verify", "refs/tags/"+tag+"^{commit}")
+		if err != nil {
+			return releaseMetadata{}, err
+		}
+		head, err := gitOutput(ctx, root, "rev-parse", "HEAD")
+		if err != nil {
+			return releaseMetadata{}, err
+		}
+		if commit != head {
+			return releaseMetadata{}, fmt.Errorf("tag %s points to %s, checkout is %s", tag, commit, head)
+		}
+		if err := requireTrackedManifest(ctx, root, extension); err != nil {
+			return releaseMetadata{}, err
+		}
+		metadata.Commit = commit
 	}
 
 	return metadata, nil
 }
 
-func expectedReleaseAssetNames(version string) []string {
+func vscodeReleaseAssetNames(version string) []string {
 	result := make([]string, 0, len(vscodeTargets))
 
 	for _, target := range vscodeTargets {
@@ -480,13 +527,12 @@ func expectedReleaseAssetNames(version string) []string {
 	return result
 }
 
-func validateReleaseAssets(directory, version string) ([]string, error) {
+func validateReleaseAssets(directory string, expected []string) ([]string, error) {
 	entries, err := os.ReadDir(directory)
 	if err != nil {
 		return nil, err
 	}
 
-	expected := expectedReleaseAssetNames(version)
 	actual := make([]string, 0, len(entries))
 	entryByName := make(map[string]os.DirEntry)
 	for _, entry := range entries {
@@ -500,7 +546,7 @@ func validateReleaseAssets(directory, version string) ([]string, error) {
 	if len(missing) > 0 || len(unexpected) > 0 {
 		encoded, _ := json.Marshal(map[string][]string{"missing": missing, "unexpected": unexpected})
 
-		return nil, fmt.Errorf("release asset set does not match supported VS Code targets: %s", encoded)
+		return nil, fmt.Errorf("release asset set does not match expected files: %s", encoded)
 	}
 
 	paths := make([]string, 0, len(expected))
@@ -533,7 +579,10 @@ func decideReleaseAction(release *githubRelease, metadata releaseMetadata) (stri
 	}
 
 	if release.IsDraft {
-		return "replace-draft", nil
+		if metadata.description.replaceDraft {
+			return "replace-draft", nil
+		}
+		return "", fmt.Errorf("incomplete draft for %s: inspect its original assets before recovery", metadata.Tag)
 	}
 
 	var conflicts []string
@@ -551,7 +600,7 @@ func decideReleaseAction(release *githubRelease, metadata releaseMetadata) (stri
 	}
 
 	sort.Strings(actual)
-	expected := expectedReleaseAssetNames(metadata.Version)
+	expected := metadata.Assets
 
 	if strings.Join(actual, "\n") != strings.Join(expected, "\n") {
 		conflicts = append(conflicts, fmt.Sprintf("assets %v", actual))

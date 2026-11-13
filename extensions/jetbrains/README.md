@@ -460,11 +460,22 @@ them even after a failed check. The root package check additionally verifies
 every bundled daemon's bytes, version, and Unix executable mode and runs the
 native daemon's `--version` smoke check.
 
+## Release the plugin
+
+`make release jetbrains <version>` reads `pluginVersion` from `gradle.properties`
+and creates the annotated `jetbrains/v<version>` tag after strict qualification.
+The tagged workflow publishes one signed universal ZIP and its SHA-256. See the
+[maintainer release guide](RELEASING.md) for environment setup, first listing,
+stable updates, and recovery. The current daemon's suspended Wire host-loss
+failure and pending packaged smoke are recorded in the
+[validation report](docs/debugger-validation.md).
+
 ## Smoke-test the packaged plugin
 
 Use GoLand `2026.3` (`GO-263.7307.211`) with disposable configuration, system,
-plugin, and project directories. Build with `make package jetbrains`, install
-the resulting ZIP through **Settings | Plugins | Install Plugin from Disk**,
+plugin, and project directories. Use the checksum-verified signed GitHub ZIP for
+a release smoke, or the output of `make package jetbrains` for development. Install
+the selected ZIP through **Settings | Plugins | Install Plugin from Disk**,
 and restart that isolated IDE. Confirm the loaded Ferret plugin and all launched
 daemon paths belong to that installation, with the version from `ferretd.json`.
 

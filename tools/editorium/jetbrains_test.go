@@ -23,7 +23,7 @@ func TestJetBrainsGradleUsesIntegrationLocalWrapperAndEnvironment(t *testing.T) 
 	packageRoot := jetbrainsPackageRoot(root)
 	logPath := filepath.Join(root, "gradle-calls.log")
 	wrapper := filepath.Join(packageRoot, "gradlew")
-	writeTestFile(t, wrapper, []byte("#!/bin/sh\nprintf '%s|%s\\n' \"$FERRETD_TEST_PATH\" \"$*\" >> \"$JETBRAINS_TEST_LOG\"\n"), 0o755)
+	writeTestFile(t, wrapper, []byte("#!/bin/sh\nprintf '%s|%s|%s\\n' \"$FERRET_TEST_PASSIVE_HOST_LOSS\" \"$FERRETD_TEST_PATH\" \"$*\" >> \"$JETBRAINS_TEST_LOG\"\n"), 0o755)
 	t.Setenv("JETBRAINS_TEST_LOG", logPath)
 
 	for _, arguments := range [][]string{
@@ -36,10 +36,15 @@ func TestJetBrainsGradleUsesIntegrationLocalWrapperAndEnvironment(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
+	desc, err := describeRelease("jetbrains")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FERRET_TEST_PASSIVE_HOST_LOSS", "0")
 	if err := runJetBrainsGradleEnvironment(
 		context.Background(),
 		root,
-		[]string{"FERRETD_TEST_PATH=/tmp/pinned-ferretd"},
+		append(desc.testEnvironment, "FERRETD_TEST_PATH=/tmp/pinned-ferretd"),
 		"ferretdIntegrationTest",
 	); err != nil {
 		t.Fatal(err)
@@ -54,7 +59,7 @@ func TestJetBrainsGradleUsesIntegrationLocalWrapperAndEnvironment(t *testing.T) 
 		"|test",
 		"|compileKotlin compileTestKotlin verifyPluginProjectConfiguration verifyPluginStructure verifyPlugin",
 		"|buildPlugin verifyPluginProjectConfiguration verifyPluginStructure verifyPlugin",
-		"/tmp/pinned-ferretd|ferretdIntegrationTest",
+		"1|/tmp/pinned-ferretd|ferretdIntegrationTest",
 	} {
 		if !strings.Contains(string(contents), expected) {
 			t.Fatalf("Gradle calls do not contain %q:\n%s", expected, contents)

@@ -19,7 +19,7 @@ const usage = `Usage:
   editorium test-installed <extension>
   editorium proto <sync|generate|check> [extension]
   editorium release <extension> <version>
-  editorium release-ci <metadata|check-assets|state> [options]`
+  editorium release-ci <operation> --tag <tag> [options]`
 
 func main() {
 	if err := execute(context.Background(), os.Args[1:]); err != nil {

@@ -12,7 +12,7 @@ plugins {
 }
 
 group = "org.ferretlang.jetbrains"
-version = "0.1.0"
+version = providers.gradleProperty("pluginVersion").get()
 
 dependencies {
     implementation(platform("io.grpc:grpc-bom:1.84.0"))
@@ -28,13 +28,14 @@ dependencies {
         intellijIdea("2026.2.0.1")
         bundledModule("intellij.platform.debugger")
         testFramework(TestFrameworkType.Platform)
+        zipSigner("0.1.45")
     }
 }
 
 intellijPlatform {
     pluginConfiguration {
         ideaVersion {
-            sinceBuild = "262"
+            sinceBuild = providers.gradleProperty("pluginSinceBuild")
         }
     }
     pluginVerification {
@@ -90,7 +91,27 @@ val prepareFerretd = tasks.register<Exec>("prepareFerretd") {
     outputs.dir(generatedFerretdDirectory)
 }
 
+val releaseCommit = providers.environmentVariable("JETBRAINS_RELEASE_COMMIT").filter { it.isNotBlank() }
+val releaseInput = providers.environmentVariable("JETBRAINS_UNSIGNED_ZIP").map { File(it) }
+val releaseOutput = providers.environmentVariable("JETBRAINS_SIGNED_ZIP").map { File(it) }
+val signingKey = providers.environmentVariable("JETBRAINS_SIGNING_KEY_FILE").map { File(it) }
+val signingCertificate = providers.environmentVariable("JETBRAINS_CERTIFICATE_FILE").map { File(it) }
+
 tasks {
+    named<org.gradle.jvm.tasks.Jar>("composedJar") {
+        inputs.property("releaseCommit", releaseCommit).optional(true)
+        releaseCommit.orNull?.let { manifest.attributes("Ferret-Release-Commit" to it) }
+    }
+    signPlugin {
+        archiveFile.fileProvider(releaseInput)
+        signedArchiveFile.fileProvider(releaseOutput)
+        privateKeyFile.fileProvider(signingKey)
+        certificateChainFile.fileProvider(signingCertificate)
+    }
+    verifyPluginSignature {
+        inputArchiveFile.fileProvider(releaseOutput)
+        certificateChainFile.fileProvider(signingCertificate)
+    }
     withType<Test>().configureEach {
         testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
@@ -186,6 +207,9 @@ intellijPlatformTesting.testIde.register("ferretdIntegrationTest") {
         inputs.file(wireHostBinary)
         inputs.files(wireHostSources.asFileTree.matching { include("*.go", "go.mod", "go.sum") })
         environment("FERRET_TEST_WIRE_HOST", wireHostBinary.get().asFile.absolutePath)
+        val passiveHostLoss = providers.environmentVariable("FERRET_TEST_PASSIVE_HOST_LOSS").orElse("0")
+        inputs.property("passiveHostLoss", passiveHostLoss)
+        environment("FERRET_TEST_PASSIVE_HOST_LOSS", passiveHostLoss.get())
         outputs.upToDateWhen { false }
         outputs.doNotCacheIf("Live tests exercise newly started processes") { true }
         useJUnit {
