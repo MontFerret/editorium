@@ -456,15 +456,28 @@ executable is under `build/test-fixtures/`, outside the plugin sandbox and ZIP.
 `make lint jetbrains` and `make package jetbrains` both invoke `verifyPlugin`
 against all four distributions in the compatibility matrix. Reports are written
 under `build/reports/pluginVerifier/`; the JetBrains CI packaging job uploads
-them even after a failed check. The root package check additionally verifies
-every bundled daemon's bytes, version, and Unix executable mode and runs the
-native daemon's `--version` smoke check.
+them even after a failed check. The root package check verifies the complete
+set of JARs and hashes each external dependency against Gradle's resolved
+production libraries. It checks daemons against the verified release cache,
+checks the version and Unix executable modes, and runs the native daemon's
+`--version` smoke check.
+
+## Release the plugin
+
+`make release jetbrains <version>` reads `pluginVersion` from `gradle.properties`
+and creates the annotated `jetbrains/v<version>` tag after strict qualification.
+The tagged workflow publishes one signed universal ZIP and its SHA-256. See the
+[maintainer release guide](RELEASING.md) for environment setup, first listing,
+stable updates, and recovery. The current daemon's suspended Wire host-loss
+failure and pending packaged smoke are recorded in the
+[validation report](docs/debugger-validation.md).
 
 ## Smoke-test the packaged plugin
 
 Use GoLand `2026.3` (`GO-263.7307.211`) with disposable configuration, system,
-plugin, and project directories. Build with `make package jetbrains`, install
-the resulting ZIP through **Settings | Plugins | Install Plugin from Disk**,
+plugin, and project directories. Use the checksum-verified signed GitHub ZIP for
+a release smoke, or the output of `make package jetbrains` for development. Install
+the selected ZIP through **Settings | Plugins | Install Plugin from Disk**,
 and restart that isolated IDE. Confirm the loaded Ferret plugin and all launched
 daemon paths belong to that installation, with the version from `ferretd.json`.
 

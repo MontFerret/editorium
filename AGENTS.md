@@ -19,8 +19,7 @@ Use the most direct repository authority for facts that can change:
   logic behind the Make interface.
 * `ferretd.json` is the sole repository pin for the `ferretd` version bundled in
   distributions and the matching Ferret daemon protocol schemas.
-* `.github/workflows/*` own CI and packaging automation. The current publishing
-  and release workflow is VS Code-specific.
+* `.github/workflows/*` own CI, packaging, and editor-specific release automation.
 * Each extension's manifest and build files own editor-specific metadata,
   dependencies, compatibility ranges, and package configuration.
 * `tools/editorium/go.mod` owns the Go toolchain requirement, currently Go 1.26.
@@ -107,7 +106,7 @@ Begin in the subsystem that owns the requested behavior:
 | Shared protocol inputs | `shared/proto` |
 | VS Code integration | `extensions/vscode` |
 | JetBrains integration | `extensions/jetbrains` |
-| CI and VS Code publishing automation | `.github/workflows` |
+| CI and editor publishing automation | `.github/workflows` |
 | Repository-level product/development documentation | `README.md` |
 | Editor-specific product/development docs | integration-local docs |
 
@@ -132,6 +131,7 @@ make package-check <extension>
 make install vscode [TARGET=<target>]
 make test-installed vscode [TARGET=<target>]
 make release vscode <version>
+make release jetbrains <version>
 make proto-sync
 make proto-generate vscode
 make proto-check vscode
@@ -164,7 +164,7 @@ Command support is not identical across integrations:
   linters. Selecting an integration runs only that integration's operation.
 * `prepare`, `build`, `test`, `lint`, `clean`, `package`, `package-check`, and
   protobuf client generation/checking support both VS Code and JetBrains.
-* `install`, `test-installed`, target-matrix generation, and releases currently
+* `install`, `test-installed`, and target-matrix generation currently
   support VS Code only.
 * `make ci-matrix vscode` and the Go tool's `release-ci` commands are internal CI
   entrypoints. They must remain implementations behind Make/workflows, not a
@@ -568,7 +568,7 @@ For packaging changes:
 * reject unsafe archive paths and malformed downloads;
 * do not package local caches or unrelated build outputs.
 
-Only VS Code currently implements releases. Local release preparation creates an
+VS Code release preparation creates an
 annotated `vscode/v<semver>` tag after validating a clean, synchronized `main`
 checkout and the selected native/`TARGET` package. The tag-triggered release
 workflow reuses VS Code validation to build and verify the complete six-target
@@ -576,6 +576,21 @@ set, creates the GitHub Release, and publishes only exact stable
 `major.minor.patch` versions to the Marketplace; prereleases remain GitHub
 Release artifacts. Marketplace publication currently uses the protected
 `vscode-marketplace` environment's `VSCE_PAT` secret.
+
+JetBrains releases use `pluginVersion` in `extensions/jetbrains/gradle.properties`
+and annotated `jetbrains/v<semver>` tags. Local release tests and all three CI
+test jobs require `FERRET_TEST_PASSIVE_HOST_LOSS=1` in the test JVM. The tagged
+build embeds its commit. Verify the descriptor in the packaged JAR, all six
+daemon payloads, author signature, size, and SHA-256 before publication.
+Compare the packaged runtime libraries with Gradle’s production inputs and
+check dependencies by SHA-256. Compare daemon bytes directly with the verified cache.
+The protected `jetbrains-release` environment signs the qualified ZIP in a
+read-only job. Remote tag object and peeled commit must match qualification at
+signing, GitHub publication and Marketplace upload. GitHub write access belongs
+to draft inspection and publication.
+Recovery uses the original GitHub release assets. Marketplace updates require
+manual first-listing bootstrap and an exact stable plugin version. Keep the
+packaged IDE smoke status in the integration's validation record.
 
 For VS Code release changes:
 

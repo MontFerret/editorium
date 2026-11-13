@@ -1,4 +1,10 @@
+import groovy.json.JsonOutput
 import java.io.ByteArrayOutputStream
+import java.io.OutputStream
+import java.security.DigestInputStream
+import java.security.MessageDigest
+import java.util.HexFormat
+import org.gradle.jvm.tasks.Jar
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask
@@ -12,7 +18,7 @@ plugins {
 }
 
 group = "org.ferretlang.jetbrains"
-version = "0.1.0"
+version = providers.gradleProperty("pluginVersion").get()
 
 dependencies {
     implementation(platform("io.grpc:grpc-bom:1.84.0"))
@@ -28,13 +34,14 @@ dependencies {
         intellijIdea("2026.2.0.1")
         bundledModule("intellij.platform.debugger")
         testFramework(TestFrameworkType.Platform)
+        zipSigner("0.1.45")
     }
 }
 
 intellijPlatform {
     pluginConfiguration {
         ideaVersion {
-            sinceBuild = "262"
+            sinceBuild = providers.gradleProperty("pluginSinceBuild")
         }
     }
     pluginVerification {
@@ -90,7 +97,73 @@ val prepareFerretd = tasks.register<Exec>("prepareFerretd") {
     outputs.dir(generatedFerretdDirectory)
 }
 
+val releaseCommit = providers.environmentVariable("JETBRAINS_RELEASE_COMMIT").filter { it.isNotBlank() }
+val releaseInput = providers.environmentVariable("JETBRAINS_UNSIGNED_ZIP").map { File(it) }
+val releaseOutput = providers.environmentVariable("JETBRAINS_SIGNED_ZIP").map { File(it) }
+val signingKey = providers.environmentVariable("JETBRAINS_SIGNING_KEY_FILE").map { File(it) }
+val signingCertificate = providers.environmentVariable("JETBRAINS_CERTIFICATE_FILE").map { File(it) }
+
+// Resolve only production library inputs. Reading archive names must not run their producers.
+abstract class PluginLibraryInventory : DefaultTask() {
+    @get:InputFiles @get:PathSensitive(PathSensitivity.NAME_ONLY)
+    abstract val libraries: ConfigurableFileCollection
+    @get:Input abstract val generatedJars: ListProperty<String>
+    @get:OutputFile abstract val inventory: RegularFileProperty
+
+    @TaskAction fun write() {
+        val entries = sortedMapOf<String, String>()
+        for (file in libraries.files) {
+            val hash = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                DigestInputStream(input, hash).transferTo(OutputStream.nullOutputStream())
+            }
+            check(entries.put(file.name, HexFormat.of().formatHex(hash.digest())) == null) { "Duplicate library ${file.name}" }
+        }
+        for (name in generatedJars.get()) {
+            check(entries.put(name, "") == null) { "Duplicate library $name" }
+        }
+        inventory.get().asFile.writeText(JsonOutput.toJson(entries))
+    }
+}
+
+tasks.register<PluginLibraryInventory>("pluginLibraryInventory") {
+    libraries.from(tasks.named<PrepareSandboxTask>("prepareSandbox").get().runtimeClasspath)
+    generatedJars.add(tasks.named<Jar>("composedJar").get().archiveFileName)
+    generatedJars.add(tasks.named<Jar>("jarSearchableOptions").get().archiveFileName)
+    inventory.fileProvider(providers.gradleProperty("libraryInventoryFile").map { File(it) })
+}
+
+val verificationAnchor = providers.gradleProperty("verificationAnchorFile").map { File(it) }
+val verifyPluginAuthor = tasks.register<JavaExec>("verifyPluginAuthor") {
+    val source = layout.projectDirectory.file("gradle/VerifyPluginAuthor.java")
+    inputs.file(source)
+    inputs.file(releaseOutput)
+    inputs.file(signingCertificate)
+    outputs.file(verificationAnchor)
+    outputs.upToDateWhen { false }
+    classpath(configurations.named("marketplaceZipSigner"))
+    mainClass.set(source.asFile.absolutePath)
+    doFirst {
+        args(releaseOutput.get(), signingCertificate.get(), verificationAnchor.get())
+    }
+}
+
 tasks {
+    named<Jar>("composedJar") {
+        inputs.property("releaseCommit", releaseCommit).optional(true)
+        releaseCommit.orNull?.let { manifest.attributes("Ferret-Release-Commit" to it) }
+    }
+    signPlugin {
+        archiveFile.fileProvider(releaseInput)
+        signedArchiveFile.fileProvider(releaseOutput)
+        privateKeyFile.fileProvider(signingKey)
+        certificateChainFile.fileProvider(signingCertificate)
+    }
+    verifyPluginSignature {
+        inputArchiveFile.fileProvider(releaseOutput)
+        dependsOn(verifyPluginAuthor)
+        certificateChainFile.fileProvider(verificationAnchor)
+    }
     withType<Test>().configureEach {
         testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
@@ -186,6 +259,9 @@ intellijPlatformTesting.testIde.register("ferretdIntegrationTest") {
         inputs.file(wireHostBinary)
         inputs.files(wireHostSources.asFileTree.matching { include("*.go", "go.mod", "go.sum") })
         environment("FERRET_TEST_WIRE_HOST", wireHostBinary.get().asFile.absolutePath)
+        val passiveHostLoss = providers.environmentVariable("FERRET_TEST_PASSIVE_HOST_LOSS").orElse("0")
+        inputs.property("passiveHostLoss", passiveHostLoss)
+        environment("FERRET_TEST_PASSIVE_HOST_LOSS", passiveHostLoss.get())
         outputs.upToDateWhen { false }
         outputs.doNotCacheIf("Live tests exercise newly started processes") { true }
         useJUnit {

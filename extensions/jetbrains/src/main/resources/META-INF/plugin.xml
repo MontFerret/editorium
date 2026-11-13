@@ -1,8 +1,20 @@
-<idea-plugin>
+<idea-plugin url="https://ferretlang.org">
     <id>org.ferretlang.jetbrains</id>
     <name>Ferret</name>
     <vendor url="https://ferretlang.org">Ferret</vendor>
-    <description>Ferret Query Language support for JetBrains IDEs.</description>
+    <description><![CDATA[
+        Edit, run, and debug Ferret Query Language (.fql) files in IntelliJ IDEA and GoLand.
+        The bundled Ferret daemon provides language assistance, formatting, and execution
+        against local and application-hosted runtimes.
+        <p><a href="https://ferretlang.org">Ferret project</a> ·
+        <a href="https://github.com/MontFerret/editorium">Source</a> ·
+        <a href="https://github.com/MontFerret/editorium/issues">Report an issue</a> ·
+        <a href="https://github.com/MontFerret/editorium/blob/main/LICENSE">Apache License 2.0</a></p>
+    ]]></description>
+    <change-notes><![CDATA[
+        Initial release with file recognition, language-server integration, runtime selection,
+        native Run configurations, breakpoints, stepping, variable inspection, and watches.
+    ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.lang</depends>

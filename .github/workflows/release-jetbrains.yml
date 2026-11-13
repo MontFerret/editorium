@@ -1,0 +1,228 @@
+name: Release JetBrains plugin
+
+on:
+  push:
+    tags: ['jetbrains/**']
+  workflow_dispatch:
+    inputs:
+      confirm-absent:
+        description: I checked the vendor dashboard and this tagged version has no pending or published update
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jetbrains-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Let authenticated ls-remote use the job token without persisting checkout credentials.
+  GIT_CONFIG_COUNT: '1'
+  GIT_CONFIG_KEY_0: credential.https://github.com.helper
+  GIT_CONFIG_VALUE_0: '!gh auth git-credential'
+  RELEASE_TAG: ${{ github.ref_name }}
+
+jobs:
+  metadata:
+    runs-on: ubuntu-24.04
+    outputs:
+      commit: ${{ steps.tag.outputs.commit }}
+      tag-object: ${{ steps.tag.outputs.tag-object }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          cache: false
+          go-version-file: tools/editorium/go.mod
+      - name: Validate the tag and checkout
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONFIRMED: ${{ inputs.confirm-absent }}
+        run: |
+          set -eu
+          [[ "$GITHUB_REF" == refs/tags/jetbrains/* ]]
+          [[ "$GITHUB_EVENT_NAME" == push || "$CONFIRMED" == true ]]
+          go -C tools/editorium run . release-ci metadata --tag "$RELEASE_TAG" --format github >> "$GITHUB_OUTPUT"
+
+  qualify:
+    needs: metadata
+    uses: ./.github/workflows/jetbrains-validation.yml
+    with:
+      strict-qualification: true
+      commit: ${{ needs.metadata.outputs.commit }}
+      version: ${{ needs.metadata.outputs.version }}
+      tag-object: ${{ needs.metadata.outputs.tag-object }}
+
+  preflight:
+    needs: [metadata, qualify]
+    runs-on: ubuntu-24.04
+    environment: jetbrains-release
+    permissions:
+      contents: write
+    outputs:
+      action: ${{ steps.state.outputs.action }}
+    env: &qualified
+      JETBRAINS_QUALIFIED_TAG_OBJECT: ${{ needs.metadata.outputs.tag-object }}
+      JETBRAINS_RELEASE_COMMIT: ${{ needs.metadata.outputs.commit }}
+      VERSION: ${{ needs.metadata.outputs.version }}
+    steps:
+      - &checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          persist-credentials: false
+      - &setup-go
+        uses: actions/setup-go@v7
+        with:
+          cache: false
+          go-version-file: tools/editorium/go.mod
+      - name: Inspect published releases and drafts
+        id: state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          action=$(go -C tools/editorium run . release-ci github-state --tag "$RELEASE_TAG")
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$action" != noop ]]; then
+            echo "::error::Recovery needs the original ferret-jetbrains-$VERSION-signed.zip and its .sha256 from the published release."
+            exit 1
+          fi
+          echo "action=$action" >> "$GITHUB_OUTPUT"
+
+  sign:
+    needs: [metadata, qualify, preflight]
+    if: needs.preflight.outputs.action == 'create'
+    runs-on: ubuntu-24.04
+    environment: jetbrains-release
+    env: *qualified
+    outputs:
+      artifact-id: ${{ steps.assets.outputs.artifact-id }}
+      digest: ${{ steps.sign.outputs.digest }}
+    steps:
+      - *checkout
+      - *setup-go
+      - &setup-java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 25
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.qualify.outputs.artifact-id }}
+          merge-multiple: true
+          path: unsigned
+      - &certificate
+        name: Prepare public author certificate chain
+        env:
+          CERTIFICATE: ${{ vars.JETBRAINS_SIGNING_CERTIFICATE }}
+        run: |
+          : "${CERTIFICATE:?Missing JETBRAINS_SIGNING_CERTIFICATE}"
+          printf '%s\n' "$CERTIFICATE" > "$RUNNER_TEMP/ferret-certificate.pem"
+          echo "JETBRAINS_CERTIFICATE_FILE=$RUNNER_TEMP/ferret-certificate.pem" >> "$GITHUB_ENV"
+      - name: Sign the qualified archive
+        id: sign
+        env:
+          SIGNING_KEY: ${{ secrets.JETBRAINS_SIGNING_KEY }}
+          UNSIGNED_SHA256: ${{ needs.qualify.outputs.unsigned-sha256 }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          : "${SIGNING_KEY:?Missing JETBRAINS_SIGNING_KEY}"
+          umask 077
+          JETBRAINS_SIGNING_KEY_FILE="$(mktemp "$RUNNER_TEMP/ferret-key.XXXXXX")"
+          export JETBRAINS_SIGNING_KEY_FILE
+          trap 'rm -f "$JETBRAINS_SIGNING_KEY_FILE"' EXIT
+          printf '%s\n' "$SIGNING_KEY" > "$JETBRAINS_SIGNING_KEY_FILE"
+          unset SIGNING_KEY
+          go -C tools/editorium run . release-ci sign --tag "$RELEASE_TAG" --directory signed \
+            --archive "$GITHUB_WORKSPACE/unsigned/ferret-jetbrains-$VERSION.zip" --sha256 "$UNSIGNED_SHA256"
+          read -r digest _ < "signed/ferret-jetbrains-$VERSION-signed.zip.sha256"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        id: assets
+        with:
+          name: jetbrains-signed-${{ needs.metadata.outputs.commit }}-${{ github.run_attempt }}
+          path: signed/
+          if-no-files-found: error
+
+  publish:
+    needs: [metadata, sign]
+    runs-on: ubuntu-24.04
+    environment: jetbrains-release
+    env: *qualified
+    permissions:
+      contents: write
+    outputs:
+      created: ${{ steps.release.outputs.created }}
+    steps:
+      - *checkout
+      - *setup-go
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.sign.outputs.artifact-id }}
+          merge-multiple: true
+          path: signed
+      - name: Publish signed GitHub assets
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ needs.sign.outputs.digest }}
+        run: go -C tools/editorium run . release-ci publish --tag "$RELEASE_TAG" --directory signed --sha256 "$DIGEST" >> "$GITHUB_OUTPUT"
+
+  verify-and-submit:
+    needs: [metadata, preflight, sign, publish]
+    if: >-
+      ${{ !cancelled() && needs.preflight.result == 'success' &&
+          (needs.preflight.outputs.action == 'noop' || needs.publish.result == 'success') }}
+    runs-on: ubuntu-24.04
+    environment: jetbrains-release
+    env: *qualified
+    steps:
+      - *checkout
+      - *setup-go
+      - *setup-java
+      - *certificate
+      - name: Verify original GitHub assets
+        id: verified
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CREATED: ${{ needs.publish.outputs.created }}
+          SIGNED_DIGEST: ${{ needs.sign.outputs.digest }}
+        run: |
+          set -eu
+          test "$(go -C tools/editorium run . release-ci github-state --tag "$RELEASE_TAG")" = noop
+          gh release download "$RELEASE_TAG" --dir published
+          go -C tools/editorium run . release-ci verify-signed --tag "$RELEASE_TAG" --directory published
+          read -r digest _ < "published/ferret-jetbrains-$VERSION-signed.zip.sha256"
+          if [[ "$CREATED" == true ]]; then test "$digest" = "$SIGNED_DIGEST"; fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Check eligibility and recovery policy
+        id: policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JETBRAINS_MARKETPLACE_ENABLED: ${{ vars.JETBRAINS_MARKETPLACE_ENABLED }}
+          CREATED: ${{ needs.publish.outputs.created || 'false' }}
+          RECOVERY: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          go -C tools/editorium run . release-ci marketplace-policy --tag "$RELEASE_TAG" \
+            --created="$CREATED" --recovery="$RECOVERY" >> "$GITHUB_OUTPUT"
+      - name: Report Marketplace status
+        if: steps.policy.outputs.upload != 'true'
+        env:
+          MESSAGE: ${{ steps.policy.outputs.message }}
+        run: echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+      - name: Submit stable Marketplace update
+        if: steps.policy.outputs.upload == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JETBRAINS_MARKETPLACE_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
+          SHA256: ${{ steps.verified.outputs.digest }}
+        run: |
+          go -C tools/editorium run . release-ci marketplace-upload --tag "$RELEASE_TAG" --directory published --sha256 "$SHA256" >> "$GITHUB_STEP_SUMMARY"

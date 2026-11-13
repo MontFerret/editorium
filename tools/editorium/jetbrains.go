@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,43 +19,14 @@ const (
 	maximumJetBrainsEntrySize   = 128 * 1024 * 1024
 )
 
-type preparedJetBrainsFerretd struct {
-	Root     string
-	Version  string
-	Acquired map[string]acquiredFerretd
-}
-
 func runJetBrainsOperation(ctx context.Context, root, operation string) error {
 	switch operation {
 	case "prepare":
-		_, err := prepareJetBrainsFerretd(ctx, root, nil)
-		return err
+		return prepareJetBrainsFerretd(ctx, root, nil)
 	case "build":
 		return runJetBrainsGradle(ctx, root, "buildPlugin", "verifyPluginProjectConfiguration", "verifyPluginStructure")
 	case "test":
-		if _, err := syncFerretdProto(ctx, root, false, nil); err != nil {
-			return err
-		}
-
-		if err := generateJetBrainsProto(ctx, root, true); err != nil {
-			return err
-		}
-
-		prepared, err := prepareJetBrainsTestFerretd(ctx, root, nil)
-		if err != nil {
-			return err
-		}
-
-		if err := runJetBrainsGradle(ctx, root, "test"); err != nil {
-			return err
-		}
-
-		return runJetBrainsGradleEnvironment(
-			ctx,
-			root,
-			[]string{"FERRETD_TEST_PATH=" + prepared.BinaryPath},
-			"ferretdIntegrationTest",
-		)
+		return testJetBrains(ctx, root, nil)
 	case "lint":
 		fixture := filepath.Join(root, "fixtures", "wire-host")
 		files, err := commandOutput(ctx, fixture, nil, "gofmt", "-l", ".")
@@ -83,6 +55,33 @@ func runJetBrainsOperation(ctx context.Context, root, operation string) error {
 	}
 }
 
+func testJetBrains(ctx context.Context, root string, environment []string) error {
+	if _, err := syncFerretdProto(ctx, root, false, nil); err != nil {
+		return err
+	}
+
+	if err := generateJetBrainsProto(ctx, root, true); err != nil {
+		return err
+	}
+
+	prepared, err := prepareJetBrainsTestFerretd(ctx, root, nil)
+	if err != nil {
+		return err
+	}
+
+	if err := runJetBrainsGradle(ctx, root, "test"); err != nil {
+		return err
+	}
+
+	environment = append(environment, "FERRETD_TEST_PATH="+prepared.BinaryPath)
+	return runJetBrainsGradleEnvironment(
+		ctx,
+		root,
+		environment,
+		"ferretdIntegrationTest",
+	)
+}
+
 func prepareJetBrainsTestFerretd(ctx context.Context, root string, client httpDoer) (acquiredFerretd, error) {
 	target, err := detectHostFerretdTarget(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
@@ -104,30 +103,29 @@ func packageJetBrains(ctx context.Context, root string) error {
 	return checkJetBrainsPackage(ctx, root)
 }
 
-func prepareJetBrainsFerretd(ctx context.Context, root string, client httpDoer) (preparedJetBrainsFerretd, error) {
+func prepareJetBrainsFerretd(ctx context.Context, root string, client httpDoer) error {
 	version, err := readFerretdVersion(root)
 	if err != nil {
-		return preparedJetBrainsFerretd{}, err
+		return err
 	}
 
 	generatedRoot := jetbrainsGeneratedRoot(root)
 	if err := os.MkdirAll(filepath.Dir(generatedRoot), 0o755); err != nil {
-		return preparedJetBrainsFerretd{}, err
+		return err
 	}
 
 	stagingRoot, err := os.MkdirTemp(filepath.Dir(generatedRoot), ".ferretd-stage-")
 	if err != nil {
-		return preparedJetBrainsFerretd{}, err
+		return err
 	}
 
 	defer os.RemoveAll(stagingRoot)
 
-	acquired := make(map[string]acquiredFerretd, len(ferretdTargets))
 	for _, target := range ferretdTargets {
 		binary, acquireErr := acquireFerretd(ctx, root, target, client)
 
 		if acquireErr != nil {
-			return preparedJetBrainsFerretd{}, fmt.Errorf("prepare JetBrains ferretd target %s: %w", target.ID, acquireErr)
+			return fmt.Errorf("prepare JetBrains ferretd target %s: %w", target.ID, acquireErr)
 		}
 
 		mode := os.FileMode(0o644)
@@ -137,50 +135,91 @@ func prepareJetBrainsFerretd(ctx context.Context, root string, client httpDoer) 
 
 		destination := filepath.Join(stagingRoot, target.Platform, target.Architecture, target.BinaryName)
 		if err := copyFileAtomic(binary.BinaryPath, destination, mode); err != nil {
-			return preparedJetBrainsFerretd{}, fmt.Errorf("stage JetBrains ferretd target %s: %w", target.ID, err)
+			return fmt.Errorf("stage JetBrains ferretd target %s: %w", target.ID, err)
 		}
-
-		acquired[target.ID] = binary
 	}
 
 	if err := writeFileAtomic(filepath.Join(stagingRoot, jetbrainsFerretdVersionFile), []byte(version+"\n"), 0o644); err != nil {
-		return preparedJetBrainsFerretd{}, err
+		return err
 	}
 
 	if err := replaceDirectoryAtomic(stagingRoot, generatedRoot); err != nil {
-		return preparedJetBrainsFerretd{}, err
+		return err
 	}
 
 	fmt.Printf("Prepared ferretd %s for JetBrains (%d targets): %s\n", version, len(ferretdTargets), generatedRoot)
 
-	return preparedJetBrainsFerretd{Root: generatedRoot, Version: version, Acquired: acquired}, nil
-}
-
-func checkJetBrainsPackage(ctx context.Context, root string) error {
-	version, err := readFerretdVersion(root)
-	if err != nil {
-		return err
-	}
-
-	archivePath, err := jetbrainsArchivePath(root)
-	if err != nil {
-		return err
-	}
-
-	if err := validateJetBrainsArchive(ctx, archivePath, jetbrainsGeneratedRoot(root), version); err != nil {
-		return err
-	}
-
-	fmt.Printf("Verified %s\n", archivePath)
-
 	return nil
 }
 
-func validateJetBrainsArchive(ctx context.Context, path, stagedRoot, version string) error {
-	return validateJetBrainsArchiveWithSmoke(ctx, path, stagedRoot, version, smokePackagedJetBrainsFerretd)
+func checkJetBrainsPackage(ctx context.Context, root string) error {
+	version, err := jetbrainsPluginVersion(root)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(jetbrainsPackageRoot(root), "build", "distributions")
+	name := jetbrainsArchiveRoot + "-" + version + ".zip"
+	archives, err := filepath.Glob(filepath.Join(dir, "*.zip"))
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(dir, name)
+	if len(archives) != 1 || archives[0] != path {
+		return fmt.Errorf("expected only %s in %s, found %v", name, dir, archives)
+	}
+	return checkJetBrainsArtifact(ctx, root, path, version, os.Getenv("JETBRAINS_RELEASE_COMMIT"))
 }
 
-func validateJetBrainsArchiveWithSmoke(ctx context.Context, path, stagedRoot, version string, smoke func(context.Context, []byte, ferretdTarget, string) error) error {
+func checkJetBrainsArtifact(ctx context.Context, root, path, version, commit string) error {
+	if !regularFile(path) {
+		return fmt.Errorf("missing regular plugin ZIP: %s", path)
+	}
+	since, err := jetbrainsProperty(root, "pluginSinceBuild")
+	if err != nil {
+		return err
+	}
+	resources := filepath.Join(jetbrainsPackageRoot(root), "src", "main", "resources")
+	libraries, err := jetbrainsLibraryInventory(ctx, root)
+	if err != nil {
+		return err
+	}
+	if err := checkPluginDescriptor(path, resources, version, since, commit, libraries); err != nil {
+		return err
+	}
+	// Reacquire verified bytes even when checking a downloaded or previously staged ZIP.
+	daemonVersion, err := readFerretdVersion(root)
+	if err != nil {
+		return err
+	}
+	if err := validateJetBrainsArchiveWithSmoke(ctx, path, root, daemonVersion, nil, smokePackagedJetBrainsFerretd); err != nil {
+		return err
+	}
+	fmt.Printf("Verified %s\n", path)
+	return nil
+}
+
+func jetbrainsLibraryInventory(ctx context.Context, root string) (map[string]string, error) {
+	dir, err := os.MkdirTemp("", "ferret-plugin-libraries-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "libraries.json")
+	if err := runJetBrainsGradle(ctx, root, "pluginLibraryInventory", "-PlibraryInventoryFile="+path, "--no-configuration-cache", "--quiet"); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var libraries map[string]string
+	if err := json.Unmarshal(data, &libraries); err != nil {
+		return nil, err
+	}
+	return libraries, nil
+}
+
+func validateJetBrainsArchiveWithSmoke(ctx context.Context, path, root, version string, client httpDoer, smoke func(context.Context, []byte, ferretdTarget, string) error) error {
 	archive, err := zip.OpenReader(path)
 	if err != nil {
 		return err
@@ -244,13 +283,15 @@ func validateJetBrainsArchiveWithSmoke(ctx context.Context, path, stagedRoot, ve
 			return err
 		}
 
-		stagedPath := filepath.Join(stagedRoot, target.Platform, target.Architecture, target.BinaryName)
-		staged, err := os.ReadFile(stagedPath)
+		binary, err := acquireFerretd(ctx, root, target, client)
 		if err != nil {
-			return fmt.Errorf("read staged JetBrains ferretd target %s: %w", target.ID, err)
+			return fmt.Errorf("verify JetBrains ferretd target %s: %w", target.ID, err)
 		}
-
-		if !bytes.Equal(contents, staged) {
+		original, err := os.ReadFile(binary.BinaryPath)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(contents, original) {
 			return fmt.Errorf("packaged JetBrains ferretd bytes differ for %s", target.ID)
 		}
 
@@ -334,20 +375,6 @@ func jetbrainsPackageRoot(root string) string {
 
 func jetbrainsGeneratedRoot(root string) string {
 	return filepath.Join(jetbrainsPackageRoot(root), "build", "generated", "ferretd")
-}
-
-func jetbrainsArchivePath(root string) (string, error) {
-	distributionRoot := filepath.Join(jetbrainsPackageRoot(root), "build", "distributions")
-	matches, err := filepath.Glob(filepath.Join(distributionRoot, "ferret-jetbrains-*.zip"))
-	if err != nil {
-		return "", err
-	}
-
-	if len(matches) != 1 {
-		return "", fmt.Errorf("expected exactly one JetBrains plugin archive in %s, found %d", distributionRoot, len(matches))
-	}
-
-	return matches[0], nil
 }
 
 func cleanJetBrains(root string) error {

@@ -38,7 +38,7 @@ func TestReleaseMetadataAssetsAndPublishedState(t *testing.T) {
 		t.Fatal("accepted unrelated tag")
 	}
 
-	assets := expectedReleaseAssetNames("0.1.0")
+	assets := vscodeReleaseAssetNames("0.1.0")
 	if len(assets) != 6 || !sort.StringsAreSorted(assets) {
 		t.Fatalf("release assets = %v", assets)
 	}
@@ -46,7 +46,7 @@ func TestReleaseMetadataAssetsAndPublishedState(t *testing.T) {
 	for _, name := range assets {
 		writeTestFile(t, filepath.Join(directory, name), []byte("vsix"), 0o644)
 	}
-	paths, err := validateReleaseAssets(directory, "0.1.0")
+	paths, err := validateReleaseAssets(directory, vscodeReleaseAssetNames("0.1.0"))
 	if err != nil || len(paths) != 6 {
 		t.Fatalf("validateReleaseAssets() = %v, %v", paths, err)
 	}
@@ -101,19 +101,19 @@ func TestMarketplaceReleaseEligibilityAndPublisher(t *testing.T) {
 
 func TestValidateReleaseAssetsRejectsIncompleteSets(t *testing.T) {
 	directory := t.TempDir()
-	names := expectedReleaseAssetNames("0.1.0")
+	names := vscodeReleaseAssetNames("0.1.0")
 	for _, name := range names[1:] {
 		writeTestFile(t, filepath.Join(directory, name), []byte("vsix"), 0o644)
 	}
 	writeTestFile(t, filepath.Join(directory, "unexpected.vsix"), []byte("vsix"), 0o644)
-	if _, err := validateReleaseAssets(directory, "0.1.0"); err == nil || !strings.Contains(err.Error(), "missing") || !strings.Contains(err.Error(), "unexpected") {
+	if _, err := validateReleaseAssets(directory, vscodeReleaseAssetNames("0.1.0")); err == nil || !strings.Contains(err.Error(), "missing") || !strings.Contains(err.Error(), "unexpected") {
 		t.Fatalf("incomplete asset error = %v", err)
 	}
 	if err := os.Remove(filepath.Join(directory, "unexpected.vsix")); err != nil {
 		t.Fatal(err)
 	}
 	writeTestFile(t, filepath.Join(directory, names[0]), nil, 0o644)
-	if _, err := validateReleaseAssets(directory, "0.1.0"); err == nil || !strings.Contains(err.Error(), "non-empty") {
+	if _, err := validateReleaseAssets(directory, vscodeReleaseAssetNames("0.1.0")); err == nil || !strings.Contains(err.Error(), "non-empty") {
 		t.Fatalf("empty asset error = %v", err)
 	}
 }
@@ -122,7 +122,7 @@ func TestReleaseCICheckAssetsResolvesDirectoriesFromRepositoryRoot(t *testing.T)
 	root := t.TempDir()
 	writeVSCodePackageManifest(t, root, "0.1.0")
 	directory := filepath.Join(root, "release-assets")
-	for _, name := range expectedReleaseAssetNames("0.1.0") {
+	for _, name := range vscodeReleaseAssetNames("0.1.0") {
 		writeTestFile(t, filepath.Join(directory, name), []byte("vsix"), 0o644)
 	}
 
@@ -147,70 +147,78 @@ func TestReleaseCICheckAssetsResolvesDirectoriesFromRepositoryRoot(t *testing.T)
 }
 
 func TestReleaseRepositoryPreflightRejectsInvalidStatesAndExistingTags(t *testing.T) {
-	ctx := context.Background()
-	t.Run("dirty", func(t *testing.T) {
-		fixture := newReleaseGitFixture(t)
-		writeTestFile(t, filepath.Join(fixture.work, "dirty.txt"), []byte("dirty"), 0o644)
-		if _, err := requireReleaseRepositoryState(ctx, fixture.work, "vscode"); err == nil || !strings.Contains(err.Error(), "clean working tree") {
-			t.Fatalf("dirty error = %v", err)
-		}
-	})
-	t.Run("detached", func(t *testing.T) {
-		fixture := newReleaseGitFixture(t)
-		fixture.git(t, "checkout", "--detach")
-		if _, err := requireReleaseRepositoryState(ctx, fixture.work, "vscode"); err == nil || !strings.Contains(err.Error(), "detached") {
-			t.Fatalf("detached error = %v", err)
-		}
-	})
-	t.Run("wrong branch", func(t *testing.T) {
-		fixture := newReleaseGitFixture(t)
-		fixture.git(t, "switch", "-c", "feature")
-		if _, err := requireReleaseRepositoryState(ctx, fixture.work, "vscode"); err == nil || !strings.Contains(err.Error(), `must run from "main"`) {
-			t.Fatalf("branch error = %v", err)
-		}
-	})
-	t.Run("out of sync", func(t *testing.T) {
-		fixture := newReleaseGitFixture(t)
-		writeTestFile(t, filepath.Join(fixture.work, "ahead.txt"), []byte("ahead"), 0o644)
-		fixture.git(t, "add", "ahead.txt")
-		fixture.git(t, "commit", "-m", "ahead")
-		if _, err := requireReleaseRepositoryState(ctx, fixture.work, "vscode"); err == nil || !strings.Contains(err.Error(), "synchronized") {
-			t.Fatalf("out-of-sync error = %v", err)
-		}
-	})
-	t.Run("local tag", func(t *testing.T) {
-		fixture := newReleaseGitFixture(t)
-		if _, err := requireReleaseRepositoryState(ctx, fixture.work, "vscode"); err != nil {
-			t.Fatal(err)
-		}
-		fixture.git(t, "tag", "vscode/v0.1.0")
-		if err := assertTagAvailable(ctx, fixture.work, "vscode/v0.1.0"); err == nil || !strings.Contains(err.Error(), "locally") {
-			t.Fatalf("local tag error = %v", err)
-		}
-	})
-	t.Run("remote tag", func(t *testing.T) {
-		fixture := newReleaseGitFixture(t)
-		fixture.git(t, "tag", "vscode/v0.1.0")
-		fixture.git(t, "push", "origin", "refs/tags/vscode/v0.1.0")
-		fixture.git(t, "tag", "-d", "vscode/v0.1.0")
-		if _, err := requireReleaseRepositoryState(ctx, fixture.work, "vscode"); err != nil {
-			t.Fatal(err)
-		}
-		if err := assertTagAvailable(ctx, fixture.work, "vscode/v0.1.0"); err == nil || !strings.Contains(err.Error(), "origin") {
-			t.Fatalf("remote tag error = %v", err)
-		}
-	})
-	t.Run("tracked manifest equality", func(t *testing.T) {
-		fixture := newReleaseGitFixture(t)
-		fixture.git(t, "update-index", "--assume-unchanged", "extensions/vscode/package.json")
-		writeVSCodePackageManifest(t, fixture.work, "0.2.0")
-		if _, err := requireReleaseRepositoryState(ctx, fixture.work, "vscode"); err != nil {
-			t.Fatal(err)
-		}
-		if err := requireTrackedManifest(ctx, fixture.work, "vscode"); err == nil || !strings.Contains(err.Error(), "differs from the tracked HEAD") {
-			t.Fatalf("tracked manifest error = %v", err)
-		}
-	})
+	for _, extension := range extensionNames() {
+		t.Run(extension, func(t *testing.T) {
+			ctx := context.Background()
+			t.Run("dirty", func(t *testing.T) {
+				fixture := newReleaseGitFixture(t)
+				writeTestFile(t, filepath.Join(fixture.work, "dirty.txt"), []byte("dirty"), 0o644)
+				if _, err := requireReleaseRepositoryState(ctx, fixture.work, extension); err == nil || !strings.Contains(err.Error(), "clean working tree") {
+					t.Fatalf("dirty error = %v", err)
+				}
+			})
+			t.Run("detached", func(t *testing.T) {
+				fixture := newReleaseGitFixture(t)
+				fixture.git(t, "checkout", "--detach")
+				if _, err := requireReleaseRepositoryState(ctx, fixture.work, extension); err == nil || !strings.Contains(err.Error(), "detached") {
+					t.Fatalf("detached error = %v", err)
+				}
+			})
+			t.Run("wrong branch", func(t *testing.T) {
+				fixture := newReleaseGitFixture(t)
+				fixture.git(t, "switch", "-c", "feature")
+				if _, err := requireReleaseRepositoryState(ctx, fixture.work, extension); err == nil || !strings.Contains(err.Error(), `must run from "main"`) {
+					t.Fatalf("branch error = %v", err)
+				}
+			})
+			t.Run("out of sync", func(t *testing.T) {
+				fixture := newReleaseGitFixture(t)
+				writeTestFile(t, filepath.Join(fixture.work, "ahead.txt"), []byte("ahead"), 0o644)
+				fixture.git(t, "add", "ahead.txt")
+				fixture.git(t, "commit", "-m", "ahead")
+				if _, err := requireReleaseRepositoryState(ctx, fixture.work, extension); err == nil || !strings.Contains(err.Error(), "synchronized") {
+					t.Fatalf("out-of-sync error = %v", err)
+				}
+			})
+			t.Run("local tag", func(t *testing.T) {
+				fixture := newReleaseGitFixture(t)
+				if _, err := requireReleaseRepositoryState(ctx, fixture.work, extension); err != nil {
+					t.Fatal(err)
+				}
+				fixture.git(t, "tag", extension+"/v0.1.0")
+				if err := assertTagAvailable(ctx, fixture.work, extension+"/v0.1.0"); err == nil || !strings.Contains(err.Error(), "locally") {
+					t.Fatalf("local tag error = %v", err)
+				}
+			})
+			t.Run("remote tag", func(t *testing.T) {
+				fixture := newReleaseGitFixture(t)
+				fixture.git(t, "tag", extension+"/v0.1.0")
+				fixture.git(t, "push", "origin", "refs/tags/"+extension+"/v0.1.0")
+				fixture.git(t, "tag", "-d", extension+"/v0.1.0")
+				if _, err := requireReleaseRepositoryState(ctx, fixture.work, extension); err != nil {
+					t.Fatal(err)
+				}
+				if err := assertTagAvailable(ctx, fixture.work, extension+"/v0.1.0"); err == nil || !strings.Contains(err.Error(), "origin") {
+					t.Fatalf("remote tag error = %v", err)
+				}
+			})
+			t.Run("tracked manifest equality", func(t *testing.T) {
+				fixture := newReleaseGitFixture(t)
+				desc, err := describeRelease(extension)
+				if err != nil {
+					t.Fatal(err)
+				}
+				fixture.git(t, "update-index", "--assume-unchanged", desc.versionSource)
+				writeTestFile(t, filepath.Join(fixture.work, desc.versionSource), []byte("hidden edit"), 0o644)
+				if _, err := requireReleaseRepositoryState(ctx, fixture.work, extension); err != nil {
+					t.Fatal(err)
+				}
+				if err := requireTrackedManifest(ctx, fixture.work, extension); err == nil || !strings.Contains(err.Error(), "differs from the tracked HEAD") {
+					t.Fatalf("tracked manifest error = %v", err)
+				}
+			})
+		})
+	}
 }
 
 func TestReleasePushesAnnotatedTagAtUnchangedHead(t *testing.T) {
@@ -248,33 +256,41 @@ func TestReleaseValidationFailureCreatesNoTag(t *testing.T) {
 }
 
 func TestReleasePushFailureRollsBackLocalTag(t *testing.T) {
-	fixture := newReleaseGitFixture(t)
-	hook := filepath.Join(fixture.remote, "hooks", "pre-receive")
-	writeTestFile(t, hook, []byte("#!/bin/sh\nexit 1\n"), 0o755)
-	err := runReleaseWithValidator(context.Background(), fixture.work, "vscode", "0.1.0", func(context.Context, string, string) error { return nil })
-	if err == nil || !strings.Contains(err.Error(), "removed local tag") {
-		t.Fatalf("release error = %v", err)
+	for _, extension := range extensionNames() {
+		t.Run(extension, func(t *testing.T) {
+			fixture := newReleaseGitFixture(t)
+			hook := filepath.Join(fixture.remote, "hooks", "pre-receive")
+			writeTestFile(t, hook, []byte("#!/bin/sh\nexit 1\n"), 0o755)
+			err := runReleaseWithValidator(context.Background(), fixture.work, extension, "0.1.0", func(context.Context, string, string) error { return nil })
+			if err == nil || !strings.Contains(err.Error(), "removed local tag") {
+				t.Fatalf("release error = %v", err)
+			}
+			assertMissingGitRef(t, fixture.work, "refs/tags/"+extension+"/v0.1.0")
+			assertMissingBareGitRef(t, fixture.remote, "refs/tags/"+extension+"/v0.1.0")
+		})
 	}
-	assertMissingGitRef(t, fixture.work, "refs/tags/vscode/v0.1.0")
-	assertMissingBareGitRef(t, fixture.remote, "refs/tags/vscode/v0.1.0")
 }
 
 func TestFailedPushReconciliationKeepsConfirmedRemoteTag(t *testing.T) {
-	fixture := newReleaseGitFixture(t)
-	fixture.git(t, "tag", "-a", "vscode/v0.1.0", "-m", "Release vscode/v0.1.0")
-	fixture.git(t, "push", "origin", "refs/tags/vscode/v0.1.0")
-	head := fixture.git(t, "rev-parse", "HEAD")
-	if err := reconcileFailedTagPush(context.Background(), fixture.work, "vscode/v0.1.0", head, errors.New("injected transport error")); err != nil {
-		t.Fatal(err)
-	}
-	if got := fixture.git(t, "rev-parse", "refs/tags/vscode/v0.1.0^{}"); got != head {
-		t.Fatalf("confirmed local tag was removed: %s", got)
+	for _, extension := range extensionNames() {
+		t.Run(extension, func(t *testing.T) {
+			fixture := newReleaseGitFixture(t)
+			fixture.git(t, "tag", "-a", extension+"/v0.1.0", "-m", "Release vscode/v0.1.0")
+			fixture.git(t, "push", "origin", "refs/tags/"+extension+"/v0.1.0")
+			head := fixture.git(t, "rev-parse", "HEAD")
+			if err := reconcileFailedTagPush(context.Background(), fixture.work, extension+"/v0.1.0", head, errors.New("injected transport error")); err != nil {
+				t.Fatal(err)
+			}
+			if got := fixture.git(t, "rev-parse", "refs/tags/"+extension+"/v0.1.0^{}"); got != head {
+				t.Fatalf("confirmed local tag was removed: %s", got)
+			}
+		})
 	}
 }
 
 func matchingRelease(metadata releaseMetadata) githubRelease {
 	release := githubRelease{TagName: metadata.Tag, Name: metadata.Title, IsPrerelease: metadata.Prerelease}
-	for _, name := range expectedReleaseAssetNames(metadata.Version) {
+	for _, name := range metadata.Assets {
 		release.Assets = append(release.Assets, struct {
 			Name string `json:"name"`
 		}{Name: name})
@@ -308,6 +324,7 @@ func newReleaseGitFixture(t *testing.T) releaseGitFixture {
 	fixture.git(t, "config", "user.name", "Editorium Tests")
 	fixture.git(t, "config", "user.email", "editorium@example.test")
 	writeVSCodePackageManifest(t, fixture.work, "0.1.0")
+	writeTestFile(t, filepath.Join(fixture.work, jetbrainsVersionSource), []byte("pluginVersion=0.1.0\n"), 0o644)
 	writeTestFile(t, filepath.Join(fixture.work, "ferretd.json"), []byte("{\"ferretd\":\"1.0.0-alpha.4\"}\n"), 0o644)
 	fixture.git(t, "add", ".")
 	fixture.git(t, "commit", "-m", "initial")

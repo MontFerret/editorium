@@ -1,5 +1,40 @@
 # JetBrains debugger validation
 
+## November 13, 2026 release qualification
+
+**Blocked on passive suspended host loss.** The latest published daemon is
+`1.0.0-alpha.11`. On macOS arm64, `FERRET_TEST_PASSIVE_HOST_LOSS=1 make test jetbrains`
+ran all 44 real-process cases with the owned Wire fixture. One failed. After the
+host died at a breakpoint, the adapter was still alive at 20 seconds and the
+test received no exit code. Ordinary `make test` passed the alpha.11
+characterization, including all 235 JetBrains unit/platform and 44 real-process
+tests. VS Code passed its 143 unit tests and 13 extension-host integration tests.
+
+`make lint`, `make package jetbrains`, and `make package-check jetbrains`
+passed. Plugin Verifier reported compatibility for both configured IDEA and
+GoLand releases. A local test build of plugin 0.1.0, with the commit recorded
+in its composed JAR and signed with a disposable test certificate, measured
+78,731,110 bytes. Its signature, descriptor, commit, six daemon payloads and
+SHA-256 were verified. Verification rejected an unsigned ZIP, modified signed
+bytes, a different certificate, and a conflicting checksum.
+
+After the release-verification changes, another macOS arm64 run of the strict
+suite again failed only `lostApplicationWhileDebugIsSuspendedReportsFailure`
+(1 of 44). The assertion reported a live adapter and no exit code after the
+Wire host died. Ordinary `make test`, `make lint`, packaging and standalone
+package verification passed. A universal ZIP signed with a disposable CA and
+leaf measured 78,731,812 bytes. Public-only verification accepted the original
+chain and rejected a sibling author under the same CA, a different CA, a reversed
+chain, and malformed PEM. A separate self-signed author case also passed.
+Release tests covered changed remote annotations, missing and substituted
+libraries, and an existing GitHub release appearing during publication using
+local remotes and a fake GitHub endpoint.
+
+The installed GoLand 2026.3 interactive smoke remains pending. These results
+cover local infrastructure testing. Hosted release CI, production signing,
+the first Marketplace listing, and public availability remain unverified.
+See the [maintainer release guide](../RELEASING.md).
+
 ## November 12, 2026 embedded application validation
 
 **Release blocker.** With `ferretd 1.0.0-alpha.11`, killing a Wire application
