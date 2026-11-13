@@ -9,7 +9,7 @@ import {
 } from '../debug/commands';
 
 class FakeDebugCommandHost implements FerretDebugCommandHost {
-  private handler: (() => Thenable<boolean>) | undefined;
+  private handler: ((options?: unknown) => Thenable<boolean>) | undefined;
 
   public command: string | undefined;
   public disposed = false;
@@ -20,7 +20,7 @@ class FakeDebugCommandHost implements FerretDebugCommandHost {
 
   public registerCommand(
     command: string,
-    handler: () => Thenable<boolean>,
+    handler: (options?: unknown) => Thenable<boolean>,
   ): vscode.Disposable {
     assert.strictEqual(this.handler, undefined);
     this.command = command;
@@ -41,10 +41,10 @@ class FakeDebugCommandHost implements FerretDebugCommandHost {
     return true;
   }
 
-  public async invoke(): Promise<boolean> {
+  public async invoke(options?: unknown): Promise<boolean> {
     assert.ok(this.handler, 'Expected the debug command to be registered');
 
-    return this.handler();
+    return this.handler(options);
   }
 }
 
@@ -62,6 +62,9 @@ suite('Ferret debug command', () => {
           configuration: { type: 'ferret' },
         },
       ]);
+      await host.invoke({ RuntimeName: 'Ω' });
+      assert.equal(host.startCalls[1]?.configuration.runtimeName, 'Ω');
+      await assert.rejects(host.invoke({ RuntimeName: 'local', runtimeName: '' }), /only once/);
     } finally {
       registration.dispose();
     }

@@ -1,71 +1,35 @@
 import * as vscode from 'vscode';
-
+import { readRuntimeSelector } from '../runtime/selector';
 import type { FerretdExecutable } from '../ferretd';
+import type { RuntimeCoordinator } from '../runtime/coordinator';
 import type { ServerOutput } from '../server';
+import { FerretDebugTransport } from './transport';
 
 export const ferretDebugType = 'ferret';
 
-export type FerretdDebugExecutableResolver =
-  () => Promise<FerretdExecutable>;
+export class FerretDebugAdapterDescriptorFactory implements vscode.DebugAdapterDescriptorFactory {
+  private readonly adapters = new Set<FerretDebugTransport>();
 
-export interface DebugAdapterRegistrationHost {
-  registerDebugAdapterDescriptorFactory(
-    debugType: string,
-    factory: vscode.DebugAdapterDescriptorFactory,
-  ): vscode.Disposable;
-}
-
-export class FerretDebugAdapterDescriptorFactory
-  implements vscode.DebugAdapterDescriptorFactory
-{
   public constructor(
-    private readonly resolveExecutable: FerretdDebugExecutableResolver,
+    private readonly resolveExecutable: () => Promise<FerretdExecutable>,
     private readonly output: ServerOutput,
+    private readonly runtime: Pick<RuntimeCoordinator, 'admit'>,
   ) {}
 
-  public async createDebugAdapterDescriptor(): Promise<vscode.DebugAdapterExecutable> {
-    this.output.info('Starting Ferret debug adapter');
-
-    let selection: FerretdExecutable;
-    try {
-      selection = await this.resolveExecutable();
-    } catch (error) {
-      this.output.error('Starting Ferret debug adapter failed', error);
-      throw error;
-    }
-
-    if (selection.source === 'bundled') {
-      this.output.info('Ferret debug adapter source: bundled');
-      this.output.info(`Bundled ferretd: ${selection.bundledVersion}`);
-    } else {
-      this.output.info(
-        'Ferret debug adapter source: configured override',
-      );
-      this.output.info(`Executable: ${selection.executable}`);
-    }
-
-    const args = ['dap'];
-    this.output.info(
-      `Ferret debug adapter arguments: ${JSON.stringify(args)}`,
-    );
-
-    return new vscode.DebugAdapterExecutable(
-      selection.executable,
-      args,
-    );
+  public createDebugAdapterDescriptor(session: vscode.DebugSession): vscode.DebugAdapterInlineImplementation {
+    if ('debugServer' in session.configuration) throw new Error('Remove debugServer to use the owned Ferret debug adapter.');
+    const reservation = this.runtime.admit(readRuntimeSelector(session.configuration));
+    const transport = new FerretDebugTransport(this.resolveExecutable, this.output, () => {
+      this.adapters.delete(transport);
+      reservation.release();
+    });
+    this.adapters.add(transport);
+    transport.prepare();
+    return new vscode.DebugAdapterInlineImplementation(transport);
   }
-}
 
-export function registerFerretDebugAdapter(
-  resolveExecutable: FerretdDebugExecutableResolver,
-  output: ServerOutput,
-  host: DebugAdapterRegistrationHost = vscode.debug,
-): vscode.Disposable {
-  return host.registerDebugAdapterDescriptorFactory(
-    ferretDebugType,
-    new FerretDebugAdapterDescriptorFactory(
-      resolveExecutable,
-      output,
-    ),
-  );
+  public async shutdown(): Promise<void> {
+    const results = await Promise.allSettled([...this.adapters].map(adapter => adapter.shutdown()));
+    for (const result of results) if (result.status === 'rejected') throw result.reason;
+  }
 }

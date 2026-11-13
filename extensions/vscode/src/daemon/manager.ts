@@ -44,6 +44,7 @@ const defaultTiming: DaemonTiming = {
 
 export interface DaemonProcess {
   readonly stderr: Readable | null;
+  readonly pid?: number;
 
   kill(signal?: NodeJS.Signals): boolean;
   once(
@@ -92,10 +93,14 @@ interface ActiveDaemon {
   logReader?: Interface;
   ready: boolean;
   stopping: boolean;
+  usesWorkspaces: boolean;
+  workspaceSync?: Promise<void>;
 }
 
 export class DaemonController implements DaemonConnectionProvider {
   private active: ActiveDaemon | undefined;
+  private startupRevision = 0;
+  private survivingProcess?: Promise<ProcessExit>;
   private desiredRoots = new Set<string>();
   private readonly cleanupTasks = new Set<Promise<void>>();
   private lastError: DaemonError | undefined;
@@ -114,18 +119,25 @@ export class DaemonController implements DaemonConnectionProvider {
   ) {}
 
   public requireConnection(): DaemonConnection {
-    if (this.active?.ready === true) {
+    if (this.active?.ready === true && !this.active.abort.signal.aborted) {
       return this.active.connection;
     }
 
     throw this.lastError ?? unavailableDaemon();
   }
 
-  public start(): Promise<void> {
-    return this.enqueue(() => this.startNow());
+  public start(configPath?: string, executable = this.readExecutable().executable): Promise<void> {
+    const revision = this.startupRevision;
+    return this.enqueue(() => this.startNow(revision, executable, configPath));
   }
 
   public stop(): Promise<void> {
+    this.startupRevision++;
+    // Interrupt readiness and workspace RPCs before joining the lifecycle queue.
+    if (this.active) {
+      this.active.stopping = true;
+      this.active.abort.abort(new DaemonDisposedError());
+    }
     return this.enqueue(() => this.stopNow());
   }
 
@@ -134,7 +146,30 @@ export class DaemonController implements DaemonConnectionProvider {
   ): Promise<void> {
     this.desiredRoots = new Set(roots.map((root) => resolve(root)));
 
-    return this.enqueue(() => this.reconcileWorkspaces());
+    const active = this.active;
+    return active?.usesWorkspaces && !active.stopping
+      ? this.prepareWorkspaces(active.connection.signal) : Promise.resolve();
+  }
+
+  public prepareWorkspaces(signal: AbortSignal): Promise<void> {
+    const active = this.active;
+    if (!active?.ready || active.stopping || active.connection.signal !== signal || signal.aborted) {
+      return Promise.reject(new DaemonDisposedError());
+    }
+    active.usesWorkspaces = true;
+    return active.workspaceSync ??= this.enqueue(async () => {
+      try {
+        let roots: ReadonlySet<string>;
+        do {
+          signal.throwIfAborted();
+          roots = this.desiredRoots;
+          await this.reconcileWorkspaces(active, roots);
+          signal.throwIfAborted();
+        } while (roots !== this.desiredRoots);
+      } finally {
+        active.workspaceSync = undefined;
+      }
+    });
   }
 
   private enqueue(operation: () => Promise<void>): Promise<void> {
@@ -144,40 +179,48 @@ export class DaemonController implements DaemonConnectionProvider {
     return next;
   }
 
-  private async startNow(): Promise<void> {
+  private async startNow(revision: number, executable: string, configPath?: string): Promise<void> {
+    if (revision !== this.startupRevision) throw new DaemonDisposedError();
+    if (this.survivingProcess) throw new Error('The previous Ferret daemon is still stopping.');
     if (this.active !== undefined) {
       return;
     }
 
-    const selection = this.readExecutable();
     let endpoint: DaemonEndpoint | undefined;
     let active: ActiveDaemon | undefined;
+    let connection: DaemonConnection | undefined;
 
     try {
       endpoint = await this.createEndpoint();
+      if (revision !== this.startupRevision) throw new DaemonDisposedError();
       const args = ['serve', '--endpoint', endpoint.cli];
+      if (configPath) args.push('--runtime-config', configPath);
       this.output.info('Starting Ferret daemon');
       this.output.info(`Ferret daemon arguments: ${JSON.stringify(args)}`);
 
+      const abort = new AbortController();
+      connection = this.connect(endpoint.grpc, abort.signal);
       const process = this.createProcess(
-        selection.executable,
+        executable,
         args,
       );
-      const abort = new AbortController();
       const exited = observeExit(process);
       active = {
         abort,
-        connection: this.connect(endpoint.grpc, abort.signal),
+        connection,
         endpoint,
         exited,
         process,
         ready: false,
+        usesWorkspaces: false,
         stopping: false,
       };
       active.logReader = logDaemonOutput(process.stderr, this.output);
       this.active = active;
 
       const info = await this.waitUntilReady(active);
+      active.abort.signal.throwIfAborted();
+      active.connection = { ...active.connection, apiVersion: info.serverInfo?.apiVersion };
       active.ready = true;
       this.lastError = undefined;
       this.output.info(
@@ -186,8 +229,6 @@ export class DaemonController implements DaemonConnectionProvider {
       void active.exited.then((result) =>
         this.handleUnexpectedExit(active!, result),
       );
-
-      await this.reconcileWorkspaces();
     } catch (error) {
       const mapped = mapStartupError(error);
       this.lastError = mapped;
@@ -197,9 +238,11 @@ export class DaemonController implements DaemonConnectionProvider {
           this.active = undefined;
         }
 
-        await this.cleanup(active, false, mapped);
+        await this.cleanup(active, active.ready, mapped);
+        this.workspaceRegistry.clear();
       } else {
         try {
+          connection?.channel.close();
           await endpoint?.dispose();
         } catch (cleanupError) {
           this.output.error(
@@ -243,6 +286,7 @@ export class DaemonController implements DaemonConnectionProvider {
     let lastError: unknown;
 
     while (Date.now() < deadline) {
+      active.abort.signal.throwIfAborted();
       // A connection attempted before the named pipe exists can stay unavailable.
       // Retry only the startup handshake. The first successful channel owns all RPCs.
       if (lastError !== undefined) {
@@ -299,14 +343,9 @@ export class DaemonController implements DaemonConnectionProvider {
     );
   }
 
-  private async reconcileWorkspaces(): Promise<void> {
-    const active = this.active;
-    if (active?.ready !== true || active.abort.signal.aborted) {
-      return;
-    }
-
+  private async reconcileWorkspaces(active: ActiveDaemon, roots: ReadonlySet<string>): Promise<void> {
     for (const workspace of this.workspaceRegistry.workspaces) {
-      if (this.desiredRoots.has(workspace.root)) {
+      if (roots.has(workspace.root)) {
         continue;
       }
 
@@ -319,6 +358,7 @@ export class DaemonController implements DaemonConnectionProvider {
             ),
           active.abort.signal,
         );
+        active.abort.signal.throwIfAborted();
         this.workspaceRegistry.delete(workspace.root);
       } catch (error) {
         if (!active.abort.signal.aborted) {
@@ -329,7 +369,7 @@ export class DaemonController implements DaemonConnectionProvider {
       }
     }
 
-    for (const root of [...this.desiredRoots].sort()) {
+    for (const root of [...roots].sort()) {
       if (this.workspaceRegistry.get(root) !== undefined) {
         continue;
       }
@@ -340,6 +380,7 @@ export class DaemonController implements DaemonConnectionProvider {
             active.connection.workspaces.open({ root }, callback),
           active.abort.signal,
         );
+        active.abort.signal.throwIfAborted();
         const workspace = response.workspace;
         if (
           workspace?.id?.value === undefined ||
@@ -452,6 +493,10 @@ export class DaemonController implements DaemonConnectionProvider {
         );
       }
       if (!(await waitForExit(active.exited, this.timing.shutdownTimeout))) {
+        this.survivingProcess = active.exited;
+        void active.exited.then(() => {
+          if (this.survivingProcess === active.exited) this.survivingProcess = undefined;
+        });
         this.output.error('Ferret daemon did not exit after termination');
       }
     }
@@ -498,9 +543,9 @@ function observeExit(process: DaemonProcess): Promise<ProcessExit> {
       }
     };
 
-    process.once('error', (error) =>
-      finish({ code: null, error, signal: null }),
-    );
+    process.once('error', (error) => {
+      if (process.pid === undefined) finish({ code: null, error, signal: null });
+    });
     process.once('exit', (code, signal) =>
       finish({ code, signal }),
     );

@@ -1,140 +1,223 @@
 import * as assert from 'node:assert/strict';
-
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import * as vscode from 'vscode';
 
-import {
-  type DebugAdapterRegistrationHost,
-  FerretDebugAdapterDescriptorFactory,
-  ferretDebugType,
-  registerFerretDebugAdapter,
-} from '../debug/adapter';
-import type { FerretdExecutable } from '../ferretd';
-import type { ServerOutput } from '../server';
+import { FerretDebugAdapterDescriptorFactory } from '../debug/adapter';
+import { DapFrameReader } from '../debug/framing';
+import { FerretDebugTransport } from '../debug/transport';
+import { RuntimeCoordinator } from '../runtime/coordinator';
 
-class FakeOutput implements ServerOutput {
-  public readonly errors: Array<{
-    readonly args: readonly unknown[];
-    readonly message: string;
-  }> = [];
-  public readonly infos: string[] = [];
+const output = { info() {}, error() {}, show() {} };
+const executable = async () => ({ executable: '/ferretd', source: 'configured' as const });
+const initialize = { seq: 1, type: 'request', command: 'initialize', arguments: { custom: '🦦' } };
+const frame = (body: object) => {
+  const bytes = Buffer.from(JSON.stringify(body));
+  return Buffer.concat([Buffer.from(`Content-Length: ${bytes.length}\r\n\r\n`), bytes]);
+};
 
-  public error(message: string, ...args: unknown[]): void {
-    this.errors.push({ args, message });
-  }
-
-  public info(message: string): void {
-    this.infos.push(message);
-  }
-
-  public show(): void {}
-}
-
-class FakeRegistrationHost implements DebugAdapterRegistrationHost {
-  public debugType: string | undefined;
-  public disposed = false;
-  public factory: vscode.DebugAdapterDescriptorFactory | undefined;
-
-  public registerDebugAdapterDescriptorFactory(
-    debugType: string,
-    factory: vscode.DebugAdapterDescriptorFactory,
-  ): vscode.Disposable {
-    assert.strictEqual(this.factory, undefined);
-    this.debugType = debugType;
-    this.factory = factory;
-
-    return {
-      dispose: () => {
-        this.disposed = true;
-        this.factory = undefined;
-      },
-    };
-  }
-}
-
-suite('Ferret debug adapter registration', () => {
-  test('resolves a fresh executable descriptor for every session', async () => {
-    const output = new FakeOutput();
-    const selection = configuredExecutable();
-    let resolveCalls = 0;
-    const factory = new FerretDebugAdapterDescriptorFactory(
-      async () => {
-        resolveCalls += 1;
-        return selection;
-      },
-      output,
-    );
-
-    const first = await factory.createDebugAdapterDescriptor();
-    const second = await factory.createDebugAdapterDescriptor();
-
-    assert.ok(first instanceof vscode.DebugAdapterExecutable);
-    assert.ok(second instanceof vscode.DebugAdapterExecutable);
-    assert.notStrictEqual(first, second);
-    assert.strictEqual(resolveCalls, 2);
-    assert.strictEqual(first.command, selection.executable);
-    assert.deepStrictEqual(first.args, ['dap']);
-    assert.strictEqual(first.options, undefined);
-    assert.strictEqual(second.command, selection.executable);
-    assert.deepStrictEqual(second.args, ['dap']);
-    assert.deepStrictEqual(output.errors, []);
-    assert.ok(
-      output.infos.includes(
-        'Ferret debug adapter source: configured override',
-      ),
-    );
-    assert.ok(
-      output.infos.includes('Ferret debug adapter arguments: ["dap"]'),
-    );
+suite('owned Ferret debug adapter', () => {
+  test('frames UTF-8 by bytes and transparently forwards split and coalesced messages', async () => {
+    const child = new DebugChild();
+    let closed = 0;
+    const adapter = new FerretDebugTransport(executable, output, () => { closed++; }, () => child.process);
+    const messages: object[] = [];
+    adapter.onDidSendMessage(message => messages.push(message));
+    adapter.handleMessage(initialize);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(child.stdin.read(), frame(initialize));
+    const reply = { seq: 2, type: 'response', request_seq: 1, success: true, body: { text: '🦦' } };
+    const reverse = { seq: 3, type: 'request', command: 'runInTerminal', arguments: { custom: true } };
+    const packet = Buffer.concat([frame(reply), frame(reverse)]);
+    const cut = packet.indexOf(Buffer.from('🦦')) + 1;
+    child.stdout.write(packet.subarray(0, cut));
+    child.stdout.write(packet.subarray(cut));
+    assert.deepEqual(messages, [reply, reverse]);
+    adapter.dispose();
+    const closing = adapter.shutdown();
+    assert.equal(closed, 0);
+    child.emit('close', 0);
+    await closing;
+    adapter.dispose();
+    assert.equal(closed, 1);
   });
 
-  test('logs and preserves actionable resolution failures', async () => {
-    const output = new FakeOutput();
-    const failure = new Error(
-      'Correct ferret.server.path before starting Ferret debugging.',
-    );
-    const factory = new FerretDebugAdapterDescriptorFactory(
-      async () => {
-        throw failure;
-      },
-      output,
-    );
-
-    await assert.rejects(
-      factory.createDebugAdapterDescriptor(),
-      (error: unknown) => error === failure,
-    );
-    assert.deepStrictEqual(output.errors, [
-      {
-        message: 'Starting Ferret debug adapter failed',
-        args: [failure],
-      },
-    ]);
+  test('releases failed resolution and confirmed failed spawn, and waits for stream failure teardown', async () => {
+    for (const failure of ['resolve', 'spawn', 'stream']) {
+      const child = new DebugChild();
+      let closed = 0;
+      const adapter = new FerretDebugTransport(async () => {
+        if (failure === 'resolve') throw new Error('missing executable');
+        return executable();
+      }, output, () => { closed++; }, () => child.process);
+      const messages: object[] = [];
+      adapter.onDidSendMessage(message => messages.push(message));
+      adapter.handleMessage(initialize);
+      await new Promise(resolve => setImmediate(resolve));
+      if (failure !== 'resolve') {
+        if (failure === 'spawn') child.emit('error', new Error('spawn ENOENT'));
+        else child.stdout.emit('error', new Error('stream broken'));
+        assert.equal(closed, 0);
+        child.emit('close');
+      }
+      await adapter.shutdown();
+      assert.equal(closed, 1);
+      assert.ok(messages.some(message => 'success' in message && message.success === false));
+    }
+    assert.throws(() => new DapFrameReader().push(Buffer.from('Content-Length: -1\r\n\r\n'), () => {}));
   });
 
-  test('registers the ferret factory and releases the registration', () => {
-    const output = new FakeOutput();
-    const host = new FakeRegistrationHost();
-    const registration = registerFerretDebugAdapter(
-      async () => configuredExecutable(),
-      output,
-      host,
-    );
+  test('stop during executable resolution prevents spawn and holds admission until resolution settles', async () => {
+    let resolve!: (value: Awaited<ReturnType<typeof executable>>) => void;
+    const resolving = new Promise<Awaited<ReturnType<typeof executable>>>(done => { resolve = done; });
+    let ended = false;
+    let spawned = false;
+    const adapter = new FerretDebugTransport(() => resolving, output, () => { ended = true; }, () => {
+      spawned = true;
+      return new DebugChild().process;
+    });
+    adapter.handleMessage(initialize);
+    const shutdown = adapter.shutdown();
+    assert.equal(ended, false);
+    resolve(await executable());
+    await shutdown;
+    assert.equal(spawned, false);
+    assert.equal(ended, true);
+  });
 
-    assert.strictEqual(host.debugType, ferretDebugType);
-    assert.ok(
-      host.factory instanceof FerretDebugAdapterDescriptorFactory,
-    );
-    assert.strictEqual(host.disposed, false);
+  test('retains the reservation if forced termination fails until actual close', async () => {
+    const child = new DebugChild();
+    const runtime = new RuntimeCoordinator({
+      start: async () => {}, stop: async () => {}, requireConnection: () => { throw new Error('unused'); },
+    }, { entered: '' }, () => '');
+    const lease = runtime.admit();
+    const adapter = new FerretDebugTransport(executable, output, lease.release, () => child.process, 0);
+    adapter.handleMessage(initialize);
+    await new Promise(resolve => setImmediate(resolve));
+    await assert.rejects(adapter.shutdown(), /cleanup has not completed/);
+    assert.equal(child.kills, 1);
+    await assert.rejects(runtime.reload(), /finish/);
+    child.emit('close');
+    await runtime.reload();
+    await runtime.shutdown();
+  });
 
-    registration.dispose();
-    assert.strictEqual(host.disposed, true);
-    assert.strictEqual(host.factory, undefined);
+  test('assembles a fragmented multi-megabyte payload and reads the following frame', () => {
+    const first = { value: '🦦'.repeat(600_000) };
+    const next = { value: 'next' };
+    const bytes = Buffer.concat([frame(first), frame(next)]);
+    const messages: object[] = [];
+    const reader = new DapFrameReader();
+    const split = bytes.indexOf('\r\n\r\n') + 1;
+    reader.push(bytes.subarray(0, split), message => messages.push(message));
+    reader.push(bytes.subarray(split, split + 2), message => messages.push(message));
+    for (let i = split + 2; i < bytes.length; i += 997) {
+      reader.push(bytes.subarray(i, i + 997), message => messages.push(message));
+    }
+    assert.deepEqual(messages, [first, next]);
+  });
+
+  test('first ordinary terminate forwards the request and forces a stalled child to close', async () => {
+    const child = new DebugChild();
+    let closed = 0;
+    const killed = new Promise<void>(resolve => child.once('killed', resolve));
+    const adapter = new FerretDebugTransport(executable, output, () => { closed++; }, () => child.process, 0);
+    const spawned = new Promise<void>(resolve => child.stdin.once('readable', resolve));
+    adapter.handleMessage(initialize);
+    await spawned;
+    child.stdin.read();
+    const terminate = { seq: 2, type: 'request', command: 'terminate' };
+    adapter.handleMessage(terminate);
+    assert.deepEqual(child.stdin.read(), frame(terminate));
+    await killed;
+    assert.ok(child.stdin.writableEnded);
+    assert.equal(closed, 0);
+    child.emit('close', 0);
+    await adapter.shutdown();
+    assert.equal(closed, 1);
+  });
+
+  test('forwards restart, terminate replies, and disconnect in order during graceful Stop', async () => {
+    const child = new DebugChild();
+    const adapter = new FerretDebugTransport(executable, output, () => {}, () => child.process);
+    const messages: object[] = [];
+    adapter.onDidSendMessage(message => messages.push(message));
+    const spawned = new Promise<void>(resolve => child.stdin.once('readable', resolve));
+    adapter.handleMessage(initialize);
+    await spawned;
+    child.stdin.read();
+    const restart = { seq: 2, type: 'request', command: 'terminate', arguments: { restart: true } };
+    const stop = { seq: 3, type: 'request', command: 'terminate' };
+    const disconnect = { seq: 4, type: 'request', command: 'disconnect' };
+    const refused = { type: 'response', request_seq: 2, command: 'terminate', success: false };
+    const stopped = { type: 'response', request_seq: 3, command: 'terminate', success: true };
+    const terminated = { type: 'event', event: 'terminated' };
+    adapter.handleMessage(restart);
+    child.stdout.write(frame(refused));
+    adapter.handleMessage(stop);
+    child.stdout.write(Buffer.concat([frame(stopped), frame(terminated)]));
+    assert.equal(child.stdin.writableEnded, false);
+    adapter.handleMessage(disconnect);
+    assert.deepEqual(child.stdin.read(), Buffer.concat([frame(restart), frame(stop), frame(disconnect)]));
+    assert.deepEqual(messages, [refused, stopped, terminated]);
+    child.emit('close');
+    await adapter.shutdown();
+    assert.equal(child.kills, 0);
+  });
+
+  test('protocol Stop before executable resolution suppresses spawn', async () => {
+    let ready!: (value: Awaited<ReturnType<typeof executable>>) => void;
+    const resolving = new Promise<Awaited<ReturnType<typeof executable>>>(resolve => { ready = resolve; });
+    let closed!: () => void;
+    const ended = new Promise<void>(resolve => { closed = resolve; });
+    let spawned = false;
+    const adapter = new FerretDebugTransport(() => resolving, output, closed, () => {
+      spawned = true;
+      return new DebugChild().process;
+    });
+    adapter.handleMessage(initialize);
+    adapter.handleMessage({ seq: 2, type: 'request', command: 'terminate' });
+    ready(await executable());
+    await ended;
+    await adapter.shutdown();
+    assert.equal(spawned, false);
+  });
+
+  test('owns overlapping descriptors with the same session ID and rejects launch bypasses', async () => {
+    const runtime = new RuntimeCoordinator({
+      start: async () => {}, stop: async () => {}, requireConnection: () => { throw new Error('unused'); },
+    }, { entered: '' }, () => '');
+    const resolvers: Array<(value: Awaited<ReturnType<typeof executable>>) => void> = [];
+    const factory = new FerretDebugAdapterDescriptorFactory(() => new Promise(resolve => resolvers.push(resolve)), output, runtime);
+    const session = (id: string, configuration = {}) => ({ id, configuration }) as vscode.DebugSession;
+    assert.throws(() => factory.createDebugAdapterDescriptor(session('server', { debugServer: 22 })), /debugServer/);
+    for (const options of [{ runtimeName: 'local' }, { RunTimeName: 'local' }, { runtimeName: '', RuntimeName: '' }, { RUNTIMENAME: 5 }]) {
+      assert.throws(() => factory.createDebugAdapterDescriptor(session('named', options)), /Daemon default|only once/);
+    }
+    assert.equal(resolvers.length, 0);
+    const first = factory.createDebugAdapterDescriptor(session('same'));
+    // VS Code's inline descriptor owns this implementation; its public type is opaque.
+    (first as { implementation: vscode.DebugAdapter }).implementation.dispose();
+    factory.createDebugAdapterDescriptor(session('same'));
+    let stopped = false;
+    const shutdown = factory.shutdown().then(() => { stopped = true; });
+    resolvers[1]!(await executable());
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(stopped, false);
+    await assert.rejects(runtime.reload(), /finish/);
+    resolvers[0]!(await executable());
+    await shutdown;
+    await runtime.reload();
+    await runtime.shutdown();
   });
 });
 
-function configuredExecutable(): FerretdExecutable {
-  return {
-    executable: '/opt/ferret/bin/ferretd',
-    source: 'configured',
-  };
+class DebugChild extends EventEmitter {
+  public readonly stdin = new PassThrough();
+  public readonly stdout = new PassThrough();
+  public readonly stderr = new PassThrough();
+  public get process(): ChildProcessWithoutNullStreams { return this as unknown as ChildProcessWithoutNullStreams; }
+  public kills = 0;
+  public kill(): boolean { this.kills++; this.emit('killed'); return true; }
 }

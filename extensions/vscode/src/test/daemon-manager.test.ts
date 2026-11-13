@@ -26,6 +26,7 @@ import type {
   DaemonGeneratedClient,
   WorkspaceGeneratedClient,
 } from '../daemon/types';
+import { listRuntimes } from '../runtime/catalog';
 import type { ServerOutput } from '../server';
 
 const timing: DaemonTiming = {
@@ -111,6 +112,8 @@ suite('Ferret daemon lifecycle', () => {
     const added = join(root, 'new');
     await controller.updateWorkspaceFolders([root, root, app]);
     await controller.start();
+    assert.deepEqual(state.openRoots, []);
+    await controller.prepareWorkspaces(controller.requireConnection().signal);
     process.stderr.write('daemon detail\n');
     await immediate();
 
@@ -149,6 +152,85 @@ suite('Ferret daemon lifecycle', () => {
     assert.deepStrictEqual(invalidationOrder, ['generation', 'workspace']);
   });
 
+  test('catalog discovery completes while workspace opening for concurrent Runs is held', async () => {
+    const process = new FakeProcess();
+    const state = rpcState();
+    const root = resolve('workspace');
+    let opened!: () => void, completeOpen!: () => void;
+    const opening = new Promise<void>(resolve => { opened = resolve; });
+    const controller = new DaemonController(configuration, new FakeOutput(), () => process, async () => fakeEndpoint(),
+      (_target, signal) => {
+        const live = successfulConnection(process, signal, state, { major: 1, minor: 3 });
+        live.daemon.listRuntimes = (_request, _metadata, _options, callback) => {
+          callback(null, { defaultRuntime: 'local', runtimes: [{ name: 'local', label: 'Local', provider: 'native' }] });
+          return fakeCall;
+        };
+        const open = live.workspaces.open;
+        live.workspaces.open = (request, callback) => {
+          opened();
+          completeOpen = () => open(request, callback);
+          return fakeCall;
+        };
+        return live;
+      }, timing);
+    try {
+      await controller.updateWorkspaceFolders([root]);
+      await controller.start();
+      const live = controller.requireConnection();
+      assert.equal((await listRuntimes(live)).defaultRuntime, 'local');
+      assert.ok(!controller.workspaceRegistry.workspaces.length);
+      const first = controller.prepareWorkspaces(live.signal);
+      const second = controller.prepareWorkspaces(live.signal);
+      await opening;
+      assert.equal((await listRuntimes(live)).defaultRuntime, 'local');
+      assert.equal(controller.workspaceRegistry.workspaces.length, 0);
+      completeOpen();
+      await Promise.all([first, second]);
+      assert.deepEqual(state.openRoots, [root]);
+    } finally {
+      await controller.stop();
+    }
+  });
+
+  test('an Open response delivered during daemon loss cannot repopulate the registry', async () => {
+    const process = new FakeProcess();
+    const state = rpcState();
+    const controller = new DaemonController(configuration, new FakeOutput(), () => process, async () => fakeEndpoint(),
+      (_target, signal) => {
+        const live = successfulConnection(process, signal, state);
+        const open = live.workspaces.open;
+        live.workspaces.open = (request, callback) => {
+          process.exit(1);
+          return open(request, callback);
+        };
+        return live;
+      }, timing);
+    await controller.updateWorkspaceFolders([resolve('workspace')]);
+    await controller.start();
+    await assert.rejects(controller.prepareWorkspaces(controller.requireConnection().signal));
+    assert.deepEqual(controller.workspaceRegistry.workspaces, []);
+    await controller.stop();
+  });
+
+  test('supersedes startup during endpoint preparation without spawning the retired process', async () => {
+    let preparing!: () => void, release!: () => void;
+    const entered = new Promise<void>(resolve => { preparing = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const endpoint = fakeEndpoint();
+    let spawned = false;
+    const controller = new DaemonController(configuration, new FakeOutput(), () => {
+      spawned = true;
+      return new FakeProcess();
+    }, async () => { preparing(); await gate; return endpoint; });
+    const rejected = assert.rejects(controller.start());
+    await entered;
+    const stopped = controller.stop();
+    release();
+    await Promise.all([rejected, stopped]);
+    assert.equal(spawned, false);
+    assert.equal(endpoint.disposeCalls, 1);
+  });
+
   test('marks unexpected exit unavailable without restarting', async () => {
     const process = new FakeProcess();
     const endpoint = fakeEndpoint();
@@ -168,6 +250,7 @@ suite('Ferret daemon lifecycle', () => {
 
     await controller.updateWorkspaceFolders(['/workspace']);
     await controller.start();
+    await controller.prepareWorkspaces(controller.requireConnection().signal);
     const invalidationOrder: string[] = [];
     const generation = controller.requireConnection().signal;
     generation.addEventListener(
@@ -298,6 +381,7 @@ suite('Ferret daemon lifecycle', () => {
     try {
       await controller.start();
       await controller.updateWorkspaceFolders([resolve('workspace')]);
+      await controller.prepareWorkspaces(controller.requireConnection().signal);
       assert.strictEqual(failed.channelCloseCalls, 1);
       assert.strictEqual(failed.getInfoCalls, 1);
       assert.deepStrictEqual(ready.openRoots, [resolve('workspace')]);
@@ -439,6 +523,7 @@ function connection(
   getInfo: DaemonGeneratedClient['getInfo'],
 ): DaemonConnection {
   const daemon: DaemonGeneratedClient = {
+    listRuntimes: () => { throw new Error('Unexpected discovery'); },
     getInfo: (request, metadata, options, callback) => {
       state.getInfoCalls += 1;
       return getInfo(request, metadata, options, callback);

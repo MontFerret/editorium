@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { ServerConfiguration } from './config';
 import type {
   LanguageClientFactory,
@@ -27,7 +28,7 @@ interface ActiveClient {
 export class LanguageServerController {
   private active: ActiveClient | undefined;
   private pending: Promise<void> = Promise.resolve();
-  private restarting: Promise<void> | undefined;
+  private restarting?: { configuration: ServerConfiguration; done: Promise<void> };
 
   public constructor(
     private readonly readConfiguration: () => ServerConfiguration,
@@ -41,20 +42,21 @@ export class LanguageServerController {
   }
 
   public restart(): Promise<void> {
-    if (this.restarting !== undefined) {
-      return this.restarting;
+    const configuration = this.readConfiguration();
+    if (this.restarting && isDeepStrictEqual(this.restarting.configuration, configuration)) {
+      return this.restarting.done;
     }
 
     const restart = this.enqueue(async () => {
       this.output.info('Ferret language server restart requested');
       await this.stopNow();
-      await this.startNow();
+      await this.startNow(configuration);
     });
-    this.restarting = restart.finally(() => {
-      this.restarting = undefined;
+    const done = restart.finally(() => {
+      if (this.restarting?.done === done) this.restarting = undefined;
     });
-
-    return this.restarting;
+    this.restarting = { configuration, done };
+    return done;
   }
 
   public stop(): Promise<void> {
@@ -68,12 +70,11 @@ export class LanguageServerController {
     return next;
   }
 
-  private async startNow(): Promise<void> {
+  private async startNow(configuration = this.readConfiguration()): Promise<void> {
     if (this.active !== undefined) {
       return;
     }
 
-    const configuration = this.readConfiguration();
     const generation: Generation = { stopping: false };
     const reportFailure = (error: unknown): Promise<void> => {
       if (generation.stopping) {

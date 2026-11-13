@@ -302,6 +302,9 @@ suite('Ferret declarative language support', () => {
         title: 'Show Output',
         category: 'Ferret',
       },
+      { command: 'ferret.selectRuntime', title: 'Select Runtime', category: 'Ferret' },
+      { command: 'ferret.reloadRuntimes', title: 'Reload Runtimes', category: 'Ferret' },
+      { command: 'ferret.retryRuntimeDiscovery', title: 'Retry Runtime Discovery', category: 'Ferret' },
     ]);
     assert.deepStrictEqual(manifest.contributes.menus, {
       'editor/title': [
@@ -326,6 +329,8 @@ suite('Ferret declarative language support', () => {
     });
 
     const properties = manifest.contributes.configuration.properties;
+    const runtime = properties['ferret.runtime.configPath'];
+    assert.deepEqual([runtime?.type, runtime?.default, runtime?.scope], ['string', '', 'window']);
     assert.deepStrictEqual(
       {
         type: properties['ferret.server.path']?.type,

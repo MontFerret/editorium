@@ -1,7 +1,10 @@
+import { RuntimeCoordinator } from '../runtime/coordinator';
+import type { DaemonConnection } from '../daemon/types';
 import * as assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 
 import * as vscode from 'vscode';
+import { FerretServerController } from '../controller';
 
 import { FerretWorkspaceRegistry } from '../daemon/workspaces';
 import {
@@ -23,6 +26,8 @@ import type {
 
 class FakeDaemon implements ExecutionDaemon {
   private generation = new AbortController();
+
+  public async prepareWorkspaces(): Promise<void> {}
 
   public requireConnection(): { readonly signal: AbortSignal } {
     return { signal: this.generation.signal };
@@ -116,6 +121,7 @@ class FakeExecutionClient implements ExecutionClient {
   public createSessionGate: Promise<void> | undefined;
   public createSessionError: Error | undefined;
   public rejectCleanup = false;
+  public closeSessionGate?: Promise<void>;
   public runError: Error | undefined;
 
   private executionCount = 0;
@@ -209,6 +215,7 @@ class FakeExecutionClient implements ExecutionClient {
   }
 
   public async closeSession(sessionId: string): Promise<void> {
+    await this.closeSessionGate;
     this.calls.push(`close-session:${sessionId}`);
     this.closeSessionIds.push(sessionId);
     if (this.rejectCleanup) {
@@ -254,6 +261,7 @@ interface MutableDocument {
 }
 
 interface Fixture {
+  readonly runtime: RuntimeCoordinator;
   readonly client: FakeExecutionClient;
   readonly daemon: FakeDaemon;
   readonly documents: vscode.EventEmitter<vscode.TextDocument>;
@@ -303,7 +311,7 @@ suite('Ferret execution manager', () => {
       assert.ok(first.startedAt <= afterStart);
       assert.strictEqual(fixture.manager.getActive(document.uri), first);
       assert.strictEqual(fixture.manager.activeCount, 1);
-      assert.strictEqual(changes[0]?.kind, 'started');
+      assert.deepStrictEqual(changes.map(event => event.kind), ['preparing', 'started', 'preparation-ended']);
 
       fixture.client.send(first.id, 'created');
       await settle();
@@ -377,6 +385,63 @@ suite('Ferret execution manager', () => {
       await disposeFixture(fixture);
     }
   });
+
+  test('holds admission through late acquisition, cancellation, and delayed close', async () => {
+    const fixture = createFixture();
+    const document = asTextDocument(ferretDocument('/workspace/pending.fql'));
+    const acquire = deferred();
+    const close = deferred();
+    fixture.client.createSessionGate = acquire.promise;
+    fixture.client.closeSessionGate = close.promise;
+    const run = fixture.manager.run(document);
+    await settle();
+    await assert.rejects(fixture.runtime.reload(), /finish/);
+    const cancel = fixture.manager.cancel(document.uri);
+    acquire.resolve();
+    await settle();
+    await assert.rejects(fixture.runtime.reload(), /finish/);
+    const rejected = assert.rejects(run, /cancelled/);
+    close.resolve();
+    await Promise.all([rejected, cancel]);
+    assert.deepEqual(fixture.client.closeSessionIds, ['session-1']);
+    assert.ok(!fixture.client.calls.includes('create-execution'));
+    await fixture.runtime.reload();
+    await disposeFixture(fixture);
+  });
+
+  for (const hung of [true, false]) {
+    test(`deactivation settles ${hung ? 'an acquisition blocked until daemon abort' : 'a session arriving during graceful cleanup'}`, async () => {
+      const fixture = createFixture();
+      const entered = deferred(), acquire = deferred(), debug = deferred();
+      const signal = fixture.daemon.requireConnection().signal;
+      const create = fixture.client.createSession.bind(fixture.client);
+      fixture.client.createSession = async (...args) => {
+        entered.resolve();
+        if (hung) {
+          await new Promise<void>((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+        } else {
+          await acquire.promise;
+        }
+        return create(...args);
+      };
+      const controller = new FerretServerController({
+        start: async () => {}, stop: async () => {}, restart: async () => {},
+      }, { restartExecutable: async () => {}, shutdown: () => fixture.runtime.shutdown() }, () => 'ferretd');
+      const run = assert.rejects(fixture.manager.run(asTextDocument(ferretDocument('/workspace/late.fql'))));
+      await entered.promise;
+      fixture.runtime.closeAdmissions();
+      const stopped = controller.stop(fixture.manager.dispose(), debug.promise, hung ? 0 : 1500);
+      assert.throws(() => fixture.runtime.admit(), /shutting down/);
+      acquire.resolve();
+      await run;
+      debug.resolve();
+      await stopped;
+      assert.equal(signal.aborted, true);
+      assert.deepEqual(fixture.client.closeSessionIds, hung ? [] : ['session-1']);
+      assert.ok(!fixture.client.calls.includes('create-execution'));
+      fixture.documents.dispose();
+    });
+  }
 
   test('rejects a document changed while Session creation is pending', async () => {
     const fixture = createFixture();
@@ -493,8 +558,8 @@ suite('Ferret execution manager', () => {
       );
 
       assert.strictEqual(fixture.manager.activeCount, 0);
-      assert.strictEqual(changes.length, 1);
-      const change = changes[0];
+      assert.deepStrictEqual(changes.map(event => event.kind), ['preparing', 'start-failed', 'preparation-ended']);
+      const change = changes[1];
       assert.ok(change?.kind === 'start-failed');
       assert.strictEqual(
         change.documentUri.toString(),
@@ -858,15 +923,20 @@ function createFixture(): Fixture {
   const output = new FakeOutput();
   const registry = new FerretWorkspaceRegistry();
   registry.set({ id: 'workspace-1', root: '/workspace' });
+  const runtime = new RuntimeCoordinator({
+    start: async () => {}, stop: async () => { daemon.replace(); },
+    requireConnection: () => daemon.requireConnection() as DaemonConnection,
+  }, { entered: '' }, () => '', async () => ({ defaultRuntime: 'local', runtimes: [{ name: 'local', label: 'Local', provider: 'native' }] }));
   const manager = new FerretExecutionManager(
     daemon,
     client,
     registry,
     output,
+    runtime,
     { onDidSaveTextDocument: documents.event },
   );
 
-  return { client, daemon, documents, manager, output, registry };
+  return { runtime, client, daemon, documents, manager, output, registry };
 }
 
 async function disposeFixture(fixture: Fixture): Promise<void> {

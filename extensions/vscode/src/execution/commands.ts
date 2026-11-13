@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
+import { readRuntimeSelector } from '../runtime/selector';
 
+import { RuntimeLaunchError } from '../runtime/errors';
 import { DaemonError } from '../daemon/errors';
 import { isFerretDocument } from '../language-client';
 import {
@@ -37,7 +39,7 @@ export interface ExecutionCommandManager {
 
   cancel(documentUri: vscode.Uri): Promise<void>;
   isRunning(documentUri: vscode.Uri): boolean;
-  run(document: vscode.TextDocument): Promise<unknown>;
+  run(document: vscode.TextDocument, parameters?: Readonly<Record<string, unknown>>, selector?: unknown): Promise<unknown>;
 }
 
 export interface ExecutionCommandOutput {
@@ -49,7 +51,7 @@ export interface ExecutionCommandHost {
   onDidChangeActiveEditor(listener: () => void): vscode.Disposable;
   registerCommand(
     command: string,
-    handler: () => Promise<void>,
+    handler: (options?: unknown) => Promise<void>,
   ): vscode.Disposable;
   setContext(key: string, value: boolean): Thenable<unknown>;
   showErrorMessage(message: string): Thenable<unknown>;
@@ -70,7 +72,7 @@ export class ExecutionCommandController implements vscode.Disposable {
     private readonly host: ExecutionCommandHost = vscodeExecutionCommandHost,
   ) {
     this.disposables = [
-      this.host.registerCommand(runFileCommand, () => this.runFile()),
+      this.host.registerCommand(runFileCommand, options => this.runFile(options)),
       this.host.registerCommand(cancelExecutionCommand, () =>
         this.cancelExecution(),
       ),
@@ -96,7 +98,7 @@ export class ExecutionCommandController implements vscode.Disposable {
     this.queueContextUpdate(false);
   }
 
-  private async runFile(): Promise<void> {
+  private async runFile(options?: unknown): Promise<void> {
     const document = this.host.getActiveDocument();
     if (document === undefined || !isFerretDocument(document)) {
       await this.showError(invalidTargetMessage);
@@ -132,7 +134,8 @@ export class ExecutionCommandController implements vscode.Disposable {
     }
 
     try {
-      await this.manager.run(document);
+      const selector = readRuntimeSelector(options);
+      await this.manager.run(document, undefined, selector);
     } catch (error) {
       await this.reportRunError(error);
     }
@@ -181,6 +184,10 @@ export class ExecutionCommandController implements vscode.Disposable {
   }
 
   private async reportRunError(error: unknown): Promise<void> {
+    if (error instanceof RuntimeLaunchError) {
+      void this.showError(error.message);
+      return;
+    }
     if (error instanceof ExecutionManagerError) {
       switch (error.code) {
         case 'unsupported-document':

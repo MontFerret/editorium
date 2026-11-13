@@ -1,6 +1,7 @@
 import { dirname, extname } from 'node:path';
 
 import * as vscode from 'vscode';
+import { readRuntimeSelector } from '../runtime/selector';
 
 import { languageId } from '../config';
 import { ferretDebugType } from './adapter';
@@ -42,6 +43,7 @@ export class FerretDebugConfigurationProvider
   public constructor(
     private readonly host: FerretDebugConfigurationHost =
       vscodeFerretDebugConfigurationHost,
+    private readonly checkLaunch?: (selector: unknown) => void,
   ) {}
 
   public provideDebugConfigurations(): vscode.DebugConfiguration[] {
@@ -60,6 +62,7 @@ export class FerretDebugConfigurationProvider
     _folder: vscode.WorkspaceFolder | undefined,
     debugConfiguration: vscode.DebugConfiguration,
   ): Promise<vscode.DebugConfiguration | undefined> {
+    if ('debugServer' in debugConfiguration) return this.reject('Remove debugServer to use the owned Ferret debug adapter.');
     if (isCurrentFileConfiguration(debugConfiguration)) {
       return this.resolveCurrentFileConfiguration(debugConfiguration);
     }
@@ -88,6 +91,12 @@ export class FerretDebugConfigurationProvider
       return this.reject(unsuitableProgramMessage);
     }
 
+    try {
+      if ('debugServer' in debugConfiguration) throw new Error('Remove debugServer to use the owned Ferret debug adapter.');
+      this.checkLaunch?.(readRuntimeSelector(debugConfiguration));
+    } catch (error) {
+      return this.reject(error instanceof Error ? error.message : String(error));
+    }
     return debugConfiguration;
   }
 
@@ -121,20 +130,21 @@ export class FerretDebugConfigurationProvider
   private async reject(
     message: string,
   ): Promise<vscode.DebugConfiguration | undefined> {
-    await this.host.showErrorMessage(message);
+    void this.host.showErrorMessage(message);
 
     return undefined;
   }
 }
 
 export function registerFerretDebugConfigurationProvider(
+  checkLaunch: (selector: unknown) => void,
   registrationHost: DebugConfigurationRegistrationHost = vscode.debug,
   configurationHost: FerretDebugConfigurationHost =
     vscodeFerretDebugConfigurationHost,
 ): vscode.Disposable {
   return registrationHost.registerDebugConfigurationProvider(
     ferretDebugType,
-    new FerretDebugConfigurationProvider(configurationHost),
+    new FerretDebugConfigurationProvider(configurationHost, checkLaunch),
     vscode.DebugConfigurationProviderTriggerKind.Initial,
   );
 }

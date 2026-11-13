@@ -1,3 +1,5 @@
+import { FerretDebugAdapterDescriptorFactory } from '../debug/adapter';
+import { RuntimeCoordinator } from '../runtime/coordinator';
 import * as assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { constants } from 'node:fs';
@@ -358,6 +360,8 @@ class RealExecutionFixture {
   public readonly feedbackHost = new IntegrationFeedbackHost();
   public readonly manager: FerretExecutionManager;
   public readonly output = new CaptureOutput();
+  public readonly runtime: RuntimeCoordinator;
+  public selection = '';
   public readonly processes: ChildProcess[] = [];
   public readonly roots: ReadonlyMap<string, string>;
   private disposed = false;
@@ -387,11 +391,13 @@ class RealExecutionFixture {
     this.client = new InstrumentedExecutionClient(
       new FerretExecutionClient(this.daemon),
     );
+    this.runtime = new RuntimeCoordinator(this.daemon, { entered: '' }, () => this.selection);
     this.manager = new FerretExecutionManager(
       this.daemon,
       this.client,
       this.daemon.workspaceRegistry,
       this.output,
+      this.runtime,
     );
     this.feedback = new ExecutionFeedbackController(
       this.manager,
@@ -428,27 +434,10 @@ class RealExecutionFixture {
     );
     try {
       await fixture.daemon.updateWorkspaceFolders([...roots.values()]);
-      await fixture.startDaemon();
-      fixture.daemon.requireConnection();
-      assert.strictEqual(
-        fixture.daemon.workspaceRegistry.workspaces.length,
-        roots.size,
-      );
+      assert.equal(fixture.processes.length, 0);
       return fixture;
     } catch (error) {
       await fixture.dispose();
-      throw error;
-    }
-  }
-
-  public async startDaemon(): Promise<void> {
-    const firstLine = this.output.infos.length;
-    try {
-      await this.daemon.start();
-    } catch (error) {
-      if (error instanceof Error) {
-        error.message += `\nProcess log:\n${this.output.infos.slice(firstLine).join('\n')}`;
-      }
       throw error;
     }
   }
@@ -519,7 +508,7 @@ class RealExecutionFixture {
     await vscode.commands.executeCommand('workbench.action.closeAllEditors');
     this.feedback.dispose();
     await this.manager.dispose();
-    await this.daemon.stop();
+    await this.runtime.shutdown();
     assert.strictEqual(this.manager.activeCount, 0);
     assert.strictEqual(this.client.activeWatches, 0);
     assert.deepStrictEqual(
@@ -594,6 +583,46 @@ suite('ferretd execution integration', () => {
       none: await fixtureSource('no-result.fql'),
       success: await fixtureSource('success.fql'),
     };
+  });
+
+  test('discovers an offline Wire default, blocks both launch paths, and restores built-in Run', async () => {
+    const fixture = await RealExecutionFixture.create(executable, [
+      { name: 'root', files: { 'main.fql': 'RETURN 42\n' } },
+    ]);
+    const config = join(fixture.temporaryRoot, 'runtimes.json');
+    let resolutions = 0;
+    const debug = new FerretDebugAdapterDescriptorFactory(async () => {
+      resolutions++;
+      return { source: 'configured', executable };
+    }, fixture.output, fixture.runtime);
+    const session = (configuration: object) => ({ id: 'guard', configuration }) as vscode.DebugSession;
+    try {
+      const document = await fixture.document('root', 'main.fql');
+      await writeFile(config, JSON.stringify({ defaultRuntime: 'offline', runtimes: [{
+        name: 'offline', label: 'Offline', provider: 'wire', endpoint: 'tcp://127.0.0.1:1', insecure: true,
+      }] }));
+      fixture.runtime.save({ entered: config, path: config });
+      await fixture.runtime.reload();
+      assert.equal(fixture.runtime.view.catalog?.defaultRuntime, 'offline');
+      await assert.rejects(fixture.manager.run(document), /Daemon default/);
+      assert.throws(() => debug.createDebugAdapterDescriptor(session({})), /Daemon default/);
+      fixture.selection = 'offline';
+      fixture.runtime.save({ entered: '' });
+      await assert.rejects(fixture.manager.run(document), /Reload/);
+      await fixture.runtime.reload();
+      await assert.rejects(fixture.manager.run(document), /Daemon default/);
+      assert.throws(() => debug.createDebugAdapterDescriptor(session({})), /Daemon default/);
+      fixture.selection = '';
+      await assert.rejects(fixture.manager.run(document, {}, 'local'), /Daemon default/);
+      assert.throws(() => debug.createDebugAdapterDescriptor(session({ runtimeName: 'local' })), /Daemon default/);
+      assert.equal(resolutions, 0);
+      assert.equal(fixture.client.createdSessions.length, 0);
+      const result = await runToTerminal(fixture, document);
+      assert.equal(resultValue(result.change), 42);
+    } finally {
+      await debug.shutdown();
+      await fixture.dispose();
+    }
   });
 
   test('executes, reuses, refreshes, and renders real daemon results', async () => {
@@ -995,12 +1024,11 @@ RETURN [first, second, third]`,
         'A crashed execution must not be recreated automatically',
       );
 
-      await fixture.startDaemon();
+      const recovered = await runToTerminal(fixture, quick);
       const freshWorkspace =
         fixture.daemon.workspaceRegistry.workspaces[0]?.id;
       assert.ok(freshWorkspace);
       assert.notStrictEqual(freshWorkspace, oldWorkspace);
-      const recovered = await runToTerminal(fixture, quick);
       assertFinished(recovered.change, 'completed');
       assert.notStrictEqual(recovered.handle.sessionId, initial.handle.sessionId);
 
@@ -1015,7 +1043,6 @@ RETURN [first, second, third]`,
 
       await replaceDocument(long, 'RETURN "after restart"\n');
       assert.strictEqual(await long.save(), true);
-      await fixture.startDaemon();
       const afterRestart = await runToTerminal(fixture, long);
       assertFinished(afterRestart.change, 'completed');
       assert.strictEqual(resultValue(afterRestart.change), 'after restart');
@@ -1059,6 +1086,7 @@ RETURN [first, second, third]`,
     ]);
 
     try {
+      await Promise.all([first.runtime.catalog(), second.runtime.catalog()]);
       assert.notStrictEqual(first.endpoints[0]?.cli, second.endpoints[0]?.cli);
       await first.dispose();
       second.daemon.requireConnection();
@@ -1110,7 +1138,7 @@ function waitForTerminal(
     manager.onDidChangeExecution,
     (change) => {
       const uri =
-        change.kind === 'start-failed'
+        'documentUri' in change
           ? change.documentUri
           : change.execution.documentUri;
       return (

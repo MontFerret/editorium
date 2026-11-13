@@ -8,6 +8,9 @@ import type {
 } from '@grpc/grpc-js';
 
 import type {
+  ApiVersion,
+  ListRuntimesRequest,
+  ListRuntimesResponse,
   GetInfoRequest,
   GetInfoResponse,
   ShutdownRequest,
@@ -52,6 +55,12 @@ export interface DaemonGeneratedClient {
     metadata: Metadata,
     options: Partial<CallOptions>,
     callback: UnaryCallback<GetInfoResponse>,
+  ): ClientUnaryCall;
+  listRuntimes(
+    request: ListRuntimesRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: UnaryCallback<ListRuntimesResponse>,
   ): ClientUnaryCall;
   shutdown(
     request: ShutdownRequest,
@@ -98,6 +107,7 @@ export interface ResolvedFerretDocument {
 }
 
 export interface DaemonConnection {
+  readonly apiVersion?: ApiVersion;
   readonly channel: Channel;
   readonly daemon: DaemonGeneratedClient;
   readonly executions: ExecutionGeneratedClient;

@@ -15,11 +15,17 @@ ordered lifecycle events. Disposing a watch only stops local observation,
 while `cancelExecution()` separately requests daemon-side cancellation.
 
 `FerretExecutionManager` is the editor-facing owner of these resources. It
-resolves saved, file-backed Ferret documents through the current daemon
-workspace registry and caches one Session per unchanged document. Each call to
+reserves each launch with the window runtime coordinator before starting the
+execution daemon or acquiring a Session. It resolves saved, file-backed Ferret
+documents through the daemon workspace registry and caches one Session per
+unchanged document. Each call to
 `run()` creates a new Execution from that Session, establishes its watch before
 starting it, and keeps at most one extension-managed Execution active for that
 document. Different documents remain independent and may run concurrently.
+
+Cancellation during Session acquisition closes a late Session before the launch
+reservation is released. Reload requires an idle window and refuses while
+launch-owned cleanup is pending. Idle cached Sessions belong to the generation.
 
 Saving a document removes its Session from the reusable cache. An invalidated
 Session that still owns an active immutable Execution is closed after that
