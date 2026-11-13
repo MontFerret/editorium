@@ -56,6 +56,17 @@ func runJetBrainsOperation(ctx context.Context, root, operation string) error {
 			"ferretdIntegrationTest",
 		)
 	case "lint":
+		fixture := filepath.Join(root, "fixtures", "wire-host")
+		files, err := commandOutput(ctx, fixture, nil, "gofmt", "-l", ".")
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(files) != "" {
+			return fmt.Errorf("unformatted Wire fixture files: %s", files)
+		}
+		if err := runCommand(ctx, fixture, []string{"GOWORK=off"}, "go", "vet", "-mod=readonly", "./..."); err != nil {
+			return err
+		}
 		if _, err := syncFerretdProto(ctx, root, false, nil); err != nil {
 			return err
 		}

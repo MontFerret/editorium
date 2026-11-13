@@ -1,11 +1,10 @@
+import java.io.ByteArrayOutputStream
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask
 import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginStructureTask
 import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import java.nio.file.Files
-import java.nio.file.Path
 
 plugins {
     kotlin("jvm")
@@ -126,22 +125,71 @@ tasks {
     }
 }
 
+val wireHostSources = repositoryRoot.dir("fixtures/wire-host")
+val wireHostName = if (System.getProperty("os.name").startsWith("Windows")) "wire-host.exe" else "wire-host"
+val wireHostBinary = layout.buildDirectory.file("test-fixtures/$wireHostName")
+val buildWireHost = tasks.register<Exec>("buildWireHost") {
+    workingDir(wireHostSources)
+    environment("GOWORK", "off")
+    inputs.files(wireHostSources.asFileTree.matching { include("*.go", "go.mod", "go.sum") })
+    inputs.file(repositoryRoot.file("ferretd.json"))
+    inputs.property("os", System.getProperty("os.name"))
+    inputs.property("architecture", System.getProperty("os.arch"))
+    outputs.file(wireHostBinary)
+    commandLine("go", "build", "-mod=readonly", "-o", wireHostBinary.get().asFile, ".")
+}
+
+// Compare the modules actually linked into the two executables, including release builds.
+abstract class VerifyWireHost : DefaultTask() {
+    @get:InputFile abstract val daemon: RegularFileProperty
+    @get:InputFile abstract val fixture: RegularFileProperty
+    @get:Inject abstract val exec: ExecOperations
+
+    private fun modules(file: File): Map<String, String> {
+        val output = ByteArrayOutputStream()
+        exec.exec {
+            commandLine("go", "version", "-m", file)
+            standardOutput = output
+        }
+        return output.toString(Charsets.UTF_8).lineSequence().map { it.trim().split('\t') }
+            .filter { it.size >= 3 && it[0] == "dep" }.associate { it[1] to it[2] }
+    }
+
+    @TaskAction fun verify() {
+        val executable = daemon.get().asFile
+        check(executable.canExecute()) { "FERRETD_TEST_PATH is not executable: $executable" }
+        val expected = modules(executable)
+        val actual = modules(fixture.get().asFile)
+        for (module in listOf("github.com/MontFerret/ferret/v2", "github.com/MontFerret/api", "github.com/MontFerret/wire")) {
+            check(expected[module] != null && actual[module] == expected[module]) {
+                "$module dependency mismatch: ferretd=${expected[module]}, fixture=${actual[module]}"
+            }
+        }
+    }
+}
+
+val testDaemon = providers.environmentVariable("FERRETD_TEST_PATH").map { File(it) }
+val verifyWireHost = tasks.register<VerifyWireHost>("verifyWireHost") {
+    dependsOn(buildWireHost)
+    daemon.fileValue(testDaemon.orNull ?: throw GradleException("FERRETD_TEST_PATH is required."))
+    fixture.set(wireHostBinary)
+}
+
 intellijPlatformTesting.testIde.register("ferretdIntegrationTest") {
     testFramework(TestFrameworkType.Platform)
     task {
         group = "verification"
-        description = "Runs JetBrains execution tests against the pinned current-host ferretd binary."
-        inputs.property("wireTestEndpoint", providers.environmentVariable("FERRETD_TEST_WIRE_ENDPOINT").orElse(""))
+        description = "Runs JetBrains integration tests against the pinned daemon and an owned Wire host."
+        dependsOn(verifyWireHost)
+        inputs.file(testDaemon).withPropertyName("pinnedFerretd")
+        inputs.file(repositoryRoot.file("ferretd.json"))
+        inputs.file(wireHostBinary)
+        inputs.files(wireHostSources.asFileTree.matching { include("*.go", "go.mod", "go.sum") })
+        environment("FERRET_TEST_WIRE_HOST", wireHostBinary.get().asFile.absolutePath)
+        outputs.upToDateWhen { false }
+        outputs.doNotCacheIf("Live tests exercise newly started processes") { true }
         useJUnit {
             includeCategories("org.ferretlang.jetbrains.integration.FerretdIntegrationTest")
-        }
-        doFirst {
-            val configured = System.getenv("FERRETD_TEST_PATH")
-                ?: throw GradleException("FERRETD_TEST_PATH is required for ferretdIntegrationTest.")
-            val path = Path.of(configured)
-            if (!Files.isRegularFile(path) || !Files.isExecutable(path)) {
-                throw GradleException("FERRETD_TEST_PATH is not an executable file: $path")
-            }
         }
     }
 }

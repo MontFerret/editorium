@@ -241,7 +241,10 @@ JetBrains packages one universal ZIP containing `ferretd` for macOS, Linux, and
 Windows on arm64 and x64. Production sandbox preparation acquires and copies
 that complete matrix beside the plugin's `lib/` directory. Unit-test sandbox
 preparation stays independent of artifact acquisition so tests can remain
-offline.
+offline. The JetBrains real-process suite builds the independent Go application
+in `fixtures/wire-host`. JetBrains tests own its process, temporary runtime
+configuration, and editor lifecycle assertions. Only fixture teardown or an
+explicit host-loss test terminates the application.
 
 Installed binary resolution remains passive and must not search `PATH` or add
 fallback binaries. The JetBrains LSP descriptor constructs the `ferretd lsp`

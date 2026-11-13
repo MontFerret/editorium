@@ -1,11 +1,14 @@
 package org.ferretlang.jetbrains.integration
 
-import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
-import com.intellij.openapi.components.service
 import com.intellij.execution.executors.DefaultDebugExecutor
+import com.intellij.execution.executors.DefaultRunExecutor
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder
 import com.intellij.execution.ui.RunContentManager
+import com.intellij.ide.impl.OpenProjectTask
+import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.components.service
+import com.intellij.openapi.project.ex.ProjectManagerEx
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.testFramework.HeavyPlatformTestCase
@@ -15,21 +18,26 @@ import com.intellij.xdebugger.*
 import com.intellij.xdebugger.breakpoints.XBreakpointProperties
 import com.intellij.xdebugger.breakpoints.XLineBreakpoint
 import com.intellij.xdebugger.frame.*
+import java.nio.file.Files
+import java.nio.file.Path
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.future.future
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.selects.select
+import org.ferretlang.jetbrains.daemon.FerretdDaemonConnection
 import org.ferretlang.jetbrains.debugger.*
+import org.ferretlang.jetbrains.execution.FerretExecutionClient
 import org.ferretlang.jetbrains.launch.FerretLaunchInput
+import org.ferretlang.jetbrains.run.FerretParameterBindings
 import org.ferretlang.jetbrains.run.FerretParameterBindingsJson
 import org.ferretlang.jetbrains.run.FerretRunConfiguration
 import org.ferretlang.jetbrains.run.FerretRunConfigurationType
 import org.junit.experimental.categories.Category
-import java.nio.file.Files
-import java.nio.file.Path
-import java.util.concurrent.CompletableFuture
 
 @Category(FerretdIntegrationTest::class)
 class FerretNativeInspectionIntegrationTest : HeavyPlatformTestCase() {
@@ -63,6 +71,117 @@ class FerretNativeInspectionIntegrationTest : HeavyPlatformTestCase() {
             }
             PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
         } finally { super.tearDown() }
+    }
+
+    fun testHostedNativeDebugInspectsStepsAndReleasesApplication() {
+        val installation = pinnedTestInstallation()
+        val connection = FerretdDaemonConnection.testing(lifetime, installation)
+        project.replaceService(FerretdDaemonConnection::class.java, connection, testRootDisposable)
+        val adapter = AtomicReference<Process>()
+        project.replaceService(FerretDebugLauncher::class.java, FerretDebugLauncher.testing(lifetime) { input, listener ->
+            FerretDapSession(input, listener, { installation.executable }, { command ->
+                ProcessBuilder(command).start().also(adapter::set)
+            })
+        }, testRootDisposable)
+        val root = Files.createDirectories(Path.of(requireNotNull(project.basePath)).resolve(".tmp/hosted-debug"))
+        val path = Files.writeString(root.resolve("query.fql"),
+            "LET answer = DEMO::IDENTITY(@value)\nLET result = answer + 1\nRETURN result")
+        val file = requireNotNull(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path))
+        val manager = XDebuggerManager.getInstance(project)
+        val type = XDebuggerUtil.getInstance().findBreakpointType(FerretBreakpointType::class.java)
+        WriteCommandAction.runWriteCommandAction(project) {
+            breakpoints.add(manager.breakpointManager.addLineBreakpoint(type, file.url, 1, null))
+        }
+        WireHost.start(root).use { host ->
+            connection.applyConfigPath(host.configure(root.resolve("runtimes.json")).toString())
+            NativeFerretLaunch(project, DefaultDebugExecutor.getDebugExecutorInstance()).use { launch ->
+                val descriptor = launch.start(path, "", """{"value":41.5}""")
+                PlatformTestUtil.waitWithEventsDispatching("Hosted Debug did not suspend", {
+                    manager.debugSessions.any { it.debugProcess.processHandler === descriptor.processHandler && it.isSuspended }
+                }, 20)
+                val session = manager.debugSessions.single { it.debugProcess.processHandler === descriptor.processHandler }
+                awaitStop(session, null)
+                assertEquals(file, session.currentPosition?.file)
+                assertEquals(1, session.currentPosition?.line)
+                val frame = frames(requireNotNull(session.suspendContext?.activeExecutionStack)).single()
+                assertEquals("<main>", (frame as FerretStackFrame).name)
+                val locals = children(children(frame).topGroups.single { it.name == "Locals" })
+                val answer = present(locals.getValue((0 until locals.size()).single { locals.getName(it) == "answer" }))
+                assertEquals("Float", answer.type)
+                assertEquals("41.5", answer.value)
+                assertSame(session.currentStackFrame?.evaluator, session.debugProcess.evaluator)
+                assertEquals("42.5", evaluate(session, "answer + 1").value)
+                val before = session.suspendContext
+                session.stepOver(false)
+                awaitStop(session, before)
+                assertEquals(file, session.currentPosition?.file)
+                assertEquals(2, session.currentPosition?.line)
+                session.resume()
+                assertTrue(launch.outputLines().contains("42.5"))
+            }
+            PlatformTestUtil.waitWithEventsDispatching("Hosted Debug did not release admission", { !connection.catalogState.value.busy }, 10)
+            assertFalse(adapter.get().isAlive)
+            host.released(host.connection(1))
+            NativeFerretLaunch(project, DefaultRunExecutor.getRunExecutorInstance()).use { fresh ->
+                fresh.start(path, "App", """{"value":72}""")
+                assertTrue(fresh.outputLines().contains("73"))
+            }
+            host.released(host.connection(2))
+        }
+    }
+
+    fun testHostedProjectDisposalReapsRunAndDebugAndPreservesApplication() {
+        val root = Files.createTempDirectory("hosted-project")
+        val installation = pinnedTestInstallation()
+        try {
+            WireHost.start(root).use { host ->
+                val config = host.configure(root.resolve("runtimes.json")).toString()
+                val owner = requireNotNull(ProjectManagerEx.getInstanceEx().newProject(root, OpenProjectTask(isNewProject = true)))
+                try {
+                    // This scope inherits the actual project's injected service job.
+                    val scope = owner.service<FerretDebugLauncher>().newLaunchScope()
+                    val daemon = FerretdDaemonConnection.testing(scope, installation)
+                    daemon.applyConfigPath(config)
+                    val blocked = Files.writeString(root.resolve("blocked.fql"), "RETURN DEMO::BLOCK(\"project-run\")")
+                    val run = RecordingExecution()
+                    val input = FerretLaunchInput(blocked.toString(), "", root.toString(), FerretParameterBindings.EMPTY)
+                    run.handle = FerretExecutionClient(daemon).start(input, run)
+                    host.await("entered", token = "project-run")
+                    val runID = host.connection(1)
+                    val daemonProcess = runBlocking { daemon.generation().process }
+                    val source = Files.writeString(root.resolve("debug.fql"), "LET answer = DEMO::IDENTITY(41)\nRETURN answer")
+                    daemon.admitDebug("App").use { admitted ->
+                        val debug = RealDapLaunch(input.copy(sourcePath = source.toString(), runtimeName = "App"),
+                            scope, 2, prepareRuntime = admitted::prepareDebugRuntime)
+                        val stop = await(lifetime.future { debug.stopped() })
+                        assertEquals("breakpoint", stop.reason)
+                        val debugID = host.connection(2)
+                        WriteAction.run<RuntimeException> { Disposer.dispose(owner) }
+                        assertTrue(owner.isDisposed)
+                        assertEquals(130, await(lifetime.future { debug.session.completion.await() }))
+                        assertEquals(130, await(lifetime.future { run.exit.await() }))
+                        assertFalse(debug.process.isAlive)
+                        assertFalse(daemonProcess.isAlive)
+                        host.await("cancelled", token = "project-run")
+                        host.released(runID)
+                        host.released(debugID)
+                    }
+                } finally {
+                    if (!owner.isDisposed) WriteAction.run<RuntimeException> { Disposer.dispose(owner) }
+                }
+                val fresh = FerretdDaemonConnection.testing(lifetime, installation)
+                project.replaceService(FerretdDaemonConnection::class.java, fresh, testRootDisposable)
+                fresh.applyConfigPath(config)
+                val path = Path.of(requireNotNull(project.basePath)).resolve(".tmp/fresh.fql")
+                Files.createDirectories(path.parent)
+                Files.writeString(path, "RETURN DEMO::IDENTITY(@value)")
+                NativeFerretLaunch(project, DefaultRunExecutor.getRunExecutorInstance()).use { launch ->
+                    launch.start(path, "App", """{"value":73}""")
+                    assertTrue(launch.outputLines().contains("73"))
+                }
+                host.released(host.connection(3))
+            }
+        } finally { root.toFile().deleteRecursively() }
     }
 
     fun testSelectedFrameEvaluationAndVariablesRefreshAcrossStepsAndStops() {

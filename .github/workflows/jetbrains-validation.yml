@@ -10,6 +10,7 @@ on:
       - 'Makefile'
       - 'buf.yaml'
       - 'ferretd.json'
+      - 'fixtures/wire-host/**'
       - 'extensions/jetbrains/**'
       - 'shared/**'
       - 'tools/editorium/**'
@@ -22,6 +23,7 @@ on:
       - 'Makefile'
       - 'buf.yaml'
       - 'ferretd.json'
+      - 'fixtures/wire-host/**'
       - 'extensions/jetbrains/**'
       - 'shared/**'
       - 'tools/editorium/**'
@@ -59,8 +61,10 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version-file: tools/editorium/go.mod
-          cache-dependency-path: tools/editorium/go.sum
+          go-version-file: fixtures/wire-host/go.mod
+          cache-dependency-path: |
+            fixtures/wire-host/go.sum
+            tools/editorium/go.sum
 
       - name: Set up Make
         if: runner.os == 'Windows'
@@ -89,8 +93,10 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version-file: tools/editorium/go.mod
-          cache-dependency-path: tools/editorium/go.sum
+          go-version-file: fixtures/wire-host/go.mod
+          cache-dependency-path: |
+            fixtures/wire-host/go.sum
+            tools/editorium/go.sum
 
       - name: Build plugin
         run: make build jetbrains

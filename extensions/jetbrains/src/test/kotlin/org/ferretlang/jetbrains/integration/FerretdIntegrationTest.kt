@@ -1,4 +1,4 @@
 package org.ferretlang.jetbrains.integration
 
-/** JUnit category reserved for tests that require FERRETD_TEST_PATH. */
+/** Real-process tests using the acquired daemon and, for hosted queries, the built Wire application. */
 interface FerretdIntegrationTest
