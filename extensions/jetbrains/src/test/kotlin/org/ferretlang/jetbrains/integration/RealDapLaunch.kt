@@ -16,12 +16,14 @@ internal class RealDapLaunch(
     val input: FerretLaunchInput,
     scope: CoroutineScope,
     vararg lines: Int,
+    beforeProcess: () -> Unit = {},
     prepareRuntime: suspend () -> FerretDebugRuntime = { FerretDebugRuntime.LOCAL },
 ) {
     val listener = DapTestListener()
     lateinit var process: Process
         private set
     val session = FerretDapSession(input, listener, { Path.of(requireNotNull(System.getenv("FERRETD_TEST_PATH"))) }, { command ->
+        beforeProcess()
         ProcessBuilder(command).start().also { process = it }
     })
 

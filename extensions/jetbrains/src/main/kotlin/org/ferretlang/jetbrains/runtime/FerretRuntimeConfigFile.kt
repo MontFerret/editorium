@@ -9,12 +9,15 @@ internal object FerretRuntimeConfigFile {
         if (value.isEmpty()) return null
         val path = try {
             val entered = Path.of(value)
-            if (entered.isAbsolute) entered else {
+            val absolute = if (entered.isAbsolute) entered else {
                 requireNotNull(projectBase) {
                     "The runtime configuration file must be absolute because the project has no base directory."
                 }
                 Path.of(projectBase).resolve(entered)
-            }.also { require(it.isAbsolute) { "The runtime configuration file must resolve to an absolute path: $value" } }
+            }
+            require(absolute.isAbsolute) { "The runtime configuration file must resolve to an absolute path: $value" }
+            // ferretd cleans the absolute path lexically before opening it.
+            absolute.normalize()
         } catch (error: InvalidPathException) {
             throw IllegalArgumentException("Invalid runtime configuration file path: $value", error)
         }

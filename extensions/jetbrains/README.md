@@ -287,12 +287,14 @@ parameters, and provider-specific working directory as Run. Every Debug launch
 starts an independent bundled `ferretd dap`. With an empty runtime selector and
 configuration path, it uses the built-in `local` directly. Otherwise it resolves
 the default or exact selector against the admitted project catalog. A configured
-adapter receives `--runtime-config` and the admitted absolute path at startup.
+adapter receives `--runtime-config` and the same absolute path as the project
+daemon. Both resolve `.` and `..` in the path before opening the file.
 
 Debug checks the configuration file against the content fingerprint recorded
-when the project daemon started. An edit or loss of readability detected before
-adapter startup or after initialization aborts the launch. Use **Reload runtimes**
-after active sessions finish cleanup. These checks detect ordinary edits across
+when the project daemon started. If the adapter exits before it can initialize,
+Debug rechecks the file before reporting the failure. An edit or loss of
+readability detected during startup requires **Reload runtimes** after active
+sessions finish cleanup. These checks detect ordinary edits across
 the two processes’ independent reads. Apply during startup leaves that launch
 bound to its original path.
 

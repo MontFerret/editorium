@@ -153,8 +153,23 @@ internal class FerretDapSession(
 
     private fun initialize(adapter: Process, resolved: FerretResolvedLaunchInput, runtime: FerretDebugRuntime) {
         resolvedInput = resolved
-        val connection = FerretDapTransport(scope, adapter.inputStream, adapter.outputStream, this) {
-            enqueue { fail(IllegalStateException("The Ferret debug adapter connection failed.", it)) }
+        var initializationFailed = false
+        fun adapterFailed(error: Throwable) {
+            if (launched || runtime.configFile == null) {
+                fail(error)
+            } else if (!initializationFailed) {
+                // An edited file can make ferretd exit before it reads initialize.
+                initializationFailed = true
+                verifyBeforeLaunch(runtime) { fail(error) }
+            }
+        }
+        val connection = try {
+            FerretDapTransport(scope, adapter.inputStream, adapter.outputStream, this) {
+                enqueue { adapterFailed(IllegalStateException("The Ferret debug adapter connection failed.", it)) }
+            }
+        } catch (error: Exception) {
+            adapterFailed(error)
+            return
         }
         transport = connection
         scope.launch(Dispatchers.IO) {
@@ -167,7 +182,7 @@ internal class FerretDapSession(
         scope.launch(Dispatchers.IO) {
             runInterruptible { adapter.waitFor() }
             withTimeoutOrNull(timeouts.shutdownMillis) { connection.reader.join() }
-            enqueue { fail(IllegalStateException("The Ferret debug adapter exited unexpectedly.")) }
+            enqueue { adapterFailed(IllegalStateException("The Ferret debug adapter exited unexpectedly.")) }
         }
         request("initialize", {
             connection.initialize(InitializeRequestArguments().apply {
@@ -179,29 +194,35 @@ internal class FerretDapSession(
                 supportsVariableType = true
                 supportsRunInTerminalRequest = false
             })
-        }) { result ->
+        }, fatalTimeout = false, failed = ::adapterFailed) { result ->
+            if (initializationFailed) return@request
             capabilities = result
             check(result.supportsConfigurationDoneRequest == true) { "The Ferret adapter does not support configurationDone." }
             val selection = result.supportsRuntimeSelection()
             check(selection || (runtime.configFile == null && input.runtimeName.isEmpty())) {
                 "The Ferret debug adapter does not support runtime selection."
             }
-            scope.launch(Dispatchers.IO) {
-                try {
-                    runtime.verifyConfiguration()
-                    enqueue {
-                        launched = true
-                        val arguments = FerretDapLaunchArguments.from(resolved, input.runtimeName)
-                        request("launch", {
-                            connection.launch(arguments, runtime.descriptor.name.takeIf { selection })
-                        }, startup = true, failed = { fail(FerretDapErrors.launchFailure(it, runtime.descriptor)) }) {
-                            launchAcknowledged = true
-                            finishStartup()
-                        }
-                    }
-                } catch (error: Exception) {
-                    enqueue { fail(error) }
+            verifyBeforeLaunch(runtime) {
+                if (initializationFailed) return@verifyBeforeLaunch
+                launched = true
+                val arguments = FerretDapLaunchArguments.from(resolved, input.runtimeName)
+                request("launch", {
+                    connection.launch(arguments, runtime.descriptor.name.takeIf { selection })
+                }, startup = true, failed = { fail(FerretDapErrors.launchFailure(it, runtime.descriptor)) }) {
+                    launchAcknowledged = true
+                    finishStartup()
                 }
+            }
+        }
+    }
+
+    private fun verifyBeforeLaunch(runtime: FerretDebugRuntime, verified: () -> Unit) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                runtime.verifyConfiguration()
+                enqueue(verified)
+            } catch (error: Exception) {
+                enqueue { fail(error) }
             }
         }
     }

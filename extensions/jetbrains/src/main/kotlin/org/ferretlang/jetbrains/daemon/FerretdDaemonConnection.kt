@@ -35,6 +35,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.ferretlang.jetbrains.execution.FerretdRpc
 import kotlin.coroutines.CoroutineContext
+import java.io.IOException
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -46,6 +47,7 @@ internal class FerretdDaemonConnection private constructor(
     private val launcher: FerretdDaemonLauncher,
     private val settings: FerretRuntimeSettings = FerretRuntimeSettings(),
     private val projectBase: () -> String? = { null },
+    private val captureFingerprint: suspend (Path) -> FerretRuntimeConfigFingerprint = FerretRuntimeConfigFingerprint.Companion::capture,
 ) {
     constructor(
         project: Project,
@@ -394,7 +396,16 @@ internal class FerretdDaemonConnection private constructor(
     }
 
     private suspend fun startGeneration(number: Long, config: Configuration, file: Path?): Generation {
-        val fingerprint = file?.let { FerretRuntimeConfigFingerprint.capture(it) }
+        val fingerprint = file?.let {
+            try {
+                captureFingerprint(it)
+            } catch (error: Exception) {
+                if (error !is IOException && error !is SecurityException) throw error
+                // Resolution already validated this file. Losing access now invalidates this revision.
+                currentCoroutineContext().ensureActive()
+                synchronized(lock) { rejectStaleConfiguration(config) }
+            }
+        }
         val daemon = try {
             launcher.start(file)
         } catch (error: Exception) {
@@ -431,15 +442,19 @@ internal class FerretdDaemonConnection private constructor(
         val matches = fingerprint.matches()
         currentCoroutineContext().ensureActive()
         synchronized(lock) {
-            if (matches && !config.stale) return
-            config.stale = true
-            if (!closed && saved === config) {
-                pendingReload = true
-                discardCatalog()
-                publish(CatalogStatus.RELOAD_REQUIRED, STALE_CONFIGURATION)
-            }
-            throw ExecutionException(STALE_CONFIGURATION)
+            if (!matches || config.stale) rejectStaleConfiguration(config)
         }
+    }
+
+    // Called under the connection lock for the revision whose file was read.
+    private fun rejectStaleConfiguration(config: Configuration): Nothing {
+        config.stale = true
+        if (!closed && saved === config) {
+            pendingReload = true
+            discardCatalog()
+            publish(CatalogStatus.RELOAD_REQUIRED, STALE_CONFIGURATION)
+        }
+        throw ExecutionException(STALE_CONFIGURATION)
     }
 
     private suspend fun invalidate(generation: Generation, cause: Throwable) {
@@ -546,7 +561,8 @@ internal class FerretdDaemonConnection private constructor(
             coroutineScope: CoroutineScope,
             launcher: FerretdDaemonLauncher,
             settings: FerretRuntimeSettings = FerretRuntimeSettings(),
-        ): FerretdDaemonConnection = FerretdDaemonConnection(coroutineScope, launcher, settings)
+            captureFingerprint: suspend (Path) -> FerretRuntimeConfigFingerprint = FerretRuntimeConfigFingerprint.Companion::capture,
+        ): FerretdDaemonConnection = FerretdDaemonConnection(coroutineScope, launcher, settings, captureFingerprint = captureFingerprint)
 
         internal fun testing(
             coroutineScope: CoroutineScope,

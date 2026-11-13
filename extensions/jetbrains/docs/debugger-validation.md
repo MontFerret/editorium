@@ -1,5 +1,34 @@
 # JetBrains debugger validation
 
+## November 12, 2026 selected-runtime startup fixes
+
+On macOS arm64, 51 focused unit and platform tests passed. Three integration
+tests ran against the pinned `ferretd 1.0.0-alpha.11` and passed.
+
+- A directory symlink followed by `..` distinguished the file the daemon opens
+  from a second file. Both process arguments and edit detection used the
+  normalized path. Editing the second file allowed Debug to launch.
+- Losing access during the first digest read required Reload. Applying another
+  path during that read preserved the new path and its settings status.
+- Deleting or corrupting the file immediately before starting the pinned
+  adapter produced a Reload diagnostic. Restoring the file and reloading
+  allowed execution again.
+- Piped DAP responses exercised duplicate failures, a late initialize reply,
+  and Stop and timeout during a pending fingerprint check. With the pinned
+  adapter, the plugin reported an offline Wire application as unavailable
+  and a missing source on a runtime named `runtime unavailable` as a launch failure.
+
+The full `make test` passed after rebuilding stale incremental Kotlin test
+callers. JetBrains reported 235 unit and platform tests passed and 36
+integration tests passed. The optional hosted Run case skipped because
+`FERRETD_TEST_WIRE_ENDPOINT` was unset. Live embedded-application Debug with
+a custom function remains Task 6 validation.
+
+`make lint`, `make package jetbrains`, and `make package-check jetbrains`
+passed. Plugin Verifier reported compatibility with IDEA and GoLand 2026.2
+and 2026.3. Package validation checked all six daemon binaries and ran the
+packaged macOS arm64 executable.
+
 ## November 12, 2026 selected-runtime Debug
 
 The macOS arm64 suite exercised the pinned `ferretd 1.0.0-alpha.11` through

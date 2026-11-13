@@ -15,11 +15,16 @@ catalog to resolve the exact runtime and its provider. An unconfigured default
 Debug launch uses native `local` directly. Native working-directory overrides
 resolve on the plugin host and nonblank Wire overrides travel verbatim.
 
-The connection records the resolved configuration path and SHA-256 digest across
-execution-daemon startup. Debug verifies that digest immediately before spawning
-its own adapter with `--runtime-config` and again after initialization. A mismatch
-invalidates discovery for that configuration and requires Reload. This detects
-edits across independent reads. The adapter supplies its own Boolean selection
+The connection resolves the saved path against the project base, normalizes
+it lexically, and uses that path for validation, SHA-256 reads, and both
+processes. If the first digest read loses access after validation, the admitted
+configuration requires Reload. Debug verifies the digest immediately before
+spawning its adapter with `--runtime-config` and again after initialization.
+A pre-launch adapter failure also triggers a cancellable recheck, since
+`ferretd` opens its configuration before reading `initialize`. Matching bytes
+preserve the adapter error. A mismatch invalidates discovery for the admitted
+revision and requires Reload. This detects edits across independent reads.
+The adapter supplies its own Boolean selection
 capability and, after `configurationDone`, acknowledges the acquired runtime.
 The ordered session queue publishes readiness and inspection after validation.
 Since the daemon starts execution before replying, an invalid acknowledgment

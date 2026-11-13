@@ -18,6 +18,7 @@ import org.ferretlang.jetbrains.launch.FerretLaunchInput
 import org.ferretlang.jetbrains.execution.FerretExecutionSink
 import org.ferretlang.jetbrains.run.FerretParameterBindings
 import org.ferretlang.jetbrains.run.FerretParameterValue
+import org.ferretlang.jetbrains.runtime.CatalogStatus
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -113,6 +114,65 @@ class FerretExecutionIntegrationTest {
         assertEquals(local.debug(), 0, local.exit.awaitResult())
         assertEquals("42", local.stdout.single().trim())
         assertEquals(generation.number, connection.generation().number)
+    }
+
+    @Test
+    fun configLostOrMalformedBeforeDapCanInitializeRequiresReload() = runBlocking {
+        val file = write("debug.json", "{}")
+        val source = write("query.fql", "RETURN 1")
+        val input = FerretLaunchInput(source.toString(), "", root.toString(), FerretParameterBindings.EMPTY)
+        connection.applyConfigPath(file.toString())
+        connection.ensureCatalog()!!.join()
+        for (delete in listOf(true, false)) {
+            connection.admitDebug("").use { admitted ->
+                val debug = RealDapLaunch(input, scope, beforeProcess = {
+                    if (delete) Files.delete(file) else Files.writeString(file, "{")
+                }, prepareRuntime = admitted::prepareDebugRuntime)
+                try {
+                    withTimeout(15_000) {
+                        assertEquals(1, debug.session.completion.await())
+                        assertTrue(debug.listener.errors.receive().contains("Reload runtimes"))
+                    }
+                    assertTrue(debug.session.launchCompleted.isCancelled)
+                    assertTrue(!debug.process.isAlive)
+                    assertEquals(CatalogStatus.RELOAD_REQUIRED, connection.catalogState.value.status)
+                } finally {
+                    debug.session.stop()
+                    debug.session.completion.await()
+                }
+            }
+            Files.writeString(file, "{}")
+            org.junit.Assert.assertNull(connection.retryDiscovery())
+            org.junit.Assert.assertThrows(com.intellij.execution.ExecutionException::class.java) { connection.admitRun("") }
+            connection.reloadRuntimes().join()
+            assertEquals(CatalogStatus.READY, connection.catalogState.value.status)
+        }
+        assertEquals(0, execute(source).exit.awaitResult())
+    }
+
+    @Test
+    fun sourceFailureOnWireRuntimeNamedRuntimeUnavailableKeepsGenericDiagnostic() = runBlocking {
+        val name = "runtime unavailable"
+        val file = write("debug.json", """{"defaultRuntime":"$name","runtimes":[
+            {"name":"$name","provider":"wire","endpoint":"tcp://127.0.0.1:1","insecure":true,"connectTimeout":"250ms"}
+        ]}""")
+        val source = write("query.fql", "RETURN 1")
+        val input = FerretLaunchInput(source.toString(), "", root.toString(), FerretParameterBindings.EMPTY)
+        connection.applyConfigPath(file.toString())
+        connection.admitDebug("").use { admitted ->
+            val debug = RealDapLaunch(input, scope, beforeProcess = { Files.delete(source) },
+                prepareRuntime = admitted::prepareDebugRuntime)
+            try {
+                withTimeout(15_000) {
+                    assertEquals(1, debug.session.completion.await())
+                    assertEquals("Debug launch failed on Ferret runtime '$name'.", debug.listener.errors.receive())
+                }
+                assertTrue(debug.listener.output.tryReceive().isFailure)
+            } finally {
+                debug.session.stop()
+                debug.session.completion.await()
+            }
+        }
     }
 
     @Test

@@ -2,16 +2,23 @@ package org.ferretlang.jetbrains.debugger
 
 import com.google.gson.JsonNull
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.eclipse.lsp4j.debug.Capabilities
 import org.eclipse.lsp4j.debug.ExitedEventArguments
+import org.eclipse.lsp4j.debug.OutputEventArguments
 import org.eclipse.lsp4j.debug.TerminatedEventArguments
+import org.eclipse.lsp4j.jsonrpc.ResponseErrorException
+import org.eclipse.lsp4j.jsonrpc.messages.ResponseError
+import org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode
 import org.ferretlang.jetbrains.runtime.FerretDebugRuntime
 import org.ferretlang.jetbrains.runtime.FerretRuntimeDescriptor
 import org.junit.Assert.*
 import org.junit.Test
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicInteger
 
 class FerretDapRuntimeTest {
     private val file = Path.of("runtime config.json").toAbsolutePath()
@@ -150,6 +157,90 @@ class FerretDapRuntimeTest {
                 assertTrue(shared.isActive)
                 assertTrue(launch.adapter.history.isEmpty())
             } finally { shared.complete(FerretDebugRuntime.LOCAL); launch.close() }
+        }
+    }
+
+    @Test fun duplicateAdapterFailuresAndLateInitializeCannotLaunchDuringTheRecheck() = runBlocking {
+        val checking = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val calls = AtomicInteger()
+        val configured = FerretDebugRuntime(runtime.descriptor, file) {
+            if (calls.incrementAndGet() > 1) {
+                checking.complete(Unit)
+                release.await()
+            }
+        }
+        val launch = DapTestLaunch(prepareRuntime = { configured })
+        try {
+            launch.responses(true, mapOf("runtimeName" to configured.descriptor.name))
+            launch.adapter.autoInitialize = false
+            launch.start()
+            withTimeout(5000) {
+                launch.adapter.initialized.await()
+                launch.process.unsolicitedResponse()
+                checking.await()
+                launch.process.unsolicitedResponse()
+                launch.adapter.initializeResponse.complete(Capabilities())
+                // Output is an ordered barrier after the duplicate failure and the valid late reply.
+                launch.adapter.client.output(OutputEventArguments().apply { output = "barrier" })
+                launch.listener.output.receive()
+                release.complete(Unit)
+                assertEquals(1, launch.session.completion.await())
+            }
+            assertEquals(2, calls.get())
+            assertEquals("The Ferret debug adapter connection failed.", launch.listener.errors.receive())
+            assertTrue(launch.listener.errors.tryReceive().isFailure)
+            assertEquals(listOf("initialize", "disconnect"), launch.adapter.history.toList())
+        } finally { release.complete(Unit); launch.close() }
+    }
+
+    @Test fun stopAndStartupDeadlineInterruptAnInitializeFailureRecheck() = runBlocking {
+        for (stop in listOf(true, false)) {
+            val checking = CompletableDeferred<Unit>()
+            val cancelled = CompletableDeferred<Unit>()
+            val calls = AtomicInteger()
+            val configured = FerretDebugRuntime(runtime.descriptor, file) {
+                if (calls.incrementAndGet() == 2) {
+                    checking.complete(Unit)
+                    try { awaitCancellation() } finally { cancelled.complete(Unit) }
+                }
+            }
+            val launch = DapTestLaunch(timeouts = FerretDapTimeouts(if (stop) 5000 else 1000, 2000, 100),
+                prepareRuntime = { configured })
+            try {
+                launch.adapter.autoInitialize = false
+                launch.start()
+                withTimeout(5000) {
+                    launch.adapter.initialized.await()
+                    launch.adapter.initializeResponse.completeExceptionally(
+                        ResponseErrorException(ResponseError(ResponseErrorCode.RequestFailed, "initialize rejected", null)),
+                    )
+                    checking.await()
+                    if (stop) launch.session.stop()
+                    assertEquals(if (stop) 130 else 1, launch.session.completion.await())
+                    cancelled.await()
+                }
+                if (!stop) assertTrue(launch.listener.errors.receive().contains("launch timed out"))
+                assertEquals(listOf("initialize", "disconnect"), launch.adapter.history.toList())
+                assertFalse(launch.process.isAlive)
+            } finally { launch.close() }
+        }
+    }
+
+    @Test fun wireAcquisitionErrorsRecognizeEscapedNamesAndExcludeOtherCauses() {
+        val name = "service \"runtime unavailable\"\\test"
+        val quoted = """"service \"runtime unavailable\"\\test""""
+        val descriptor = FerretRuntimeDescriptor(name, "App", "wire")
+        val unavailable = "Ferret runtime '$name' is unavailable."
+        val generic = "Debug launch failed on Ferret runtime '$name'."
+        for ((cause, expected) in listOf(
+            "connect runtime $quoted: runtime unavailable\nprivate endpoint" to unavailable,
+            "runtime unavailable: connect runtime $quoted: constructor returned no runtime" to unavailable,
+            "session compilation failed: runtime unavailable" to generic,
+            "connect runtime $quoted: runtime unavailable in expression" to generic,
+        )) {
+            val error = ResponseErrorException(ResponseError(ResponseErrorCode.RequestFailed, "runtime $quoted: $cause", null))
+            assertEquals(expected, FerretDapErrors.launchFailure(error, descriptor).message)
         }
     }
 

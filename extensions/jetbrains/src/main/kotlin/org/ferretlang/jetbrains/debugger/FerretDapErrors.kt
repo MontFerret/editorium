@@ -17,7 +17,7 @@ internal object FerretDapErrors {
         val rejection = unwrap(error) as? ResponseErrorException ?: return error
         if (runtime.provider != "wire") return error
         // Wire failures can combine a public category with a transport error containing connection details.
-        val message = if (rejection.responseError.message.orEmpty().contains("runtime unavailable")) {
+        val message = if (isWireUnavailable(rejection.responseError.message.orEmpty())) {
             "Ferret runtime '${runtime.name}' is unavailable."
         } else {
             "Debug launch failed on Ferret runtime '${runtime.name}'."
@@ -36,5 +36,16 @@ internal object FerretDapErrors {
         else -> error
     }
 
+    private fun isWireUnavailable(message: String): Boolean {
+        // alpha.11 repeats the same Go-quoted name in both acquisition errors.
+        val firstLine = message.substringBefore('\n')
+        val prefix = runtimePrefix.matchAt(firstLine, 0) ?: return false
+        val quotedName = prefix.groupValues[1]
+        val cause = firstLine.substring(prefix.range.last + 1)
+        return cause == "connect runtime $quotedName: runtime unavailable" ||
+            cause == "runtime unavailable: connect runtime $quotedName: constructor returned no runtime"
+    }
+
+    private val runtimePrefix = Regex("""runtime ("(?:[^"\\\r\n]|\\.)*+"): """)
     private val LOG = Logger.getInstance(FerretDapErrors::class.java)
 }

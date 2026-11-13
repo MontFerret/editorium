@@ -6,6 +6,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
 
 class FerretRuntimeConfigFileTest {
@@ -17,6 +18,9 @@ class FerretRuntimeConfigFileTest {
         assertNull(FerretRuntimeConfigFile.resolve("", null))
         assertEquals(file, FerretRuntimeConfigFile.resolve(file.toString(), null))
         assertEquals(file, FerretRuntimeConfigFile.resolve(file.fileName.toString(), file.parent.toString()))
+        val relative = Path.of("absent", "..").resolve(file.fileName)
+        assertEquals(file, FerretRuntimeConfigFile.resolve(relative.toString(), file.parent.toString()))
+        assertEquals(file, FerretRuntimeConfigFile.resolve(file.parent.resolve(relative).toString(), null))
         assertTrue(assertThrows(IllegalArgumentException::class.java) {
             FerretRuntimeConfigFile.resolve(file.fileName.toString(), null)
         }.message.orEmpty().contains("absolute"))

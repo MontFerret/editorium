@@ -5,13 +5,16 @@ import kotlinx.coroutines.*
 import org.ferretlang.jetbrains.execution.FakeFerretdRpc
 import org.ferretlang.jetbrains.runtime.CatalogStatus
 import org.ferretlang.jetbrains.runtime.FerretRuntimeCatalog
+import org.ferretlang.jetbrains.runtime.FerretRuntimeConfigFingerprint
 import org.ferretlang.jetbrains.runtime.FerretRuntimeSettings
 import org.ferretlang.jetbrains.runtime.FerretRuntimeDescriptor
 import org.junit.After
 import org.junit.Assert.*
+import org.junit.Assume.assumeNoException
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.IOException
 import java.nio.file.Files
 import org.ferretlang.jetbrains.debugger.DapTestLaunch
 import java.nio.file.Path
@@ -28,6 +31,7 @@ class FerretdRuntimeDiscoveryTest {
     private lateinit var process: FakeDaemonProcess
     private var exitObservationGate: CountDownLatch? = null
     private var configure: (FakeFerretdRpc) -> Unit = {}
+    private var beforeCapture: suspend (Path) -> Unit = {}
     private val settings = FerretRuntimeSettings()
     private val connection = FerretdDaemonConnection.testing(scope, FerretdDaemonLauncher.testing(
         scope, { FerretdInstallation(Path.of("ferretd"), version) },
@@ -39,7 +43,10 @@ class FerretdRuntimeDiscoveryTest {
             }
         },
         { _, _ -> rpc },
-    ), settings)
+    ), settings) { path ->
+        beforeCapture(path)
+        FerretRuntimeConfigFingerprint.capture(path)
+    }
     private val state get() = connection.catalogState.value
 
     @After
@@ -238,6 +245,93 @@ class FerretdRuntimeDiscoveryTest {
         assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
         assertThrows(ExecutionException::class.java) { connection.admitDebug("") }
         assertEquals(1, paths.size)
+    }
+
+    @Test
+    fun lostFileBetweenValidationAndFirstReadBlocksAdmissionUntilReload() = runBlocking {
+        val file = folder.newFile().toPath()
+        connection.applyConfigPath(file.toString())
+        beforeCapture = { Files.delete(it) }
+        connection.ensureCatalog()!!.join()
+        assertTrue(paths.isEmpty())
+        assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
+        assertTrue(state.error.orEmpty().contains("Reload runtimes"))
+        Files.writeString(file, "")
+        assertNull(connection.retryDiscovery())
+        assertThrows(ExecutionException::class.java) { connection.admitDebug("local") }
+        beforeCapture = {}
+        connection.reloadRuntimes().join()
+        assertEquals(CatalogStatus.READY, state.status)
+        assertEquals(listOf(file), paths)
+    }
+
+    @Test
+    fun baselineReadDeniedAfterApplyLeavesTheNewPathAlone() = runBlocking {
+        val original = folder.newFile().toPath()
+        val next = folder.newFile().toPath()
+        val entered = CompletableDeferred<Path>()
+        val proceed = CompletableDeferred<Unit>()
+        beforeCapture = { path ->
+            entered.complete(path)
+            proceed.await()
+            throw SecurityException("private detail")
+        }
+        connection.applyConfigPath(original.toString())
+        connection.admitDebug("local").use { launch ->
+            val result = async { runCatching { launch.prepareDebugRuntime() }.exceptionOrNull() }
+            try {
+                assertEquals(original, withTimeout(5000) { entered.await() })
+                connection.applyConfigPath(next.toString())
+            } finally { proceed.complete(Unit) }
+            assertTrue(result.await()?.message.orEmpty().contains("Reload runtimes"))
+            assertEquals(next.toString(), connection.configPath)
+            assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
+            assertNull(state.error)
+            assertTrue(paths.isEmpty())
+        }
+        beforeCapture = {}
+        connection.reloadRuntimes().join()
+        assertEquals(listOf(next), paths)
+    }
+
+    @Test
+    fun serveDapAndFingerprintUseTheSameLexicallyNormalizedPath() = runBlocking {
+        val root = folder.root.toPath()
+        val target = Files.createDirectories(root.resolve("elsewhere/child"))
+        val link = root.resolve("link")
+        try {
+            Files.createSymbolicLink(link, target)
+        } catch (error: Exception) {
+            if (error !is IOException && error !is SecurityException && error !is UnsupportedOperationException) throw error
+            assumeNoException("Requires directory symlinks", error)
+        }
+        val file = Files.writeString(root.resolve("runtimes.json"), "catalog")
+        val other = Files.writeString(target.parent.resolve(file.fileName), "other")
+        val entered = link.resolve("..").resolve(file.fileName).toString()
+        connection.applyConfigPath(entered)
+        configure = { it.serverInfo = it.serverInfo.copy(apiMinor = 3) }
+        connection.admitDebug("").use { admitted ->
+            val runtime = admitted.prepareDebugRuntime()
+            assertEquals(listOf(file), paths)
+            assertEquals(entered, connection.configPath)
+            Files.writeString(other, "edit unrelated file")
+            val debug = DapTestLaunch(prepareRuntime = { runtime })
+            try {
+                debug.adapter.responseBody = { method, original ->
+                    when (method) {
+                        "initialize" -> mapOf("supportsConfigurationDoneRequest" to true, "supportsFerretRuntimeSelection" to true)
+                        "launch" -> mapOf("runtimeName" to runtime.descriptor.name)
+                        else -> original
+                    }
+                }
+                debug.start()
+                withTimeout(5000) { debug.session.launchCompleted.await() }
+                assertEquals(listOf("--runtime-config", file.toString()), debug.command.takeLast(2))
+                Files.writeString(file, "edit daemon file")
+                assertTrue(runCatching { runtime.verifyConfiguration() }.exceptionOrNull() is ExecutionException)
+                assertEquals(CatalogStatus.RELOAD_REQUIRED, state.status)
+            } finally { debug.close() }
+        }
     }
 
     @Test
