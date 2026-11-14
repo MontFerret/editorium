@@ -76,4 +76,16 @@ public interface SessionOrBuilder extends
    */
   com.google.protobuf.ByteString
       getRuntimeNameBytes();
+
+  /**
+   * <code>string acquisition_id = 5 [json_name = "acquisitionId"];</code>
+   * @return The acquisitionId.
+   */
+  java.lang.String getAcquisitionId();
+  /**
+   * <code>string acquisition_id = 5 [json_name = "acquisitionId"];</code>
+   * @return The bytes for acquisitionId.
+   */
+  com.google.protobuf.ByteString
+      getAcquisitionIdBytes();
 }

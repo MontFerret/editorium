@@ -469,6 +469,10 @@ func generateVSCodeProto(ctx context.Context, root string, check bool) error {
 		return err
 	}
 
+	if err := generateVSCodeStructMaps(outputRoot); err != nil {
+		return err
+	}
+
 	if check {
 		return compareTrees(generatedRoot, outputRoot)
 	}

@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	github.com/MontFerret/api v1.0.0-alpha.21
 	github.com/MontFerret/ferret/v2 v2.0.0-alpha.62
-	github.com/MontFerret/wire v1.0.0-alpha.4
+	github.com/MontFerret/wire v1.0.0-alpha.5
 	google.golang.org/grpc v1.85.0
 )
 

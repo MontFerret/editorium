@@ -43,6 +43,37 @@ public final class ExecutionServiceGrpc {
     return getCreateSessionMethod;
   }
 
+  private static volatile io.grpc.MethodDescriptor<org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionRequest,
+      org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionResponse> getCancelSessionAcquisitionMethod;
+
+  @io.grpc.stub.annotations.RpcMethod(
+      fullMethodName = SERVICE_NAME + '/' + "CancelSessionAcquisition",
+      requestType = org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionRequest.class,
+      responseType = org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionResponse.class,
+      methodType = io.grpc.MethodDescriptor.MethodType.UNARY)
+  public static io.grpc.MethodDescriptor<org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionRequest,
+      org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionResponse> getCancelSessionAcquisitionMethod() {
+    io.grpc.MethodDescriptor<org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionRequest, org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionResponse> getCancelSessionAcquisitionMethod;
+    if ((getCancelSessionAcquisitionMethod = ExecutionServiceGrpc.getCancelSessionAcquisitionMethod) == null) {
+      synchronized (ExecutionServiceGrpc.class) {
+        if ((getCancelSessionAcquisitionMethod = ExecutionServiceGrpc.getCancelSessionAcquisitionMethod) == null) {
+          ExecutionServiceGrpc.getCancelSessionAcquisitionMethod = getCancelSessionAcquisitionMethod =
+              io.grpc.MethodDescriptor.<org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionRequest, org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionResponse>newBuilder()
+              .setType(io.grpc.MethodDescriptor.MethodType.UNARY)
+              .setFullMethodName(generateFullMethodName(SERVICE_NAME, "CancelSessionAcquisition"))
+              .setSampledToLocalTracing(true)
+              .setRequestMarshaller(io.grpc.protobuf.ProtoUtils.marshaller(
+                  org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionRequest.getDefaultInstance()))
+              .setResponseMarshaller(io.grpc.protobuf.ProtoUtils.marshaller(
+                  org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionResponse.getDefaultInstance()))
+              .setSchemaDescriptor(new ExecutionServiceMethodDescriptorSupplier("CancelSessionAcquisition"))
+              .build();
+        }
+      }
+    }
+    return getCancelSessionAcquisitionMethod;
+  }
+
   private static volatile io.grpc.MethodDescriptor<org.ferretlang.jetbrains.protocol.ferretd.execution.v1.GetSessionRequest,
       org.ferretlang.jetbrains.protocol.ferretd.execution.v1.GetSessionResponse> getGetSessionMethod;
 
@@ -363,6 +394,13 @@ public final class ExecutionServiceGrpc {
 
     /**
      */
+    default void cancelSessionAcquisition(org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionRequest request,
+        io.grpc.stub.StreamObserver<org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionResponse> responseObserver) {
+      io.grpc.stub.ServerCalls.asyncUnimplementedUnaryCall(getCancelSessionAcquisitionMethod(), responseObserver);
+    }
+
+    /**
+     */
     default void getSession(org.ferretlang.jetbrains.protocol.ferretd.execution.v1.GetSessionRequest request,
         io.grpc.stub.StreamObserver<org.ferretlang.jetbrains.protocol.ferretd.execution.v1.GetSessionResponse> responseObserver) {
       io.grpc.stub.ServerCalls.asyncUnimplementedUnaryCall(getGetSessionMethod(), responseObserver);
@@ -455,6 +493,14 @@ public final class ExecutionServiceGrpc {
 
     /**
      */
+    public void cancelSessionAcquisition(org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionRequest request,
+        io.grpc.stub.StreamObserver<org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionResponse> responseObserver) {
+      io.grpc.stub.ClientCalls.asyncUnaryCall(
+          getChannel().newCall(getCancelSessionAcquisitionMethod(), getCallOptions()), request, responseObserver);
+    }
+
+    /**
+     */
     public void getSession(org.ferretlang.jetbrains.protocol.ferretd.execution.v1.GetSessionRequest request,
         io.grpc.stub.StreamObserver<org.ferretlang.jetbrains.protocol.ferretd.execution.v1.GetSessionResponse> responseObserver) {
       io.grpc.stub.ClientCalls.asyncUnaryCall(
@@ -543,6 +589,13 @@ public final class ExecutionServiceGrpc {
 
     /**
      */
+    public org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionResponse cancelSessionAcquisition(org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionRequest request) throws io.grpc.StatusException {
+      return io.grpc.stub.ClientCalls.blockingV2UnaryCall(
+          getChannel(), getCancelSessionAcquisitionMethod(), getCallOptions(), request);
+    }
+
+    /**
+     */
     public org.ferretlang.jetbrains.protocol.ferretd.execution.v1.GetSessionResponse getSession(org.ferretlang.jetbrains.protocol.ferretd.execution.v1.GetSessionRequest request) throws io.grpc.StatusException {
       return io.grpc.stub.ClientCalls.blockingV2UnaryCall(
           getChannel(), getGetSessionMethod(), getCallOptions(), request);
@@ -621,6 +674,13 @@ public final class ExecutionServiceGrpc {
     public org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CreateSessionResponse createSession(org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CreateSessionRequest request) {
       return io.grpc.stub.ClientCalls.blockingUnaryCall(
           getChannel(), getCreateSessionMethod(), getCallOptions(), request);
+    }
+
+    /**
+     */
+    public org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionResponse cancelSessionAcquisition(org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionRequest request) {
+      return io.grpc.stub.ClientCalls.blockingUnaryCall(
+          getChannel(), getCancelSessionAcquisitionMethod(), getCallOptions(), request);
     }
 
     /**
@@ -707,6 +767,14 @@ public final class ExecutionServiceGrpc {
 
     /**
      */
+    public com.google.common.util.concurrent.ListenableFuture<org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionResponse> cancelSessionAcquisition(
+        org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionRequest request) {
+      return io.grpc.stub.ClientCalls.futureUnaryCall(
+          getChannel().newCall(getCancelSessionAcquisitionMethod(), getCallOptions()), request);
+    }
+
+    /**
+     */
     public com.google.common.util.concurrent.ListenableFuture<org.ferretlang.jetbrains.protocol.ferretd.execution.v1.GetSessionResponse> getSession(
         org.ferretlang.jetbrains.protocol.ferretd.execution.v1.GetSessionRequest request) {
       return io.grpc.stub.ClientCalls.futureUnaryCall(
@@ -763,14 +831,15 @@ public final class ExecutionServiceGrpc {
   }
 
   private static final int METHODID_CREATE_SESSION = 0;
-  private static final int METHODID_GET_SESSION = 1;
-  private static final int METHODID_CLOSE_SESSION = 2;
-  private static final int METHODID_CREATE_EXECUTION = 3;
-  private static final int METHODID_RUN_EXECUTION = 4;
-  private static final int METHODID_GET_EXECUTION = 5;
-  private static final int METHODID_CANCEL_EXECUTION = 6;
-  private static final int METHODID_CLOSE_EXECUTION = 7;
-  private static final int METHODID_WATCH_EXECUTION = 8;
+  private static final int METHODID_CANCEL_SESSION_ACQUISITION = 1;
+  private static final int METHODID_GET_SESSION = 2;
+  private static final int METHODID_CLOSE_SESSION = 3;
+  private static final int METHODID_CREATE_EXECUTION = 4;
+  private static final int METHODID_RUN_EXECUTION = 5;
+  private static final int METHODID_GET_EXECUTION = 6;
+  private static final int METHODID_CANCEL_EXECUTION = 7;
+  private static final int METHODID_CLOSE_EXECUTION = 8;
+  private static final int METHODID_WATCH_EXECUTION = 9;
 
   private static final class MethodHandlers<Req, Resp> implements
       io.grpc.stub.ServerCalls.UnaryMethod<Req, Resp>,
@@ -792,6 +861,10 @@ public final class ExecutionServiceGrpc {
         case METHODID_CREATE_SESSION:
           serviceImpl.createSession((org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CreateSessionRequest) request,
               (io.grpc.stub.StreamObserver<org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CreateSessionResponse>) responseObserver);
+          break;
+        case METHODID_CANCEL_SESSION_ACQUISITION:
+          serviceImpl.cancelSessionAcquisition((org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionRequest) request,
+              (io.grpc.stub.StreamObserver<org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionResponse>) responseObserver);
           break;
         case METHODID_GET_SESSION:
           serviceImpl.getSession((org.ferretlang.jetbrains.protocol.ferretd.execution.v1.GetSessionRequest) request,
@@ -850,6 +923,13 @@ public final class ExecutionServiceGrpc {
               org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CreateSessionRequest,
               org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CreateSessionResponse>(
                 service, METHODID_CREATE_SESSION)))
+        .addMethod(
+          getCancelSessionAcquisitionMethod(),
+          io.grpc.stub.ServerCalls.asyncUnaryCall(
+            new MethodHandlers<
+              org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionRequest,
+              org.ferretlang.jetbrains.protocol.ferretd.execution.v1.CancelSessionAcquisitionResponse>(
+                service, METHODID_CANCEL_SESSION_ACQUISITION)))
         .addMethod(
           getGetSessionMethod(),
           io.grpc.stub.ServerCalls.asyncUnaryCall(
@@ -955,6 +1035,7 @@ public final class ExecutionServiceGrpc {
           serviceDescriptor = result = io.grpc.ServiceDescriptor.newBuilder(SERVICE_NAME)
               .setSchemaDescriptor(new ExecutionServiceFileDescriptorSupplier())
               .addMethod(getCreateSessionMethod())
+              .addMethod(getCancelSessionAcquisitionMethod())
               .addMethod(getGetSessionMethod())
               .addMethod(getCloseSessionMethod())
               .addMethod(getCreateExecutionMethod())

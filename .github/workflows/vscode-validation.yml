@@ -11,6 +11,7 @@ on:
       - 'buf.yaml'
       - 'ferretd.json'
       - 'extensions/vscode/**'
+      - 'fixtures/wire-host/**'
       - 'shared/**'
       - 'tools/editorium/**'
       - '!tools/editorium/jetbrains.go'
@@ -23,6 +24,7 @@ on:
       - 'buf.yaml'
       - 'ferretd.json'
       - 'extensions/vscode/**'
+      - 'fixtures/wire-host/**'
       - 'shared/**'
       - 'tools/editorium/**'
       - '!tools/editorium/jetbrains.go'
@@ -78,8 +80,10 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version-file: tools/editorium/go.mod
-          cache-dependency-path: tools/editorium/go.sum
+          go-version-file: fixtures/wire-host/go.mod
+          cache-dependency-path: |
+            fixtures/wire-host/go.sum
+            tools/editorium/go.sum
 
       - name: Install dependencies
         working-directory: extensions/vscode

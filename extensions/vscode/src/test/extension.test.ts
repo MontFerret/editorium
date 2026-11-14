@@ -331,6 +331,12 @@ suite('Ferret declarative language support', () => {
     const properties = manifest.contributes.configuration.properties;
     const runtime = properties['ferret.runtime.configPath'];
     assert.deepEqual([runtime?.type, runtime?.default, runtime?.scope], ['string', '', 'window']);
+    for (const [key, type, fallback] of [
+      ['ferret.run.parameters', 'object', {}], ['ferret.run.workingDirectory', 'string', ''],
+    ] as const) {
+      const entry = properties[key];
+      assert.deepEqual([entry?.type, entry?.default, entry?.scope], [type, fallback, 'resource']);
+    }
     assert.deepStrictEqual(
       {
         type: properties['ferret.server.path']?.type,

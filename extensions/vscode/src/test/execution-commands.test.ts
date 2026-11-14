@@ -1,3 +1,4 @@
+import type { RunOptions } from '../execution/run-options';
 import * as assert from 'node:assert/strict';
 
 import * as vscode from 'vscode';
@@ -58,6 +59,7 @@ class FakeManager implements ExecutionCommandManager {
   public cancelError: unknown;
   public readonly onDidChangeExecution = this.changeEmitter.event;
   public selector?: unknown;
+  public options?: RunOptions;
   public onRun: (() => void) | undefined;
   public readonly runCalls: vscode.TextDocument[] = [];
   public runError: unknown;
@@ -73,8 +75,9 @@ class FakeManager implements ExecutionCommandManager {
     return this.running.has(documentUri.toString());
   }
 
-  public async run(document: vscode.TextDocument, _parameters?: object, selector?: unknown): Promise<unknown> {
-    this.selector = selector;
+  public async run(document: vscode.TextDocument, options?: RunOptions): Promise<unknown> {
+    this.options = options;
+    this.selector = options?.runtimeName;
     this.onRun?.();
     this.runCalls.push(document);
     if (this.runError !== undefined) {
@@ -136,6 +139,12 @@ class FakeHost implements ExecutionCommandHost {
   private readonly activeEditorEmitter = new vscode.EventEmitter<void>();
   private readonly handlers = new Map<string, (options?: unknown) => Promise<void>>();
 
+  public readonly settings = new Map<string, unknown>();
+  public readUri?: vscode.Uri;
+  public getRunSettings(uri: vscode.Uri): Pick<vscode.WorkspaceConfiguration, 'get'> {
+    this.readUri = uri;
+    return { get: <T>(key: string, fallback?: T) => (this.settings.has(key) ? this.settings.get(key) : fallback) as T };
+  }
   public activeDocument: vscode.TextDocument | undefined;
   public readonly context = new Map<string, boolean>();
   public readonly contextUpdates: Array<{
@@ -232,6 +241,34 @@ suite('Ferret execution commands', () => {
     } finally {
       disposeFixture(fixture);
     }
+  });
+
+  test('captures resource settings after Save and Run and replaces them by property presence', async () => {
+    const saveGate = deferred();
+    const document = ferretDocument('/first/a.fql', { isDirty: true, saveGate: saveGate.promise });
+    const fixture = createFixture(document);
+    const { host, manager } = fixture;
+    try {
+      host.nextInformationSelection = saveAndRunAction;
+      const running = host.invoke(runFileCommand);
+      await settle();
+      host.setActiveDocument(asTextDocument(ferretDocument('/second/b.fql')));
+      const nested = { n: [null, true, 42] };
+      host.settings.set('parameters', { nested });
+      host.settings.set('workingDirectory', 'runtime/path');
+      saveGate.resolve();
+      await running;
+      assert.equal(host.readUri?.toString(), document.uri.toString());
+      assert.deepEqual({ ...manager.options }, { runtimeName: undefined, parameters: { nested: { n: [null, true, 42] } }, workingDirectory: 'runtime/path' });
+      await host.invoke(runFileCommand, { runtimeName: '', parameters: {}, workingDirectory: '  ' });
+      assert.deepEqual({ ...manager.options }, { runtimeName: '', parameters: {}, workingDirectory: '  ' });
+      const replacements = { value: ['literal'] };
+      await host.invoke(runFileCommand, { parameters: replacements });
+      assert.deepEqual(manager.options?.parameters, { value: ['literal'] });
+      for (const workingDirectory of [null, undefined, 1]) await host.invoke(runFileCommand, { workingDirectory });
+      assert.equal(manager.runCalls.length, 3);
+      assert.equal(host.errorMessages.length, 3);
+    } finally { saveGate.resolve(); disposeFixture(fixture); }
   });
 
   test('runs a saved Ferret document exactly once', async () => {

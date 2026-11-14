@@ -74,6 +74,8 @@ export function unary<Response>(
     ) => void,
   ) => ClientUnaryCall,
   signal?: AbortSignal,
+  // Creation can race cancellation and still return an ID that must be closed.
+  acceptLateResponse = false,
 ): Promise<Response> {
   if (signal?.aborted === true) {
     return Promise.reject(signal.reason);
@@ -97,7 +99,7 @@ export function unary<Response>(
       settled = true;
       signal?.removeEventListener('abort', onAbort);
 
-      if (signal?.aborted === true) {
+      if (signal?.aborted === true && (error !== null || !acceptLateResponse)) {
         reject(signal.reason);
       } else if (error !== null) {
         reject(error);

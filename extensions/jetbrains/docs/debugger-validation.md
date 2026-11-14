@@ -1,9 +1,57 @@
 # JetBrains debugger validation
 
+## November 14, 2026 ferretd alpha.13
+
+The published `1.0.0-alpha.13` daemon advertises API 1.4. On macOS arm64,
+the suspended Debug regression killed the application at a confirmed
+breakpoint. With no intervening editor command, the session reported nonblank
+stderr and exit code 1, its adapter exited, and project admission was released
+within the existing timeout. The fixture and daemon both used Wire
+`v1.0.0-alpha.5`.
+
+The strict JetBrains suite passed all 235 unit/platform tests and 44
+real-process tests. Plugin Verifier reported compatibility with the four
+configured IntelliJ IDEA and GoLand builds. VS Code passed 198 unit tests and
+19 real-process tests. Its lost-reply test observed release of the specific
+Wire connection while a sibling Run stayed active, then completed a new Run
+on the same daemon and application.
+
+Both generated clients matched the published schemas. Package checks verified
+the macOS arm64 VSIX and the universal JetBrains ZIP with all six daemon
+binaries.
+
+## November 13, 2026 passive host-loss candidate
+
+The local API 1.4 candidate at `ferretd 3a363fc`, built with Wire
+`a847517`, passed `lostApplicationWhileDebugIsSuspendedReportsFailure`
+with `FERRET_TEST_PASSIVE_HOST_LOSS=1` on macOS arm64. Killing the independent
+application at a confirmed breakpoint produced nonblank stderr and exit code 1.
+The adapter exited and the admission was released within the existing deadlines.
+The full candidate suite passed all 235 unit/platform and 44 real-process tests
+with zero skips. The strengthened stderr assertion also passed the five hosted
+tests against the repository's alpha.11 pin using its existing characterization.
+
+The candidate fixture and daemon used the same exact Wire pseudo-version,
+`v1.0.0-alpha.4.0.20261114023953-a8475178b533`, and passed the module identity
+check. The candidate and fixture dependency were staged in a separate validation
+checkout before the upstream releases.
+
+Wire's full build, lint, vet, ordinary and race suites, including its nested
+native Ferret suite, passed. The daemon's full build and race checks for runtime,
+execution, debug and DAP packages passed. Deterministic Go tests cover loss before
+the first stop, a confirmed suspension, a racing command, partial output,
+termination, observer cleanup, and a queued DAP entry overtaken by failure.
+Framed DAP tests require stderr, `exited(1)`, and one `terminated` before
+sending another request, including while DAP stdin remains open.
+
+The checks used Go 1.26.9 and the repository's pinned linter. The local Go 1.27
+installation produces export data that this linter cannot read. JDK 25 ran the
+JetBrains tests. Linux and Windows validation for this candidate remains pending.
+
 ## November 13, 2026 release qualification
 
-**Blocked on passive suspended host loss.** The latest published daemon is
-`1.0.0-alpha.11`. On macOS arm64, `FERRET_TEST_PASSIVE_HOST_LOSS=1 make test jetbrains`
+**Suspended host loss failed on alpha.11.** On macOS arm64,
+`FERRET_TEST_PASSIVE_HOST_LOSS=1 make test jetbrains`
 ran all 44 real-process cases with the owned Wire fixture. One failed. After the
 host died at a breakpoint, the adapter was still alive at 20 seconds and the
 test received no exit code. Ordinary `make test` passed the alpha.11

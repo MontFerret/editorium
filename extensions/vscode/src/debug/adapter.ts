@@ -13,12 +13,12 @@ export class FerretDebugAdapterDescriptorFactory implements vscode.DebugAdapterD
   public constructor(
     private readonly resolveExecutable: () => Promise<FerretdExecutable>,
     private readonly output: ServerOutput,
-    private readonly runtime: Pick<RuntimeCoordinator, 'admit'>,
+    private readonly runtime: Pick<RuntimeCoordinator, 'admitDebug'>,
   ) {}
 
   public createDebugAdapterDescriptor(session: vscode.DebugSession): vscode.DebugAdapterInlineImplementation {
     if ('debugServer' in session.configuration) throw new Error('Remove debugServer to use the owned Ferret debug adapter.');
-    const reservation = this.runtime.admit(readRuntimeSelector(session.configuration));
+    const reservation = this.runtime.admitDebug(readRuntimeSelector(session.configuration));
     const transport = new FerretDebugTransport(this.resolveExecutable, this.output, () => {
       this.adapters.delete(transport);
       reservation.release();

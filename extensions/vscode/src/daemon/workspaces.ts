@@ -71,6 +71,7 @@ export class FerretWorkspaceRegistry {
     }
 
     return {
+      root: match.workspace.root,
       workspaceId: match.workspace.id,
       relativePath: match.relativePath.split(sep).join('/'),
     };

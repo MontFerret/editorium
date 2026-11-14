@@ -1,50 +1,54 @@
 # Execution client boundary
 
-The daemon owns two related resources. A **Session** is one immutable compiled
-Ferret program associated with a retained workspace document. An
-**Execution** is one isolated, one-shot invocation of that Session with its own
-runtime state and JSON-shaped parameter bindings.
+A daemon **Session** owns a runtime binding, a compiled plan, and its immutable
+source snapshot. Its parameter list contains bind names. An **Execution** is a
+one-shot invocation with its own parameter values, output options, and optional
+runtime filesystem root.
 
-Code outside this directory consumes the domain types in `types.ts`. Generated
-protobuf messages, numeric protocol enums, gRPC errors, and stream objects stay
-behind `FerretExecutionClient` so future editor features have a stable contract.
+## Launch preparation
 
-`runExecution()` starts or schedules daemon work and returns the daemon's
-current snapshot; it does not wait for completion. `watchExecution()` observes
-ordered lifecycle events. Disposing a watch only stops local observation,
-while `cancelExecution()` separately requests daemon-side cancellation.
+The Run command preserves the selected document across Save and Run. At
+admission it captures resource-scoped settings, command overrides, and the
+picker selection. The manager reserves the document and window activity before
+awaiting runtime discovery. Concurrent documents can share generation startup,
+catalog discovery, and workspace registration. Each launch can stop waiting
+independently.
 
-`FerretExecutionManager` is the editor-facing owner of these resources. It
-reserves each launch with the window runtime coordinator before starting the
-execution daemon or acquiring a Session. It resolves saved, file-backed Ferret
-documents through the daemon workspace registry and caches one Session per
-unchanged document. Each call to
-`run()` creates a new Execution from that Session, establishes its watch before
-starting it, and keeps at most one extension-managed Execution active for that
-document. Different documents remain independent and may run concurrently.
+Run resolves its exact selector against the catalog owned by its admitted
+generation. It verifies that generation's config fingerprint before Session
+acquisition or reuse. The workspace registry supplies the source path and the
+root that registered it. Native directory overrides resolve on the extension
+host. Wire receives literal application paths. An omitted directory uses the
+provider's default.
 
-Cancellation during Session acquisition closes a late Session before the launch
-reservation is released. Reload requires an idle window and refuses while
-launch-owned cleanup is pending. Idle cached Sessions belong to the generation.
+## Protocol and ownership
 
-Saving a document removes its Session from the reusable cache. An invalidated
-Session that still owns an active immutable Execution is closed after that
-Execution finishes, so saving does not cancel the current invocation. Workspace
-replacement or daemon-generation loss discards every affected daemon identity;
-future runs resolve the new workspace and rebuild Sessions lazily. Dirty,
-untitled, non-file, and non-Ferret documents are never sent to the daemon.
+The execution client binds to a single daemon connection. CreateSession sends
+the requested selector and the workspace-relative source, with a 30-second
+acquisition/compilation deadline. The acknowledged runtime must match the
+resolved name on API 1.3+. Only built-in default execution on a compatible old
+daemon accepts an absent acknowledgment. API 1.4 creation carries a fresh
+acquisition UUID. The daemon echoes it and accepts cancellation by workspace ID and UUID even before
+publication. A lost, late, or malformed reply is reconciled on the original
+connection. Wire requires this capability. A mismatched Execution parent causes
+the manager to retire the known Session and its children.
 
-The VS Code Run Current File and Cancel Execution commands are adapters over
-that manager rather than additional lifecycle owners. Run Current File always
-executes the saved workspace version of the active document. A dirty document
-must complete the explicit Save and Run flow first; the manager's save listener
-then retires the cached Session before the command asks it to run. The command
-layer neither invalidates Sessions nor observes daemon streams itself. One
-document can have only one extension-managed active Execution, while different
-documents may run concurrently.
+Native Sessions can be reused in the same generation for an unchanged document,
+workspace, source, and resolved runtime. Saving retires the cached plan. The
+manager checks the saved file digest before reuse and across compilation,
+including after external edits. A Run already using the plan releases its
+reference after its Execution closes. Each Wire
+Run owns a fresh Session until cleanup, including when preparation stops early.
+Parameters and directories are encoded at CreateExecution for both providers.
 
-`ExecutionFeedbackController` is the only user-interface observer of manager
-events. It renders the terminal result and any partial output accompanying a
-failure in the **Ferret Execution** channel, derives the global running count
-from the manager, and owns the one transient status-bar item. It never opens a daemon watch. Detailed transport
-and rendering failures remain in the separate **Ferret** diagnostic channel.
+The manager establishes WatchExecution before RunExecution. The watch supplies
+ordered lifecycle snapshots, including the terminal output. Stop cancels
+in-flight launch RPCs and explicitly cancels an existing Execution. Cleanup
+closes the Execution before releasing its Session, using independent five-second
+RPC deadlines. The admission covers cleanup. Connection loss invalidates IDs and
+requires a new explicit Run. The Wire application owns its engine and process.
+
+ExecutionFeedbackController renders the resolved provider and runtime before
+acquisition, elapsed time, diagnostics, results and any partial output in
+**Ferret Execution**. Cleanup errors are reported separately from the retained
+result. The **Ferret** diagnostic channel records transport and cleanup details.

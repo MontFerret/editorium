@@ -183,6 +183,20 @@ interface Fixture {
 }
 
 suite('Ferret execution feedback', () => {
+  test('keeps runtime, terminal result, and subsequent cleanup error visible together', () => {
+    const fixture = createFixture();
+    try {
+      const done = managedExecution(vscode.Uri.file('/workspace/query.fql'), completed('42'));
+      fixture.manager.fire({ kind: 'runtime-resolved', documentUri: done.documentUri, runtime: 'Δ App', provider: 'wire' });
+      fixture.manager.fire({ kind: 'finished', execution: done, event: event('completed', done.execution) });
+      fixture.manager.fire({ kind: 'cleanup-failed', documentUri: done.documentUri, error: new Error('connection release failed') });
+      const lines = fixture.host.output.lines.join(' ');
+      assert.match(lines, /Δ App \(wire\)/);
+      assert.match(lines, /42\nCompleted/);
+      assert.match(lines, /connection release failed/);
+    } finally { disposeFixture(fixture); }
+  });
+
   test('includes workspace names in multi-root relative paths', () => {
     const primary = vscode.workspace.workspaceFolders?.find(
       ({ name }) => name === 'primary',

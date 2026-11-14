@@ -9,7 +9,7 @@ values, selected-frame expression evaluation, and native watches. Inspection
 shares the ordered session queue, is invalidated per stop, and reports request
 failures locally while transport loss remains session-fatal. Null launch bindings
 are preserved by a parameter-specific DAP serializer.
-With the alpha.11 pin, Run and Debug capture the project configuration at
+Run and Debug capture the project configuration at
 admission. Configured or explicit selections use the admitted generation’s
 catalog to resolve the exact runtime and its provider. An unconfigured default
 Debug launch uses native `local` directly. Native working-directory overrides
