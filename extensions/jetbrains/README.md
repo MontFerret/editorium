@@ -397,10 +397,13 @@ contents, and protocol payloads. Console input is unavailable. Stop, detach, and
 project disposal release the query binding and its owned adapter. The external
 application and Wire server keep running. Stop during catalog preparation
 detaches this launch from shared project discovery. Reload stays unavailable
-until cleanup finishes. Loss of the project execution daemon leaves an already
-running Debug session usable. Target exit codes are retained, with 1 for
-failures and 130 for local cancellation when the target has not supplied a code. Startup and protocol requests have
-bounded deadlines; running queries have no execution time limit.
+until cleanup finishes. If the Wire application exits while Debug is suspended
+at a breakpoint, the Debug console shows the failure and the session ends with
+exit code 1 without waiting for another editor command. Loss of the project
+execution daemon leaves an already running Debug session usable. Target exit
+codes are retained, with 1 for failures and 130 for local cancellation when
+the target has not supplied a code. Startup and protocol requests have bounded
+deadlines. Running queries have no execution time limit.
 
 Conditional breakpoints, logpoints, interactive console input,
 attach, restart, and reverse debugging are also unavailable. The breakpoint UI

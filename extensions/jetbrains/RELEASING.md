@@ -16,11 +16,10 @@ FERRET_TEST_PASSIVE_HOST_LOSS=1 make test jetbrains
 ```
 
 The strict test kills the owned Wire application at a confirmed breakpoint and
-requires a failing exit without sending Continue. The published alpha.11 daemon
-currently times out. A corrected official daemon must pass that assertion with
-a matching Wire fixture. Update the root pin, compare fixture module versions,
-regenerate/check affected clients, and validate both editors when adopting it.
-Track interactive GoLand smoke separately in the [validation record](docs/debugger-validation.md).
+requires a stderr diagnostic, exit code 1, adapter shutdown and released
+admission without sending Continue. The integration suite checks that the
+daemon and fixture use the same Wire module version. Record these results and
+the interactive GoLand smoke in the [validation record](docs/debugger-validation.md).
 
 Once the workflow and version source are merged into `main`, run `make release jetbrains <version>` from clean `main` tracking
 `origin/main`. The command checks the tracked version against HEAD, rejects an

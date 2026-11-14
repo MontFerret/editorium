@@ -24,9 +24,9 @@ Every extension runs its full test suite on Linux, macOS, and Windows for
 relevant pushes and pull requests. CI also builds, lints, packages, and verifies
 each extension. VS Code checks all six native VSIX artifacts and exercises the
 installed Linux x64 package. JetBrains verifies its universal ZIP and checks
-IDE compatibility with Plugin Verifier. Its real-process suite builds the independent
-Go module in `fixtures/wire-host` (Go 1.26.1 or newer) and runs embedded-application
-queries with the current-host daemon.
+IDE compatibility with Plugin Verifier. Both editors' real-process suites build
+the independent Go module in `fixtures/wire-host` (Go 1.26.1 or newer) and run
+embedded-application queries with the current-host daemon.
 
 ## Repository commands
 
@@ -100,13 +100,13 @@ and the daemon's nested-symlink restrictions still apply.
 
 [`ferretd.json`](ferretd.json) is the sole version pin for both the daemon
 bundled in distributions and the ferretd protocol schemas used to generate
-editor clients. The current pin is `1.0.0-alpha.11`, which advertises API 1.3.
+editor clients. The current pin is `1.0.0-alpha.13`, which advertises API 1.4.
 Both editors request API 1.1 for local execution and accept API major 1 with
-minor 1 or later. JetBrains uses API 1.3 for catalog-based runtime selection.
-Debug additionally checks its own adapter’s `supportsFerretRuntimeSelection`
-capability for a configured file or explicit selector, including `local`. See the
-[alpha.11 validation record](extensions/jetbrains/docs/debugger-validation.md#november-12-2026-ferretd-alpha11-migration)
-for release availability and integration checks.
+minor 1 or later. Catalog-based runtime selection requires API 1.3. VS Code
+Wire Run requires API 1.4 so Stop can release a Session even if its creation
+reply is lost. JetBrains Debug also checks its own adapter’s
+`supportsFerretRuntimeSelection` capability for a configured file or explicit
+selector, including `local`.
 
 The pinned `proto/ferretd/` tree is cached under
 `shared/proto/ferretd/`; its files and `.ferretd-version` marker are ignored by
@@ -191,9 +191,10 @@ systems before signing the universal ZIP and publishing it with its SHA-256 to
 GitHub Releases. Exact stable plugin versions can subsequently go to the
 JetBrains Marketplace after manual first-listing bootstrap.
 
-The current alpha.11 daemon fails suspended Wire host-loss qualification. The
-packaged GoLand walkthrough remains pending. Maintainer setup, bootstrap and
-recovery are in the [JetBrains release guide](extensions/jetbrains/RELEASING.md).
+The [alpha.13 validation record](extensions/jetbrains/docs/debugger-validation.md#november-14-2026-ferretd-alpha13)
+includes the suspended Wire host-loss check. The packaged GoLand walkthrough
+remains pending. Maintainer setup, bootstrap and recovery are in the
+[JetBrains release guide](extensions/jetbrains/RELEASING.md).
 
 ## Update ferretd
 

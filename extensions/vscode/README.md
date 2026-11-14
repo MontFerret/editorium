@@ -119,8 +119,9 @@ Discovery requires daemon API 1.3 or a later minor version in major 1.
 to follow the default in the configuration, or select an exact runtime name.
 Choosing `local` runs against the built-in native runtime even when a Wire
 application is the default. Wire Run requires daemon API 1.4 or a later minor
-version in major 1, including when the default resolves to Wire. With a custom
-API 1.3 daemon, explicit `local` is available. Upgrade the daemon to use Wire.
+version in major 1, including when the default resolves to Wire. The bundled
+daemon provides API 1.4. With a custom API 1.3 daemon, explicit `local` is
+available. Upgrade the daemon to use Wire.
 
 **Debug** requires an empty configuration path, **Daemon default**, and an
 omitted or empty launch `runtimeName`. Clear the setting, select **Daemon

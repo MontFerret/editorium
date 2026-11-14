@@ -122,8 +122,7 @@ internal class FerretHostedExecutionIntegrationTest : RealExecutionTestCase() {
             connection.applyConfigPath(host.configure(root.resolve("runtime.json")).toString())
             withDebug(debugSource()) { debug, stop ->
                 host.kill()
-                // alpha.11 observes a lost Wire stream on the next execution command.
-                // Keep the passive failure check available on this pin and required on later pins.
+                // Only a non-qualification run against the historical alpha.11 needs Continue.
                 if (installation.version == "1.0.0-alpha.11" && System.getenv("FERRET_TEST_PASSIVE_HOST_LOSS") != "1") {
                     debug.session.command(FerretDapCommand.CONTINUE, stop)
                 }
@@ -138,6 +137,7 @@ internal class FerretHostedExecutionIntegrationTest : RealExecutionTestCase() {
         assertEquals("Acquired Wire host was killed; DAP did not report a failing exit (adapter alive=${debug.process.isAlive})", 1, code)
         assertEquals(1, debug.listener.terminated.awaitResult())
         val output = generateSequence { debug.listener.output.tryReceive().getOrNull() }.toList()
+        assertTrue("Missing Debug failure diagnostic: $output", output.any { (text, stderr) -> stderr && text.isNotBlank() })
         assertTrue("Unexpected successful Debug output: $output", output.all { it.second })
     }
 

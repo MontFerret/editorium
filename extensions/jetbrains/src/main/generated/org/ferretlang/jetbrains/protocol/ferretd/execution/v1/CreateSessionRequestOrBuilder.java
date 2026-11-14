@@ -48,4 +48,33 @@ public interface CreateSessionRequestOrBuilder extends
    */
   com.google.protobuf.ByteString
       getRuntimeNameBytes();
+
+  /**
+   * <pre>
+   * Fresh client UUID, scoped to this registered workspace (API 1.4).
+   * </pre>
+   *
+   * <code>optional string acquisition_id = 4 [json_name = "acquisitionId"];</code>
+   * @return Whether the acquisitionId field is set.
+   */
+  boolean hasAcquisitionId();
+  /**
+   * <pre>
+   * Fresh client UUID, scoped to this registered workspace (API 1.4).
+   * </pre>
+   *
+   * <code>optional string acquisition_id = 4 [json_name = "acquisitionId"];</code>
+   * @return The acquisitionId.
+   */
+  java.lang.String getAcquisitionId();
+  /**
+   * <pre>
+   * Fresh client UUID, scoped to this registered workspace (API 1.4).
+   * </pre>
+   *
+   * <code>optional string acquisition_id = 4 [json_name = "acquisitionId"];</code>
+   * @return The bytes for acquisitionId.
+   */
+  com.google.protobuf.ByteString
+      getAcquisitionIdBytes();
 }
