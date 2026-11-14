@@ -703,10 +703,11 @@ suite('ferretd execution integration', () => {
         'marker.txt': 'editor',
       } },
     ]);
-    const appRoot = join(fixture.temporaryRoot, 'application');
+    let appRoot: string | undefined;
     let host: WireHost | undefined;
     try {
-      await vscode.workspace.fs.createDirectory(vscode.Uri.file(appRoot));
+      // The application outlives editor cleanup and keeps its filesystem root open.
+      appRoot = await mkdtemp(join(tmpdir(), 'ferret-wire-application-'));
       await writeFile(join(appRoot, 'marker.txt'), 'application');
       host = new WireHost(binary, appRoot);
       const { endpoint } = await host.wait('ready');
@@ -765,7 +766,10 @@ suite('ferretd execution integration', () => {
       try {
         await fixture.dispose();
         if (host) assert.equal(host.count('engineClosed'), 0);
-      } finally { await host?.close(); }
+      } finally {
+        try { await host?.close(); }
+        finally { if (appRoot) await rm(appRoot, { recursive: true, force: true }); }
+      }
     }
   });
 
