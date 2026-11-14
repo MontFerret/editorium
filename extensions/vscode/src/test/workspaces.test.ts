@@ -1,20 +1,34 @@
 import * as assert from 'node:assert/strict';
+import { once } from 'node:events';
 import { stat } from 'node:fs/promises';
+import { createConnection, createServer } from 'node:net';
 import { dirname, resolve } from 'node:path';
+import { text } from 'node:stream/consumers';
 
 import { createDaemonEndpoint } from '../daemon/endpoint';
 import { FerretWorkspaceRegistry } from '../daemon/workspaces';
 
 suite('Ferret daemon endpoints and workspaces', () => {
-  test('creates private unique Unix socket directories', async function () {
-    if (process.platform === 'win32') {
-      this.skip();
-    }
+  test(process.platform === 'win32'
+    ? 'connects the daemon CLI and gRPC addresses to the same Windows named pipe'
+    : 'creates private unique Unix socket directories', async () => {
     const first = await createDaemonEndpoint();
     const second = await createDaemonEndpoint();
 
     try {
       assert.notStrictEqual(first.cli, second.cli);
+      if (process.platform === 'win32') {
+        const pipe = first.cli.slice('npipe://'.length).replace(/\//gu, '\\');
+        const server = createServer(socket => socket.end('ferretd'));
+        await once(server.listen(pipe), 'listening');
+        try {
+          assert.equal(await text(createConnection(first.grpc.slice('unix:'.length))), 'ferretd');
+          await assert.rejects(text(createConnection(second.grpc.slice('unix:'.length))), { code: 'ENOENT' });
+        } finally {
+          await server[Symbol.asyncDispose]();
+        }
+        return;
+      }
       assert.match(first.cli, /^unix:\/\//u);
       assert.match(first.grpc, /^unix:\/\//u);
       const directory = dirname(
