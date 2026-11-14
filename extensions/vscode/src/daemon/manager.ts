@@ -91,6 +91,7 @@ interface ActiveDaemon {
   readonly process: DaemonProcess;
   cleanup?: Promise<void>;
   logReader?: Interface;
+  logDrained?: Promise<void>;
   configurationFailure?: string;
   ready: boolean;
   stopping: boolean;
@@ -330,6 +331,9 @@ export class DaemonController implements DaemonConnectionProvider {
         lastError = error;
         const exited = await hasExited(active.exited);
         if (exited !== undefined) {
+          if (!exited.error && active.logDrained) {
+            await waitForSettlement(active.logDrained, this.timing.shutdownTimeout);
+          }
           if (active.configurationFailure) throw new Error(active.configurationFailure);
           throw processExitError(exited);
         }
@@ -486,7 +490,7 @@ export class DaemonController implements DaemonConnectionProvider {
         `Closing Ferret daemon channel failed: ${formatError(error)}`,
       );
     }
-    if (!(await waitForExit(active.exited, this.timing.shutdownTimeout))) {
+    if (!(await waitForSettlement(active.exited, this.timing.shutdownTimeout))) {
       try {
         active.process.kill('SIGKILL');
       } catch (error) {
@@ -494,7 +498,7 @@ export class DaemonController implements DaemonConnectionProvider {
           `Terminating Ferret daemon failed: ${formatError(error)}`,
         );
       }
-      if (!(await waitForExit(active.exited, this.timing.shutdownTimeout))) {
+      if (!(await waitForSettlement(active.exited, this.timing.shutdownTimeout))) {
         this.survivingProcess = active.exited;
         void active.exited.then(() => {
           if (this.survivingProcess === active.exited) this.survivingProcess = undefined;
@@ -564,6 +568,7 @@ function logDaemonOutput(
   }
 
   const reader = createInterface({ input: stderr });
+  active.logDrained = new Promise(resolve => reader.once('close', resolve));
   reader.on('line', (line: string) => {
     output.info(`Ferret daemon: ${line}`);
     if (!active.ready && line.startsWith('ferretd: invalid runtime configuration')) {
@@ -668,8 +673,8 @@ async function hasExited(
   return result === pending ? undefined : result;
 }
 
-async function waitForExit(
-  exited: Promise<ProcessExit>,
+async function waitForSettlement(
+  task: Promise<unknown>,
   timeout: number,
 ): Promise<boolean> {
   let timer: NodeJS.Timeout | undefined;
@@ -677,7 +682,7 @@ async function waitForExit(
     timer = setTimeout(() => resolveTimeout(false), timeout);
   });
   const result = await Promise.race([
-    exited.then(() => true),
+    task.then(() => true),
     timedOut,
   ]);
   if (timer !== undefined) {

@@ -132,7 +132,10 @@ available. Upgrade the daemon to use Wire.
 Run. Configured or explicitly selected native Debug requires daemon API 1.3+ in
 major 1. Wire Debug requires API 1.4+. Each adapter must also advertise runtime
 selection during initialization and acknowledge the expected runtime on launch.
-An older adapter can still debug the unconfigured built-in default.
+An older adapter can still debug the unconfigured built-in default with a blank
+or omitted `workingDirectory`. An explicit directory requires the adapter to
+advertise runtime selection. This also applies to older releases such as
+`1.0.0-alpha.7`, which accept the directory but cannot advertise support.
 
 Configured Debug starts `ferretd dap --runtime-config <absolute-path>`. The
 extension compares the file fingerprint recorded during catalog startup before

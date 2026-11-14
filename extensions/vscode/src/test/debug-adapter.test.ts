@@ -1,6 +1,7 @@
 import * as assert from 'node:assert/strict';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { posix, win32 } from 'node:path';
 import { PassThrough } from 'node:stream';
 import * as vscode from 'vscode';
 
@@ -97,11 +98,14 @@ suite('owned Ferret debug adapter', () => {
       start: async () => {}, stop: async () => {}, requireConnection: () => { throw new Error('unused'); },
     }, { entered: '' }, () => '');
     const lease = runtime.admitDebug();
-    const adapter = new FerretDebugTransport(prepare, output, lease.release, () => child.process, 0);
+    const errors: string[] = [];
+    const adapter = new FerretDebugTransport(prepare, { ...output, error: m => errors.push(m) },
+      lease.release, () => child.process, 0);
     adapter.handleMessage(initialize);
     await new Promise(resolve => setImmediate(resolve));
     await assert.rejects(adapter.shutdown(), /cleanup has not completed/);
     assert.equal(child.kills, 1);
+    assert.ok(errors.some(m => m.includes('Remote cleanup could not be confirmed')));
     await assert.rejects(runtime.reload(), /finish/);
     child.emit('close');
     await new Promise(resolve => setImmediate(resolve));
@@ -184,10 +188,11 @@ suite('owned Ferret debug adapter', () => {
   });
 
   test('holds a launch during fingerprint verification and suppresses it on Stop or file change', async () => {
-    for (const action of ['change', 'terminate', 'cancel']) {
+    for (const action of ['change', 'terminate', 'disconnect', 'cancel']) {
       const child = new DebugChild();
       let checked = 0, release!: () => void;
       const waiting = new Promise<void>(resolve => { release = resolve; });
+      let closed = 0;
       const adapter = new FerretDebugTransport(async () => ({
         ...await prepare(), configPath: '/A',
         verifyConfiguration: async () => {
@@ -196,7 +201,7 @@ suite('owned Ferret debug adapter', () => {
             if (action === 'change') throw new Error('file changed: Reload Runtimes');
           }
         },
-      }), output, () => {}, () => child.process);
+      }), output, () => { closed++; }, () => child.process);
       const messages: Array<{ command?: string; message?: string; success?: boolean }> = [];
       adapter.onDidSendMessage(m => messages.push(m));
       adapter.handleMessage(initialize);
@@ -206,17 +211,24 @@ suite('owned Ferret debug adapter', () => {
       adapter.handleMessage({ seq: 2, type: 'request', command: 'launch' });
       if (action !== 'change') {
         adapter.handleMessage({ seq: 3, type: 'request', command: action, arguments: { requestId: 2 } });
-        if (action === 'terminate') assert.ok(child.stdin.read()?.includes('terminate'));
+        assert.equal(child.stdin.read(), null);
+        assert.ok(child.stdin.writableEnded);
+        assert.ok(messages.some(m => m.command === action && m.success));
+        assert.deepEqual(messages.filter(m => m.command === 'launch').map(m => m.message), ['cancelled']);
+        child.emit('close');
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(closed, 0, 'closing stdio must join the held fingerprint check');
       }
       release();
       await new Promise(resolve => setImmediate(resolve));
       assert.equal(child.stdin.read(), null, 'the held launch must never reach the adapter');
-      child.emit('close');
+      if (action === 'change') child.emit('close');
       await adapter.shutdown();
       const replies = messages.filter(m => m.command === 'launch');
       assert.equal(replies.length, 1);
       assert.equal(replies[0]?.success, false);
       if (action === 'change') assert.match(replies[0]?.message ?? '', /Reload/);
+      assert.equal(closed, 1);
     }
   });
 
@@ -276,6 +288,60 @@ suite('owned Ferret debug adapter', () => {
     assert.throws(() => snapshotDebugArguments({ ...config, workingDirectory: null }), /string/);
   });
 
+  test('uses one Windows drive spelling for compiler and debugger source paths', async () => {
+    const config = { type: 'ferret', request: 'launch', name: 'query', program: 'C:\\Work\\Query.fql',
+      cwd: 'c:\\Work', workingDirectory: 'D:\\Host' };
+    const runtime = { ...await prepare(), provider: 'wire' as const };
+    const snapshot = snapshotDebugArguments(config, win32);
+    assert.deepEqual(await prepareDebugArguments(snapshot, runtime), {
+      program: 'c:\\Work\\Query.fql', cwd: 'c:\\Work', workingDirectory: 'D:\\Host',
+    });
+    assert.equal(snapshotDebugArguments({ ...config, cwd: 'C:/Work' }, win32).cwd, 'c:/Work');
+    assert.equal(snapshotDebugArguments({ ...config, cwd: undefined }, win32).root, 'c:\\Work');
+    for (const program of ['Sub\\Query.fql', '\\\\Server\\Share\\Query.fql', 'C:Query.fql']) {
+      assert.equal(snapshotDebugArguments({ ...config, program }, win32).program, program);
+    }
+    assert.equal(snapshotDebugArguments(config, posix).program, config.program);
+  });
+
+  test('requires positive adapter capability for a nonblank local working directory', async () => {
+    for (const capability of [undefined, false, true]) {
+      for (const directory of ['.', ' \t']) {
+        const child = new DebugChild();
+        const input = snapshotDebugArguments({ type: 'ferret', request: 'launch', name: 'local',
+          program: __filename.replace(/\.js$/, '.fql'), workingDirectory: directory });
+        const adapter = new FerretDebugTransport(async () => {
+          const local = await prepare();
+          return { ...local, arguments: await prepareDebugArguments(input, local) };
+        }, output, () => {}, () => child.process);
+        const replies: Array<{ request_seq?: number; success?: boolean; message?: string }> = [];
+        adapter.onDidSendMessage(m => replies.push(m));
+        const started = new Promise<void>(resolve => child.stdin.once('readable', resolve));
+        adapter.handleMessage(initialize);
+        adapter.handleMessage({ type: 'request', seq: 20, command: 'launch' });
+        await started;
+        assert.deepEqual(child.stdin.read(), frame(initialize));
+        child.stdout.write(frame({ type: 'response', request_seq: 1, success: true,
+          body: { supportsFerretRuntimeSelection: capability } }));
+        await new Promise(resolve => setImmediate(resolve));
+        if (!capability && directory === '.') {
+          assert.equal(child.stdin.read(), null);
+          assert.equal(replies.find(m => m.request_seq === 20)?.success, false);
+          assert.match(replies.find(m => m.request_seq === 20)?.message ?? '', /workingDirectory/);
+        } else {
+          const bytes: Buffer = child.stdin.read();
+          assert.ok(bytes.includes('"command":"launch"'));
+          assert.equal(bytes.includes('"workingDirectory"'), directory === '.');
+          child.stdout.write(frame({ type: 'response', request_seq: 20, success: true }));
+          assert.equal(replies.find(m => m.request_seq === 20)?.success, true);
+        }
+        adapter.dispose();
+        child.emit('close');
+        await adapter.shutdown();
+      }
+    }
+  });
+
   test('assembles a fragmented multi-megabyte payload and reads the following frame', () => {
     const first = { value: '🦦'.repeat(600_000) };
     const next = { value: 'next' };
@@ -300,6 +366,7 @@ suite('owned Ferret debug adapter', () => {
     adapter.handleMessage(initialize);
     await spawned;
     child.stdin.read();
+    await child.launch(adapter);
     const terminate = { seq: 2, type: 'request', command: 'terminate' };
     adapter.handleMessage(terminate);
     assert.deepEqual(child.stdin.read(), frame(terminate));
@@ -311,15 +378,23 @@ suite('owned Ferret debug adapter', () => {
     assert.equal(closed, 1);
   });
 
-  test('forwards restart, terminate replies, and disconnect in order during graceful Stop', async () => {
+  test('slow cooperative Stop extends the grace period and holds Reload through close', async () => {
     const child = new DebugChild();
-    const adapter = new FerretDebugTransport(prepare, output, () => {}, () => child.process);
+    const runtime = new RuntimeCoordinator({
+      start: async () => {}, stop: async () => {}, requireConnection: () => { throw new Error('unused'); },
+    }, { entered: '' }, () => '');
+    const errors: string[] = [];
+    const grace = 400;
+    const adapter = new FerretDebugTransport(prepare, { ...output, error: m => errors.push(m) },
+      runtime.admitDebug().release, () => child.process, grace);
     const messages: object[] = [];
     adapter.onDidSendMessage(message => messages.push(message));
     const spawned = new Promise<void>(resolve => child.stdin.once('readable', resolve));
     adapter.handleMessage(initialize);
     await spawned;
     child.stdin.read();
+    await child.launch(adapter);
+    messages.length = 0;
     const restart = { seq: 2, type: 'request', command: 'terminate', arguments: { restart: true } };
     const stop = { seq: 3, type: 'request', command: 'terminate' };
     const disconnect = { seq: 4, type: 'request', command: 'disconnect' };
@@ -329,13 +404,46 @@ suite('owned Ferret debug adapter', () => {
     adapter.handleMessage(restart);
     child.stdout.write(frame(refused));
     adapter.handleMessage(stop);
+    await assert.rejects(runtime.reload(), /finish/);
+    await new Promise(resolve => setTimeout(resolve, grace * 0.65));
     child.stdout.write(Buffer.concat([frame(stopped), frame(terminated)]));
+    await new Promise(resolve => setTimeout(resolve, grace * 0.65));
     assert.equal(child.stdin.writableEnded, false);
     adapter.handleMessage(disconnect);
     assert.deepEqual(child.stdin.read(), Buffer.concat([frame(restart), frame(stop), frame(disconnect)]));
     assert.deepEqual(messages, [refused, stopped, terminated]);
+    await assert.rejects(runtime.reload(), /finish/);
     child.emit('close');
     await adapter.shutdown();
+    assert.equal(child.kills, 0);
+    assert.deepEqual(errors, []);
+    await runtime.reload();
+    await runtime.shutdown();
+  });
+
+  test('Stop during initialization cancels the queued launch and sends EOF', async () => {
+    const child = new DebugChild();
+    let closed = 0;
+    const adapter = new FerretDebugTransport(prepare, output, () => { closed++; }, () => child.process);
+    const replies: Array<{ request_seq?: number; message?: string; success?: boolean; event?: string }> = [];
+    adapter.onDidSendMessage(m => replies.push(m));
+    const spawned = new Promise<void>(resolve => child.stdin.once('readable', resolve));
+    adapter.handleMessage(initialize);
+    adapter.handleMessage({ seq: 65, type: 'request', command: 'launch' });
+    await spawned;
+    assert.deepEqual(child.stdin.read(), frame(initialize));
+    child.stdout.write(frame({ type: 'event', event: 'stopped' }));
+    adapter.handleMessage({ seq: 66, type: 'request', command: 'terminate' });
+    assert.ok(child.stdin.writableEnded);
+    child.stdout.write(frame({ type: 'response', request_seq: 1, success: true }));
+    assert.equal(child.stdin.read(), null);
+    assert.equal(closed, 0);
+    child.emit('close');
+    await adapter.shutdown();
+    assert.equal(replies.find(m => m.request_seq === 66)?.success, true);
+    assert.deepEqual(replies.filter(m => m.request_seq === 65).map(m => m.message), ['cancelled']);
+    assert.equal(replies.some(m => m.event === 'stopped'), false);
+    assert.equal(closed, 1);
     assert.equal(child.kills, 0);
   });
 
@@ -350,7 +458,12 @@ suite('owned Ferret debug adapter', () => {
       return new DebugChild().process;
     });
     adapter.handleMessage(initialize);
+    const replies: Array<{ request_seq?: number; message?: string; success?: boolean }> = [];
+    adapter.onDidSendMessage(m => replies.push(m));
+    adapter.handleMessage({ seq: 3, type: 'request', command: 'launch' });
     adapter.handleMessage({ seq: 2, type: 'request', command: 'terminate' });
+    assert.deepEqual(replies.filter(m => m.request_seq === 3).map(m => m.message), ['cancelled']);
+    assert.equal(replies.find(m => m.request_seq === 2)?.success, true);
     ready(await prepare());
     await ended;
     await adapter.shutdown();
@@ -396,4 +509,12 @@ class DebugChild extends EventEmitter {
   public get process(): ChildProcessWithoutNullStreams { return this as unknown as ChildProcessWithoutNullStreams; }
   public kills = 0;
   public kill(): boolean { this.kills++; this.emit('killed'); return true; }
+  public async launch(adapter: FerretDebugTransport): Promise<void> {
+    this.stdout.write(frame({ type: 'response', request_seq: 1, success: true }));
+    const launch = { seq: 50, type: 'request', command: 'launch' };
+    adapter.handleMessage(launch);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(this.stdin.read(), frame({ ...launch, arguments: { program: '/main.fql' } }));
+    this.stdout.write(frame({ type: 'response', request_seq: launch.seq, command: 'launch', success: true }));
+  }
 }

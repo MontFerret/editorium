@@ -433,6 +433,24 @@ suite('Ferret daemon lifecycle', () => {
     assert.deepStrictEqual(output.errors, []);
   });
 
+  test('preserves a configuration diagnostic delivered on stderr after startup exit', async () => {
+    const process = new FakeProcess(), endpoint = fakeEndpoint(), state = rpcState();
+    const diagnostic = 'ferretd: invalid runtime configuration: expected JSON';
+    const controller = new DaemonController(configuration, new FakeOutput(), () => process, async () => endpoint,
+      (_target, signal) => connection(signal, state, process, (_request, _metadata, _options, callback) => {
+        process.exit(1);
+        callback(serviceError(status.UNAVAILABLE, 'not ready'), { serverInfo: undefined });
+        setImmediate(() => process.stderr.end(diagnostic));
+        return fakeCall;
+      }), { ...timing, shutdownTimeout: 1000 });
+    await assert.rejects(controller.start('/runtime.json'), error =>
+      error instanceof DaemonError && error.code === 'startup-failed' && error.message.includes(diagnostic));
+    await controller.stop();
+    assert.equal(endpoint.disposeCalls, 1);
+    assert.equal(state.channelCloseCalls, 1);
+    assert.equal(process.killCalls, 0);
+  });
+
   test('reports an immediate process startup failure without hanging', async () => {
     const process = new FakeProcess();
     const endpoint = fakeEndpoint();

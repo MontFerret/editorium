@@ -7,6 +7,7 @@ interface DebugMessage {
   success?: boolean;
   message?: string;
   body?: {
+    breakpoints?: Array<{ verified: boolean; line?: number; column?: number; message?: string }>;
     runtimeName?: string;
     threadId?: number;
     reason?: string;

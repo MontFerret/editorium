@@ -89,6 +89,13 @@ suite('Wire debugging through VS Code', () => {
     await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(program));
     const observer = observe('Debug Current Ferret File');
     await vscode.commands.executeCommand('workbench.action.debug.start');
+    const response = await observer.wait(m => m.command === 'setBreakpoints');
+    assert.equal(response.success, true, response.message);
+    const binding = response.body?.breakpoints?.[0];
+    assert.ok(binding, 'Expected a binding for the local source breakpoint');
+    assert.equal(binding.verified, true, binding.message);
+    assert.equal(binding.line, 2);
+    assert.equal(binding.column, line.indexOf('LET nextValue') + 1);
     assert.equal((await observer.wait(m => m.command === 'launch')).body?.runtimeName, 'App');
     const { threadId, reason } = (await observer.wait(m => m.event === 'stopped')).body!;
     assert.equal(reason, 'breakpoint');
@@ -176,7 +183,7 @@ suite('Wire debugging through VS Code', () => {
     await host!.wait('entered', 1, undefined, 'active');
     const paused = await launch('paused host loss', 'paused.fql', { stopOnEntry: true });
     await paused.wait(m => m.event === 'stopped');
-    await host!.close();
+    await host!.kill();
     host = undefined;
     for (const debug of [paused, active]) {
       const diagnostic = await debug.wait(m => m.event === 'output' && m.body?.category === 'stderr');

@@ -97,7 +97,7 @@
               },
               "workingDirectory": {
                 "type": "string",
-                "description": "Runtime filesystem directory. Native relative paths resolve against the compilation workspace. Wire receives the value verbatim. Blank uses the runtime default."
+                "description": "Runtime filesystem directory. A nonblank override requires a debug adapter that advertises runtime selection. Native relative paths resolve against the compilation workspace. Wire receives the value verbatim. Blank uses the runtime default."
               },
               "parameters": {
                 "type": "object",

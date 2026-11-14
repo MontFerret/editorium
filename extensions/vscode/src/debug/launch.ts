@@ -1,4 +1,4 @@
-import { dirname } from 'node:path';
+import * as hostPath from 'node:path';
 import type * as vscode from 'vscode';
 import { validateParameters } from '../execution/parameters';
 import { resolveWorkingDirectory } from '../execution/working-directory';
@@ -15,7 +15,7 @@ export interface PreparedDebugLaunch extends RuntimeSelection {
 // The adapter's Go JSON decoder matches launch fields case-insensitively.
 const runtimeFields = new Set(['program', 'cwd', 'runtimename', 'parameters', 'workingdirectory']);
 
-export function snapshotDebugArguments(config: vscode.DebugConfiguration) {
+export function snapshotDebugArguments(config: vscode.DebugConfiguration, paths = hostPath) {
   const program = launchField(config, 'program')?.value;
   const cwd = launchField(config, 'cwd')?.value;
   if (typeof program !== 'string' || !program.trim().endsWith('.fql')) {
@@ -25,15 +25,25 @@ export function snapshotDebugArguments(config: vscode.DebugConfiguration) {
   const directory = launchField(config, 'workingDirectory')?.value;
   if (directory !== undefined && typeof directory !== 'string') throw new Error('Set workingDirectory to a string.');
   const parameters = launchField(config, 'parameters');
+  // VS Code substitution and Uri.fsPath can spell the same drive differently.
+  // ferretd uses the compilation root when it names the compiled source.
+  const source = debugSourcePath(program, paths);
+  const root = cwd === undefined ? undefined : debugSourcePath(cwd, paths);
   return {
-    root: cwd?.trim() || dirname(program.trim()),
+    root: root?.trim() || paths.dirname(source.trim()),
     directory,
     parameters: parameters && validateParameters(parameters.value),
     // VS Code can add metadata before sending launch. Keep these source inputs
     // consistent with the workspace used to resolve a native directory.
-    program,
-    cwd,
+    program: source,
+    cwd: root,
   };
+}
+
+function debugSourcePath(value: string, paths: typeof hostPath): string {
+  if (paths.sep !== '\\') return value;
+  return value.replace(/^(\s*(?:\\\\[?.]\\)?)([A-Z])(?=:[\\/])/, (_, prefix: string, drive: string) =>
+    prefix + drive.toLowerCase());
 }
 
 function launchField(config: vscode.DebugConfiguration, name: string): { value: unknown } | undefined {

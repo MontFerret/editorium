@@ -269,8 +269,17 @@ export class RuntimeCoordinator {
     this.assertCurrent(generation);
     const { config } = generation.revision;
     if (config.problem) throw new Error(config.problem);
-    await this.verifyFile(generation);
-    await this.daemon.start(config.path, generation.executable);
+    await this.verifyRevision(generation.revision);
+    this.assertCurrent(generation);
+    try {
+      await this.daemon.start(config.path, generation.executable);
+    } catch (error) {
+      this.assertCurrent(generation);
+      if (generation.revision.digest !== undefined) {
+        await this.verifyFile(generation);
+      }
+      throw error;
+    }
     this.assertCurrent(generation);
     const connection = this.daemon.requireConnection();
     generation.connection = connection;
@@ -327,7 +336,8 @@ export class RuntimeCoordinator {
       const connection = await this.start(generation);
       this.assertCurrent(generation);
       const catalog = await this.discover(connection);
-      await this.verifyFile(generation);
+      await this.verifyRevision(generation.revision);
+      this.assertCurrent(generation);
       generation.catalog = catalog;
       if (this.pending) return;
       this.replacing = false;

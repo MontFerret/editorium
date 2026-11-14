@@ -168,6 +168,39 @@ suite('window runtime catalog', () => {
     assert.equal(runtime.view.status, 'ready');
   });
 
+  for (const boundary of ['daemon start', 'catalog publication']) {
+    test(`Reload prevents a superseded ${boundary} at every promise continuation`, async () => {
+      // The built-in revision needs no filesystem I/O. Move Reload one microtask
+      // later on each attempt until A has already performed the operation.
+      const latest = { defaultRuntime: 'local', runtimes: [local] };
+      for (let turns = 0; turns < 100; turns++) {
+        await runtime.shutdown();
+        daemon = new RuntimeDaemon();
+        runtime = new RuntimeCoordinator(daemon, { entered: '' }, () => '',
+          async () => daemon.paths.at(-1) === config ? latest : catalog);
+        const seen: string[] = [];
+        const subscription = runtime.onDidChange(() => {
+          if (runtime.view.catalog) seen.push(runtime.view.catalog.defaultRuntime);
+        });
+        const old = runtime.catalog();
+        for (let tick = 0; tick < turns; tick++) await Promise.resolve();
+        const reached = boundary === 'daemon start' ? daemon.paths.length > 0 : seen.length > 0;
+        if (reached) {
+          await old;
+          subscription.dispose();
+          return;
+        }
+        runtime.save(resolveRuntimeConfiguration(config));
+        await Promise.all([runtime.reload(), old]);
+        subscription.dispose();
+        if (boundary === 'daemon start') assert.deepEqual(daemon.paths, [config]);
+        assert.deepEqual(seen, ['local']);
+        assert.deepEqual(runtime.view.catalog, latest);
+      }
+      assert.fail(`A never reached ${boundary}`);
+    });
+  }
+
   for (const restoreOriginal of [false, true]) {
     test(`explicit Reload supersedes the older replacement after ${restoreOriginal ? 'A → B → A' : 'A → B'}`, async () => {
       const entered = gate(), release = gate();
@@ -267,6 +300,44 @@ suite('window runtime catalog', () => {
     discover = async () => { await rm(config); return catalog; };
     await runtime.reload();
     assert.equal(runtime.view.status, 'reload-required');
+  });
+
+  for (const change of ['edited', 'removed', 'unchanged']) {
+    test(`checks the admitted file after failed startup with ${change} configuration`, async () => {
+      runtime.save(resolveRuntimeConfiguration(config));
+      daemon.beforeStart = async () => {
+        if (change === 'edited') await writeFile(config, 'new contents');
+        if (change === 'removed') await rm(config);
+        throw new Error('ferretd: invalid runtime configuration: expected JSON');
+      };
+      const debug = runtime.admitDebug();
+      const diagnostic = change === 'unchanged' ? /invalid runtime configuration: expected JSON/ : /Reload/;
+      await assert.rejects(debug.prepareDebug(new AbortController().signal), diagnostic);
+      debug.release();
+      assert.match(runtime.view.message!, diagnostic);
+      assert.equal(runtime.view.status, change === 'unchanged' ? 'failed' : 'reload-required');
+      if (change !== 'unchanged') {
+        assert.throws(() => runtime.admitDebug(), /Reload/);
+        assert.throws(() => runtime.admitRun(), /Reload/);
+      }
+    });
+  }
+
+  test('a superseded startup failure cannot invalidate the replacement catalog', async () => {
+    const entered = gate(), release = gate();
+    runtime.save(resolveRuntimeConfiguration(config));
+    daemon.beforeStart = async () => { entered.open(); await release.promise; throw new Error('old startup failed'); };
+    const old = runtime.catalog();
+    await entered.promise;
+    await rm(config);
+    runtime.save({ entered: '' });
+    daemon.beforeStart = async () => {};
+    await runtime.reload();
+    release.open();
+    await old;
+    assert.equal(runtime.view.status, 'ready');
+    assert.deepEqual(runtime.view.catalog, catalog);
+    runtime.admitRun().release();
   });
 
   test('resolves against admitted A after Save B and detects edits before memoized reuse', async () => {

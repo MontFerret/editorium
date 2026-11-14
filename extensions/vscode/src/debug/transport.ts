@@ -34,7 +34,7 @@ export class FerretDebugTransport implements vscode.DebugAdapter {
   private failure?: Promise<void>;
   private startupDiagnostic?: string;
   private supportsSelection?: boolean;
-  private launchAccepted = false;
+  private launchRequest?: { seq: number; state: 'held' | 'forwarded' | 'accepted' };
   private stopping = false;
   private terminated = false;
   private finished = false;
@@ -75,22 +75,25 @@ export class FerretDebugTransport implements vscode.DebugAdapter {
     }
     if (request.type === 'request' && request.seq !== undefined && request.command) {
       this.pending.set(request.seq, request.command);
+      if (request.command === 'launch') this.launchRequest ??= { seq: request.seq, state: 'held' };
       const stop = request.arguments?.restart !== true &&
         (request.command === 'disconnect' || request.command === 'terminate');
       if (stop) {
         this.abort.abort();
-        if (this.child) this.write(request);
-        else this.reply(request, true);
-        if (!this.child || request.command === 'disconnect') this.dispose();
-        else this.awaitShutdownProgress();
+        if (!this.launchRequest || this.launchRequest.state === 'held') {
+          this.reply(request, true);
+          this.dispose();
+        } else {
+          this.write(request);
+          if (request.command === 'disconnect') this.dispose();
+          else this.awaitShutdownProgress();
+        }
         return;
       }
       if (request.command === 'cancel') {
         // A launch held at the initialize/fingerprint gate is still ours.
-        const held = this.outgoing.find(item => item.command === 'launch' && item.seq === request.arguments?.requestId);
-        if (held) {
+        if (this.launchRequest?.state === 'held' && this.launchRequest.seq === request.arguments?.requestId) {
           this.reply(request, true);
-          this.reply(held, false, 'cancelled');
           this.dispose();
         } else if (this.child) this.write(request);
         else this.reply(request, true);
@@ -157,12 +160,20 @@ export class FerretDebugTransport implements vscode.DebugAdapter {
         const launch = this.launch!;
         this.checking = launch.verifyConfiguration().then(() => {
           if (this.abort.signal.aborted) return;
-          if ((launch.configPath || launch.selector !== '') && !this.supportsSelection) {
-            throw new Error('This Ferret debug adapter does not support runtime selection.');
+          if (!this.supportsSelection) {
+            if (launch.arguments.workingDirectory !== undefined) {
+              throw new Error('A Debug workingDirectory override requires a Ferret adapter that advertises runtime selection.');
+            }
+            if (launch.configPath || launch.selector !== '') {
+              throw new Error('This Ferret debug adapter does not support runtime selection.');
+            }
           }
           this.outgoing.shift();
+          if (this.launchRequest && this.launchRequest.seq === request.seq) this.launchRequest.state = 'forwarded';
           this.write({ ...request, arguments: mergeDebugArguments(request.arguments, launch.arguments) });
-        }).catch(error => this.fail(error)).finally(() => {
+        }).catch(error => {
+          if (!this.abort.signal.aborted) this.fail(error);
+        }).finally(() => {
           this.checking = undefined;
           this.flush();
         });
@@ -199,13 +210,13 @@ export class FerretDebugTransport implements vscode.DebugAdapter {
           this.fail(new Error(`The debug adapter did not acknowledge the expected Ferret runtime "${launch.name}".`));
           return;
         }
-        this.launchAccepted = true;
+        if (this.launchRequest?.seq === message.request_seq) this.launchRequest.state = 'accepted';
       }
       this.pending.delete(message.request_seq);
       this.messages.fire(message);
       if (command === 'initialize') this.flush();
       if (command === 'launch') {
-        if (this.launchAccepted && !this.abort.signal.aborted) {
+        if (this.launchRequest?.state === 'accepted' && !this.abort.signal.aborted) {
           for (const stop of this.earlyStops.splice(0)) this.messages.fire(stop);
         } else this.dispose();
       }
@@ -213,7 +224,7 @@ export class FerretDebugTransport implements vscode.DebugAdapter {
       return;
     }
     if (message.type === 'event') {
-      if (message.event === 'stopped' && !this.launchAccepted) {
+      if (message.event === 'stopped' && (this.launchRequest?.state !== 'accepted' || this.abort.signal.aborted)) {
         if (!this.abort.signal.aborted) this.earlyStops.push(message);
         return;
       }
@@ -264,6 +275,9 @@ export class FerretDebugTransport implements vscode.DebugAdapter {
     if (this.stopping) return;
     this.stopping = true;
     this.abort.abort();
+    if (!this.failure && this.launchRequest?.state === 'held') {
+      this.reply({ seq: this.launchRequest.seq, command: 'launch' }, false, 'cancelled');
+    }
     this.outgoing.length = this.earlyStops.length = 0;
     if (!this.child) {
       if (!this.starting) void this.finish();

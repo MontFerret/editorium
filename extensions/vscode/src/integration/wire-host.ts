@@ -68,4 +68,9 @@ export class WireHost {
       }
     } finally { clearTimeout(timer); }
   }
+
+  public async kill(): Promise<void> {
+    if (!this.child.kill('SIGKILL')) throw new Error('Failed to terminate the Wire fixture for the host-loss test.');
+    await this.closed;
+  }
 }

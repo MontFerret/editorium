@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 
 import { debugFileCommand } from '../debug/commands';
 import { extensionId } from '../test/extension-identity';
+import { DebugObserver } from './debug-observer';
 
 const debugType = 'ferret';
 const explicitSessionName = 'Ferret DAP integration';
@@ -22,6 +23,32 @@ suite('ferretd DAP integration', () => {
     await runCurrentFileDebugSession(() =>
       vscode.commands.executeCommand(debugFileCommand),
     );
+  });
+
+  test('uses a working directory override with the unconfigured local adapter', async () => {
+    await configureFerretd();
+    const root = await mkdtemp(join(tmpdir(), 'ferret-dap-source-'));
+    const directory = await mkdtemp(join(tmpdir(), 'ferret-dap-runtime-'));
+    const program = join(root, 'read.fql');
+    const name = 'Local runtime directory';
+    const observer = new DebugObserver(name);
+    try {
+      await writeFile(program, 'RETURN TO_STRING(IO::FS::READ("marker.txt"))');
+      await writeFile(join(root, 'marker.txt'), 'compilation root');
+      await writeFile(join(directory, 'marker.txt'), 'local runtime override');
+      assert.equal(await vscode.debug.startDebugging(undefined, {
+        type: debugType, request: 'launch', name, program, cwd: root,
+        runtimeName: '', workingDirectory: relative(root, directory),
+      }), true);
+      assert.equal((await observer.wait(m => m.command === 'launch')).body?.runtimeName, 'local');
+      await observer.wait(m => m.event === 'output' && !!m.body?.output?.includes('local runtime override'));
+      await observer.wait(m => m.event === 'terminated');
+    } finally {
+      if (observer.session) await vscode.debug.stopDebugging(observer.session);
+      observer.dispose();
+      await rm(directory, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test('forwards a breakpoint, frame inspection, evaluation, and a step through the owned process', async () => {
