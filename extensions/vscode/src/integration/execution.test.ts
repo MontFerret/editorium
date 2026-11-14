@@ -1,6 +1,7 @@
 import { FerretDebugAdapterDescriptorFactory } from '../debug/adapter';
+import { withholdSessionReply } from './withheld-session';
 import { WireHost } from './wire-host';
-import type { RunOptions } from '../execution/run-options';
+import { readRunOptions, type RunOptions } from '../execution/run-options';
 import { RuntimeCoordinator } from '../runtime/coordinator';
 import * as assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -650,6 +651,47 @@ suite('ferretd execution integration', () => {
     } finally { await fixture.dispose(); }
   });
 
+  test('refreshes the native plan after external same-size edits across an editor reopen', async () => {
+    const fixture = await RealExecutionFixture.create(executable, [
+      { name: 'root', files: { 'external.fql': 'RETURN 1' } },
+    ]);
+    try {
+      const doc = await fixture.document('root', 'external.fql');
+      await vscode.window.showTextDocument(doc);
+      const before = await runToTerminal(fixture, doc);
+      assert.equal(resultValue(before.change), 1);
+      await writeFile(doc.uri.fsPath, 'RETURN 2');
+      const after = await runToTerminal(fixture, doc);
+      assert.equal(resultValue(after.change), 2);
+      assert.notEqual(before.handle.sessionId, after.handle.sessionId);
+      await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+      await writeFile(doc.uri.fsPath, 'RETURN 3');
+      const reopened = await fixture.document('root', 'external.fql');
+      const third = await runToTerminal(fixture, reopened);
+      assert.equal(resultValue(third.change), 3);
+      assert.notEqual(third.handle.sessionId, after.handle.sessionId);
+    } finally { await fixture.dispose(); }
+  });
+
+  test('runs literal toJSON properties from real resource-scoped settings', async () => {
+    const fixture = await RealExecutionFixture.create(executable, [
+      { name: 'root', files: { 'settings.fql': 'RETURN @payload' } },
+    ]);
+    const document = await fixture.document('root', 'settings.fql');
+    const settings = () => vscode.workspace.getConfiguration('ferret.run', document.uri);
+    try {
+      const payload = { toJSON: 'literal', nested: [{ ToJson: false }] };
+      // The test profile is temporary. Reading by source URI exercises the
+      // extension host's configuration proxy, including nested JSON objects.
+      await settings().update('parameters', { payload }, vscode.ConfigurationTarget.Global);
+      const run = await runToTerminal(fixture, document, readRunOptions({}, settings()));
+      assert.deepEqual(resultValue(run.change), payload);
+    } finally {
+      await settings().update('parameters', undefined, vscode.ConfigurationTarget.Global);
+      await fixture.dispose();
+    }
+  });
+
   test('runs on the living Wire host, releases each binding, and reacquires after Stop', async () => {
     const binary = process.env.FERRET_WIRE_HOST_PATH;
     assert.ok(binary, 'make test vscode must supply the independent Wire host');
@@ -692,6 +734,20 @@ suite('ferretd execution integration', () => {
       const secondId = (await host.wait('connected', 2)).id;
       assert.ok(secondId && secondId !== firstId);
       await host.wait('entered', 1, undefined, 'stop');
+      const daemon = fixture.latestProcess();
+      const held = await withholdSessionReply(fixture.daemon.requireConnection().executions);
+      try {
+        const lost = assert.rejects(fixture.manager.run(query, { parameters: { value } }), /cancelled/);
+        await Promise.race([held.committed, lost.then(() => { throw new Error('Run ended before its Session was published'); })]);
+        const lostId = (await host.wait('connected', 3)).id;
+        assert.ok(lostId && lostId !== secondId);
+        await fixture.manager.cancel(query.uri);
+        await lost;
+        await host.wait('released', 1, lostId);
+        assert.equal(fixture.manager.getActive(block.uri)?.id, handle.id);
+        assert.equal(host.count('released'), 2);
+        assert.equal(host.count('engineClosed'), 0);
+      } finally { held.dispose(); }
       await handle.cancel();
       assertFinished(await terminal, 'cancelled');
       await host.wait('cancelled', 1, undefined, 'stop');
@@ -700,12 +756,16 @@ suite('ferretd execution integration', () => {
       const again = await runToTerminal(fixture, query, { runtimeName: 'App', parameters: { value }, workingDirectory: fixture.path('source', '') });
       assert.deepEqual(resultValue(again.change), { value, marker: 'editor' });
       assert.notEqual(again.handle.sessionId, first.handle.sessionId);
-      const thirdId = (await host.wait('connected', 3)).id;
+      assert.equal(fixture.latestProcess(), daemon);
+      const thirdId = (await host.wait('connected', 4)).id;
       assert.ok(thirdId && thirdId !== secondId);
       await host.wait('released', 1, thirdId);
       assert.equal(host.count('engineClosed'), 0);
     } finally {
-      try { await fixture.dispose(); } finally { await host?.close(); }
+      try {
+        await fixture.dispose();
+        if (host) assert.equal(host.count('engineClosed'), 0);
+      } finally { await host?.close(); }
     }
   });
 

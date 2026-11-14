@@ -1,7 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import { validateIdentifier, validateRelativePath } from './request-validation';
 import { ExecutionWatch } from './watch';
 
-import { Metadata } from '@grpc/grpc-js';
+import { Metadata, status } from '@grpc/grpc-js';
 import type {
   ClientUnaryCall,
   ServiceError,
@@ -16,6 +17,7 @@ import type {
   RunExecutionResponse,
 } from '../daemon/gen/ferretd/execution/v1/execution.pb';
 import { unary } from '../daemon/rpc';
+import { isServiceError } from '../daemon/status-details';
 import type {
   DaemonConnection,
   ExecutionGeneratedClient,
@@ -30,9 +32,9 @@ import {
   mapSession,
   ProtocolMappingError,
 } from './mapping';
-import { supportsRuntimeSelection } from '../runtime/catalog';
+import { supportsAcquisitionCancellation, supportsRuntimeSelection } from '../runtime/catalog';
 import type { PreparedRuntime } from '../runtime/coordinator';
-import { validateParameters } from './parameters';
+import type { FerretParameters } from './types';
 import type {
   FerretExecution,
   FerretExecutionEvent,
@@ -64,14 +66,21 @@ export class FerretExecutionClient {
         message: 'Runtime selection requires ferretd API 1.3 or later in major 1.',
       });
     }
-    const response = await this.invoke<CreateSessionResponse, CreateSessionResponse>(
-      'create-session',
-      (client, callback) => client.createSession({
-        workspaceId: { value: workspaceId }, relativePath, runtimeName: runtime.selector,
-      }, new Metadata(), { deadline: Date.now() + sessionDeadlineMs }, callback),
-      value => value, signal,
-    );
+    const acquisitionId = supportsAcquisitionCancellation(this.connection) ? randomUUID() : undefined;
+    signal?.throwIfAborted();
+    this.connection.signal.throwIfAborted();
+    let response: CreateSessionResponse | undefined;
     try {
+      response = await this.invoke<CreateSessionResponse, CreateSessionResponse>(
+        'create-session',
+        (client, callback) => client.createSession({
+          workspaceId: { value: workspaceId }, relativePath, runtimeName: runtime.selector, ...(acquisitionId && { acquisitionId }),
+        }, new Metadata(), { deadline: Date.now() + sessionDeadlineMs }, callback),
+        value => value, signal,
+      );
+      if (acquisitionId && response?.session?.acquisitionId !== acquisitionId) {
+        throw new ProtocolMappingError('Session acknowledged a different acquisition ID.');
+      }
       const session = mapSession(response?.session);
       if (session.source.workspaceId !== workspaceId || session.source.relativePath !== relativePath) {
         throw new ProtocolMappingError('Session acknowledged a different workspace source.');
@@ -82,28 +91,29 @@ export class FerretExecutionClient {
       signal?.throwIfAborted();
       return session;
     } catch (error) {
+      // A duplicate belongs to the original creator of that key.
+      if (error instanceof FerretExecutionClientError && isServiceError(error.cause) && error.cause.code === status.ALREADY_EXISTS) throw error;
+      if (acquisitionId) {
+        return this.rejectCreation('create-session', error, acquisitionId, id =>
+          this.invoke('cancel-session-acquisition', (client, callback) =>
+            client.cancelSessionAcquisition({ workspaceId: { value: workspaceId }, acquisitionId: id },
+              new Metadata(), { deadline: Date.now() + cleanupDeadlineMs }, callback), () => undefined));
+      }
       return this.rejectCreation('create-session', error, response?.session?.id?.value, id => this.closeSession(id));
     }
   }
 
   public async createExecution(
     sessionId: string,
-    parameters: Readonly<Record<string, unknown>> = {},
+    parameters: FerretParameters = {},
     workingDirectory?: string,
     signal?: AbortSignal,
   ): Promise<FerretExecution> {
     validateIdentifier('session ID', sessionId, 'create-execution');
-    let validated;
-    try {
-      validated = validateParameters(parameters);
-    } catch (error) {
-      throw normalizeExecutionError(error, 'create-execution');
-    }
-
     const response = await this.invoke<CreateExecutionResponse, CreateExecutionResponse>(
       'create-execution',
       (client, callback) => client.createExecution({
-        sessionId: { value: sessionId }, parameters: validated,
+        sessionId: { value: sessionId }, parameters,
         options: { outputContentType: jsonContentType, ...(workingDirectory === undefined ? {} : { workingDirectory }) },
       }, new Metadata(), {}, callback),
       value => value, signal,
@@ -111,10 +121,10 @@ export class FerretExecutionClient {
     try {
       const execution = mapExecution(response?.execution);
       if (execution.sessionId !== sessionId) throw new ProtocolMappingError('Execution acknowledged a different Session.');
-      signal?.throwIfAborted();
+      // Deliver a valid late child to the owner so Stop can cancel it before close.
       return execution;
     } catch (error) {
-      return this.rejectCreation('create-execution', error, response?.execution?.id?.value, id => this.closeExecution(id));
+      return this.rejectCreation('create-execution', error, response?.execution?.sessionId?.value === sessionId ? response.execution.id?.value : undefined, id => this.closeExecution(id));
     }
   }
 
@@ -127,7 +137,7 @@ export class FerretExecutionClient {
         await close(id);
       } catch (cleanup) {
         throw new FerretExecutionClientError({
-          ...primary, message: `${primary.message}. Cleanup of "${id}" failed: ${String(cleanup)}`,
+          ...primary, message: `${primary.message}. Cleanup of "${id}" failed. Remote release is unconfirmed: ${String(cleanup)}`,
           cause: new AggregateError([primary, cleanup]),
         });
       }

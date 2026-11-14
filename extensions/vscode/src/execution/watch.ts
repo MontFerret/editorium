@@ -168,7 +168,8 @@ export class ExecutionWatch implements AsyncIterable<FerretExecutionEvent> {
     }
 
     this.done = true;
-    this.queue.length = 0;
+    // Keep received events available to the single observer even when Stop wins the unary acknowledgment race.
+    if (!this.terminalSeen) this.queue.length = 0;
     this.detachSignals();
     this.stream.cancel();
     this.notify();

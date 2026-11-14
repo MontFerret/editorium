@@ -79,6 +79,7 @@ export interface Session {
   source?: SourceSnapshot | undefined;
   parameters: string[];
   runtimeName: string;
+  acquisitionId: string;
 }
 
 export interface ExecutionOptions {
@@ -179,10 +180,21 @@ export interface CreateSessionRequest {
   workspaceId?: WorkspaceId | undefined;
   relativePath: string;
   runtimeName: string;
+  /** Fresh client UUID, scoped to this registered workspace (API 1.4). */
+  acquisitionId?: string | undefined;
 }
 
 export interface CreateSessionResponse {
   session?: Session | undefined;
+}
+
+/** Success confirms settlement and prevents later publication under this key. */
+export interface CancelSessionAcquisitionRequest {
+  workspaceId?: WorkspaceId | undefined;
+  acquisitionId: string;
+}
+
+export interface CancelSessionAcquisitionResponse {
 }
 
 export interface GetSessionRequest {
@@ -422,7 +434,7 @@ export const SourceSnapshot: MessageFns<SourceSnapshot> = {
 };
 
 function createBaseSession(): Session {
-  return { id: undefined, source: undefined, parameters: [], runtimeName: "" };
+  return { id: undefined, source: undefined, parameters: [], runtimeName: "", acquisitionId: "" };
 }
 
 export const Session: MessageFns<Session> = {
@@ -438,6 +450,9 @@ export const Session: MessageFns<Session> = {
     }
     if (message.runtimeName !== "") {
       writer.uint32(34).string(message.runtimeName);
+    }
+    if (message.acquisitionId !== "") {
+      writer.uint32(42).string(message.acquisitionId);
     }
     return writer;
   },
@@ -481,6 +496,14 @@ export const Session: MessageFns<Session> = {
           message.runtimeName = reader.string();
           continue;
         }
+        case 5: {
+          if (tag !== 42) {
+            break;
+          }
+
+          message.acquisitionId = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -501,6 +524,7 @@ export const Session: MessageFns<Session> = {
       : undefined;
     message.parameters = object.parameters?.map((e) => e) || [];
     message.runtimeName = object.runtimeName ?? "";
+    message.acquisitionId = object.acquisitionId ?? "";
     return message;
   },
 };
@@ -1639,7 +1663,7 @@ export const WatchExecutionResponse: MessageFns<WatchExecutionResponse> = {
 };
 
 function createBaseCreateSessionRequest(): CreateSessionRequest {
-  return { workspaceId: undefined, relativePath: "", runtimeName: "" };
+  return { workspaceId: undefined, relativePath: "", runtimeName: "", acquisitionId: undefined };
 }
 
 export const CreateSessionRequest: MessageFns<CreateSessionRequest> = {
@@ -1652,6 +1676,9 @@ export const CreateSessionRequest: MessageFns<CreateSessionRequest> = {
     }
     if (message.runtimeName !== "") {
       writer.uint32(26).string(message.runtimeName);
+    }
+    if (message.acquisitionId !== undefined) {
+      writer.uint32(34).string(message.acquisitionId);
     }
     return writer;
   },
@@ -1687,6 +1714,14 @@ export const CreateSessionRequest: MessageFns<CreateSessionRequest> = {
           message.runtimeName = reader.string();
           continue;
         }
+        case 4: {
+          if (tag !== 34) {
+            break;
+          }
+
+          message.acquisitionId = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1706,6 +1741,7 @@ export const CreateSessionRequest: MessageFns<CreateSessionRequest> = {
       : undefined;
     message.relativePath = object.relativePath ?? "";
     message.runtimeName = object.runtimeName ?? "";
+    message.acquisitionId = object.acquisitionId ?? undefined;
     return message;
   },
 };
@@ -1754,6 +1790,100 @@ export const CreateSessionResponse: MessageFns<CreateSessionResponse> = {
     message.session = (object.session !== undefined && object.session !== null)
       ? Session.fromPartial(object.session)
       : undefined;
+    return message;
+  },
+};
+
+function createBaseCancelSessionAcquisitionRequest(): CancelSessionAcquisitionRequest {
+  return { workspaceId: undefined, acquisitionId: "" };
+}
+
+export const CancelSessionAcquisitionRequest: MessageFns<CancelSessionAcquisitionRequest> = {
+  encode(message: CancelSessionAcquisitionRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.workspaceId !== undefined) {
+      WorkspaceId.encode(message.workspaceId, writer.uint32(10).fork()).join();
+    }
+    if (message.acquisitionId !== "") {
+      writer.uint32(18).string(message.acquisitionId);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): CancelSessionAcquisitionRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseCancelSessionAcquisitionRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.workspaceId = WorkspaceId.decode(reader, reader.uint32());
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.acquisitionId = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<CancelSessionAcquisitionRequest>): CancelSessionAcquisitionRequest {
+    return CancelSessionAcquisitionRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<CancelSessionAcquisitionRequest>): CancelSessionAcquisitionRequest {
+    const message = createBaseCancelSessionAcquisitionRequest();
+    message.workspaceId = (object.workspaceId !== undefined && object.workspaceId !== null)
+      ? WorkspaceId.fromPartial(object.workspaceId)
+      : undefined;
+    message.acquisitionId = object.acquisitionId ?? "";
+    return message;
+  },
+};
+
+function createBaseCancelSessionAcquisitionResponse(): CancelSessionAcquisitionResponse {
+  return {};
+}
+
+export const CancelSessionAcquisitionResponse: MessageFns<CancelSessionAcquisitionResponse> = {
+  encode(_: CancelSessionAcquisitionResponse, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): CancelSessionAcquisitionResponse {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseCancelSessionAcquisitionResponse();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<CancelSessionAcquisitionResponse>): CancelSessionAcquisitionResponse {
+    return CancelSessionAcquisitionResponse.fromPartial(base ?? {});
+  },
+  fromPartial(_: DeepPartial<CancelSessionAcquisitionResponse>): CancelSessionAcquisitionResponse {
+    const message = createBaseCancelSessionAcquisitionResponse();
     return message;
   },
 };
@@ -2474,6 +2604,19 @@ export const ExecutionServiceService = {
       Buffer.from(CreateSessionResponse.encode(value).finish()),
     responseDeserialize: (value: Buffer): CreateSessionResponse => CreateSessionResponse.decode(value),
   },
+  cancelSessionAcquisition: {
+    path: "/ferretd.execution.v1.ExecutionService/CancelSessionAcquisition" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: CancelSessionAcquisitionRequest): Buffer =>
+      Buffer.from(CancelSessionAcquisitionRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): CancelSessionAcquisitionRequest =>
+      CancelSessionAcquisitionRequest.decode(value),
+    responseSerialize: (value: CancelSessionAcquisitionResponse): Buffer =>
+      Buffer.from(CancelSessionAcquisitionResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): CancelSessionAcquisitionResponse =>
+      CancelSessionAcquisitionResponse.decode(value),
+  },
   getSession: {
     path: "/ferretd.execution.v1.ExecutionService/GetSession" as const,
     requestStream: false as const,
@@ -2561,6 +2704,7 @@ export const ExecutionServiceService = {
 
 export interface ExecutionServiceServer extends UntypedServiceImplementation {
   createSession: handleUnaryCall<CreateSessionRequest, CreateSessionResponse>;
+  cancelSessionAcquisition: handleUnaryCall<CancelSessionAcquisitionRequest, CancelSessionAcquisitionResponse>;
   getSession: handleUnaryCall<GetSessionRequest, GetSessionResponse>;
   closeSession: handleUnaryCall<CloseSessionRequest, CloseSessionResponse>;
   createExecution: handleUnaryCall<CreateExecutionRequest, CreateExecutionResponse>;

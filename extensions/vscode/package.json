@@ -222,7 +222,7 @@
           "type": "string",
           "default": "",
           "scope": "window",
-          "markdownDescription": "Runtime configuration file on the extension host. Relative paths require a single file-backed workspace folder. After first use, run **Ferret: Reload Runtimes** to adopt changes. Run uses the selected native or Wire runtime. Debug requires an empty path and **Daemon default**."
+          "markdownDescription": "Runtime configuration file on the extension host. Relative paths require a single file-backed workspace folder. After first use, run **Ferret: Reload Runtimes** to adopt changes. Run uses the selected native or Wire runtime. Wire Run requires ferretd API 1.4 or later in major 1. Debug requires an empty path and **Daemon default**."
         }
       }
     }

@@ -2,6 +2,7 @@ import { performance } from 'node:perf_hooks';
 
 import * as vscode from 'vscode';
 
+import { fingerprintFile } from '../file-fingerprint';
 import type { FerretWorkspaceInvalidation } from '../daemon/workspaces';
 import type { DaemonConnection, ResolvedFerretDocument } from '../daemon/types';
 import type { PreparedRuntime, RunReservation, RuntimeCoordinator } from '../runtime/coordinator';
@@ -16,6 +17,7 @@ import type {
   FerretExecutionEvent,
   FerretExecutionFailure,
   FerretSession,
+  FerretParameters,
 } from './types';
 import { ManagedExecutionHandle } from './managed-execution';
 import { waitForPreparation } from './preparation';
@@ -87,7 +89,7 @@ export interface ExecutionClient {
   ): Promise<FerretSession>;
   createExecution(
     sessionId: string,
-    parameters: Readonly<Record<string, unknown>>,
+    parameters: FerretParameters,
     workingDirectory: string | undefined,
     signal: AbortSignal,
   ): Promise<FerretExecution>;
@@ -145,6 +147,7 @@ export class FerretExecutionManager {
     private readonly output: ExecutionManagerOutput,
     private readonly runtime: Pick<RuntimeCoordinator, 'admitRun' | 'holdCleanup'>,
     documents: ExecutionDocumentEvents = vscode.workspace,
+    private readonly sourceFingerprint = fingerprintFile,
   ) {
     this.documentSaveListener = documents.onDidSaveTextDocument(
       (document) => this.invalidateSavedDocument(document),
@@ -179,7 +182,7 @@ export class FerretExecutionManager {
     if (this.isRunning(document.uri)) {
       throw managerError('execution-already-running', 'This document already has an active Ferret execution.', document.uri);
     }
-    const parameters = validateParameters(options.parameters === undefined ? {} : options.parameters);
+    const parameters = validateParameters(Object.prototype.hasOwnProperty.call(options, 'parameters') ? options.parameters : {});
     const directory = options.workingDirectory;
     let reservation: RunReservation;
     try {
@@ -197,7 +200,8 @@ export class FerretExecutionManager {
     this.pending.set(documentKey, pending);
     const startedAt = performance.now();
     let resources: RunResources | undefined;
-    let observing = false;
+    let observed: ManagedExecutionHandle | undefined;
+    let observationSettled = false;
     const watchAbort = new AbortController();
     try {
       this.changeEmitter.fire({ kind: 'preparing', documentUri: document.uri });
@@ -214,11 +218,13 @@ export class FerretExecutionManager {
       pending.workspaceId = target.workspaceId;
       const workingDirectory = await waitForPreparation(resolveWorkingDirectory(directory, target.root, runtime), signal);
       this.assertCanStart(document, pending, target);
+      const sourceDigest = runtime.provider === 'native'
+        ? await waitForPreparation(this.sourceFingerprint(document.uri.fsPath), signal) : undefined;
       await waitForPreparation(reservation.verifyConfiguration(), signal);
       this.assertCanStart(document, pending, target);
 
       let session = runtime.provider === 'native' ? this.cache.get(documentKey) : undefined;
-      if (session && (session.generation !== generation || session.runtimeName !== runtime.name ||
+      if (session && (session.generation !== generation || session.runtimeName !== runtime.name || session.sourceDigest !== sourceDigest ||
           session.snapshot.source.workspaceId !== target.workspaceId || session.snapshot.source.relativePath !== target.relativePath)) {
         this.retire(documentKey, session);
         session = undefined;
@@ -226,46 +232,64 @@ export class FerretExecutionManager {
       if (!session) {
         const client = this.bindClient(runtime.connection);
         const created = await client.createSession(target.workspaceId, target.relativePath, runtime, signal);
-        session = new RunSession(client, generation, created, runtime.name);
+        session = new RunSession(client, generation, created, runtime.name, sourceDigest);
         resources = new RunResources(session);
         this.assertCanStart(document, pending, target);
         if (runtime.provider === 'native') {
+          const currentDigest = await waitForPreparation(this.sourceFingerprint(document.uri.fsPath), signal);
+          this.assertCanStart(document, pending, target);
+          if (currentDigest !== sourceDigest) {
+            throw managerError('document-changed', 'The saved source changed during compilation. Run it again.', document.uri);
+          }
           session.cache();
           this.cache.set(documentKey, session);
         }
       } else {
         resources = new RunResources(session);
       }
-      const execution = await session.client.createExecution(session.snapshot.id, parameters, workingDirectory, signal);
+      let execution: FerretExecution;
+      try {
+        execution = await session.client.createExecution(session.snapshot.id, parameters, workingDirectory, signal);
+      } catch (error) {
+        // The daemon may have created a child whose ID we never received.
+        if (this.cache.get(documentKey) === session) this.retire(documentKey, session);
+        throw error;
+      }
       resources.executionId = execution.id;
       this.assertCanStart(document, pending, target);
       const watch = session.client.watchExecution(execution.id, watchAbort.signal);
-      const started = await session.client.runExecution(execution.id, signal);
-      // RunExecution has admitted the immutable plan. A subsequent source edit
-      // affects the next Run, even if the start acknowledgment was delayed.
-      this.assertGeneration(pending, document.uri);
       const handle = new ManagedExecutionHandle(this, document.uri, performance.now(), target.workspaceId, resources, execution, watchAbort);
-      handle.update(started);
       this.active.set(documentKey, handle);
       const lost = () => this.invalidateHandle(handle, 'daemon-generation', generation.reason);
       generation.addEventListener('abort', lost, { once: true });
-      observing = true;
-      handle.settled = this.observeExecution(documentKey, handle, watch).finally(() => {
+      observed = handle;
+      handle.settled = this.observeExecution(documentKey, handle, watch, pending).finally(() => {
         generation.removeEventListener('abort', lost);
-        reservation.release();
+        observationSettled = true;
+        if (this.pending.get(documentKey) !== pending) reservation.release();
       });
       this.trackCleanup(handle.settled);
-      this.changeEmitter.fire({ kind: 'started', execution: handle });
+      const started = await session.client.runExecution(execution.id, signal);
+      this.assertGeneration(pending, document.uri);
+      handle.update(started);
+      this.announceStart(handle);
       return handle;
     } catch (error) {
-      watchAbort.abort();
+      if (observed) {
+        // Drain any terminal snapshot already received before deciding whether
+        // the start failed. The observer owns Execution and Session cleanup.
+        observed.startFailed = true;
+        watchAbort.abort();
+        await observed.settled;
+        if (observed.terminal) return observed;
+      }
       const primary: unknown = signal.aborted ? signal.reason : error;
       if (signal.aborted && primary instanceof RuntimeLaunchError) {
         this.changeEmitter.fire({ kind: 'preparation-cancelled', documentUri: document.uri, startedAt });
       } else {
         this.reportStartFailure(document.uri, startedAt, primary);
       }
-      if (resources) await this.closeResources(resources, document.uri, true);
+      if (!observed && resources) await this.closeResources(resources, document.uri, true);
       // Invalid create responses can carry a second failure from their rollback.
       if (error !== primary && error instanceof FerretExecutionClientError && error.cause instanceof AggregateError) {
         this.reportCleanup(document.uri, error);
@@ -273,7 +297,7 @@ export class FerretExecutionManager {
       throw primary;
     } finally {
       this.pending.delete(documentKey);
-      if (!observing) reservation.release();
+      if (!observed || observationSettled) reservation.release();
       finishSetup();
       this.changeEmitter.fire({ kind: 'preparation-ended', documentUri: document.uri });
     }
@@ -300,9 +324,11 @@ export class FerretExecutionManager {
     const key = documentUri.toString();
     const handle = this.active.get(key);
     const pending = this.pending.get(key);
-    if (!handle && pending) {
+    if (pending) {
       pending.abort.abort(new RuntimeLaunchError('Starting the Ferret execution was cancelled.'));
+      if (handle) await handle.resources.cancel().catch(() => undefined); // closeOwned reports the shared cancellation result.
       await pending.settled;
+      await handle?.settled;
       return;
     }
     if (handle !== undefined) {
@@ -315,7 +341,7 @@ export class FerretExecutionManager {
     if (current !== handle) {
       return handle.settled ?? Promise.resolve();
     }
-
+    if (this.pending.has(handle.documentUri.toString())) return this.cancel(handle.documentUri);
     return handle.stop ??= this.stopHandle(handle);
   }
 
@@ -391,31 +417,45 @@ export class FerretExecutionManager {
     this.trackCleanup(closed);
   }
 
+  private announceStart(handle: ManagedExecutionHandle): void {
+    if (!handle.announced) {
+      handle.announced = true;
+      this.changeEmitter.fire({ kind: 'started', execution: handle });
+    }
+  }
+
   private async observeExecution(
     documentKey: string,
     handle: ManagedExecutionHandle,
     watch: AsyncIterable<FerretExecutionEvent>,
+    pending: PendingRun,
   ): Promise<void> {
-    let terminal = false;
     try {
       for await (const event of watch) {
         if (this.active.get(documentKey) !== handle) {
           return;
         }
 
+        if (event.execution.id !== handle.id || event.execution.sessionId !== handle.sessionId) {
+          throw new Error('Ferret watch returned an event for a different Execution or Session.');
+        }
         handle.update(event.execution);
+        if (event.kind !== 'created') this.announceStart(handle);
         if (event.kind === 'completed' || event.kind === 'failed' || event.kind === 'cancelled') {
+          handle.terminal = true;
           this.active.delete(documentKey);
           handle.watchAbort.abort();
+          // A terminal watch snapshot settles start even if its unary reply is lost.
+          pending.abort.abort();
           this.changeEmitter.fire({
             kind: 'finished',
             execution: handle,
             event,
           });
-          terminal = true;
           return;
         }
 
+        if (!handle.announced) continue;
         this.changeEmitter.fire({
           kind: 'changed',
           execution: handle,
@@ -435,13 +475,18 @@ export class FerretExecutionManager {
 
       this.active.delete(documentKey);
       handle.watchAbort.abort();
+      if (handle.startFailed) return;
+      if (this.pending.get(documentKey) === pending) {
+        pending.abort.abort(error);
+        return;
+      }
       this.changeEmitter.fire({
         kind: 'watch-failed',
         execution: handle,
         error,
       });
     } finally {
-      await this.closeResources(handle.resources, handle.documentUri, !terminal);
+      await this.closeResources(handle.resources, handle.documentUri, !handle.terminal);
     }
   }
 

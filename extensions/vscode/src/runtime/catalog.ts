@@ -15,6 +15,10 @@ export function supportsRuntimeSelection(connection: DaemonConnection): boolean 
   return connection.apiVersion?.major === 1 && connection.apiVersion.minor >= 3;
 }
 
+export function supportsAcquisitionCancellation(connection: DaemonConnection): boolean {
+  return connection.apiVersion?.major === 1 && connection.apiVersion.minor >= 4;
+}
+
 export async function listRuntimes(connection: DaemonConnection): Promise<ListRuntimesResponse> {
   if (!supportsRuntimeSelection(connection)) {
     throw new UnsupportedDiscovery('Runtime discovery requires ferretd API 1.3 or later in major 1.');
@@ -25,7 +29,9 @@ export async function listRuntimes(connection: DaemonConnection): Promise<ListRu
     connection.signal);
     return validateCatalog(catalog);
   } catch (error) {
-    if (isServiceError(error) && error.code === status.UNIMPLEMENTED) {
+    // grpc-js uses UNIMPLEMENTED for malformed unary response cardinality too.
+    if (isServiceError(error) && error.code === status.UNIMPLEMENTED &&
+        error.details !== 'No message received' && error.details !== 'Too many responses received') {
       throw new UnsupportedDiscovery('This ferretd executable does not support runtime discovery.');
     }
     throw error;

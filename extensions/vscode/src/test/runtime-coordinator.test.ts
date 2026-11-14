@@ -23,7 +23,7 @@ function gate() {
 }
 
 class RuntimeDaemon {
-  public minor = 3;
+  public minor = 4;
   public executables: (string | undefined)[] = [];
   public paths: (string | undefined)[] = [];
   public process = new AbortController();
@@ -314,6 +314,18 @@ suite('window runtime catalog', () => {
     configured.release();
   });
 
+  test('API 1.3 gates the resolved Wire default and permits explicit native', async () => {
+    daemon.minor = 3;
+    runtime.save(resolveRuntimeConfiguration(config));
+    for (const selector of ['', remote.name, 'local']) {
+      const run = runtime.admitRun(selector);
+      try {
+        if (selector === 'local') assert.equal((await run.prepareRun()).provider, 'native');
+        else await assert.rejects(run.prepareRun(), /Δ 🦦.*API 1.4.*Upgrade/);
+      } finally { run.release(); }
+    }
+  });
+
   test('unsupported initial discovery still permits built-in launches', async () => {
     discover = async () => { throw new UnsupportedDiscovery('Unsupported daemon'); };
     await runtime.catalog();
@@ -323,6 +335,11 @@ suite('window runtime catalog', () => {
     await run.prepareRun();
     run.release();
     assert.equal(requests, 1);
+    await runtime.reload();
+    assert.equal(runtime.view.status, 'unsupported');
+    const after = runtime.admitRun('');
+    assert.equal((await after.prepareRun()).name, 'local');
+    after.release();
   });
 
   test('disposal settles in-flight work and ignores late results', async () => {
@@ -376,10 +393,10 @@ suite('window runtime catalog', () => {
     const exec = promisify(execFile);
     await exec('mkfifo', [fifo]);
     const { stdout } = await exec('node', [
-      '-e', 'require(process.argv[1]).fingerprint(process.argv[2]).catch(error => console.log(error.message))',
-      require.resolve('../runtime/configuration'), fifo,
+      '-e', 'require(process.argv[1]).fingerprintFile(process.argv[2]).catch(error => console.log(error.message))',
+      require.resolve('../file-fingerprint'), fifo,
     ], { timeout: 5_000, killSignal: 'SIGKILL' });
-    assert.equal(stdout.trimEnd(), `Runtime configuration is not a regular file: ${fifo}`);
+    assert.equal(stdout.trimEnd(), `Expected a regular file: ${fifo}`);
   });
 
   test('requires a fully qualified Windows root for absolute paths on any host', () => {
@@ -405,13 +422,17 @@ suite('window runtime catalog', () => {
     for (const version of [{ major: 1, minor: 2 }, { major: 2, minor: 3 }]) {
       await assert.rejects(listRuntimes({ ...daemon.requireConnection(), apiVersion: version }), /API 1.3/);
     }
+    let details = 'unimplemented';
     const connection = {
       ...daemon.requireConnection(),
       daemon: { listRuntimes: (_r, _m, _o, cb) => {
-        cb(Object.assign(new Error('older override'), { code: status.UNIMPLEMENTED, details: 'unimplemented', metadata: new Metadata() }), catalog);
+        cb(Object.assign(new Error(details), { code: status.UNIMPLEMENTED, details, metadata: new Metadata() }), catalog);
         return {} as ReturnType<DaemonConnection['daemon']['listRuntimes']>;
       } } as DaemonConnection['daemon'],
     };
     await assert.rejects(listRuntimes(connection), /does not support/);
+    for (details of ['No message received', 'Too many responses received']) {
+      await assert.rejects(listRuntimes(connection), error => !(error instanceof UnsupportedDiscovery) && String(error).includes(details));
+    }
   });
 });

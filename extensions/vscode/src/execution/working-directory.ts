@@ -1,3 +1,4 @@
+import { hasUnambiguousRoot } from '../host-path';
 import { constants } from 'node:fs';
 import { access, realpath, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -16,6 +17,9 @@ export async function resolveWorkingDirectory(
     throw new RuntimeLaunchError('A runtime working directory requires ferretd API 1.2 or later in major 1.');
   }
   if (runtime.provider === 'wire') return value;
+  if (!hasUnambiguousRoot(value)) {
+    throw new RuntimeLaunchError('Use a relative directory or a fully qualified drive or UNC path for the native working directory.');
+  }
   try {
     const path = await realpath(resolve(workspaceRoot, value));
     if (!(await stat(path)).isDirectory()) throw new Error('Expected a directory.');

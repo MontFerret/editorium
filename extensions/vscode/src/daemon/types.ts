@@ -17,6 +17,8 @@ import type {
   ShutdownResponse,
 } from './gen/ferretd/daemon/v1/daemon.pb';
 import type {
+  CancelSessionAcquisitionRequest,
+  CancelSessionAcquisitionResponse,
   CancelExecutionRequest,
   CancelExecutionResponse,
   CloseExecutionRequest,
@@ -83,6 +85,7 @@ type ExecutionUnary<Request, Response> = (
 ) => ClientUnaryCall;
 
 export interface ExecutionGeneratedClient {
+  cancelSessionAcquisition: ExecutionUnary<CancelSessionAcquisitionRequest, CancelSessionAcquisitionResponse>;
   createSession: ExecutionUnary<CreateSessionRequest, CreateSessionResponse>;
   closeSession: ExecutionUnary<CloseSessionRequest, CloseSessionResponse>;
   createExecution: ExecutionUnary<

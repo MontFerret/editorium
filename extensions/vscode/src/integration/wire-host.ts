@@ -61,6 +61,11 @@ export class WireHost {
   public async close(): Promise<void> {
     this.child.stdin.end();
     const timer = setTimeout(() => this.child.kill('SIGKILL'), 5000);
-    try { await this.closed; } finally { clearTimeout(timer); }
+    try {
+      await this.closed;
+      if (this.child.exitCode !== 0 || this.count('engineClosed') !== 1) {
+        throw new Error(`Wire fixture teardown failed (exit ${this.child.exitCode}, ${this.child.signalCode}): ${this.diagnostics}`);
+      }
+    } finally { clearTimeout(timer); }
   }
 }

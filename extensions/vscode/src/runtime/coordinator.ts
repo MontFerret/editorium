@@ -3,8 +3,9 @@ import * as vscode from 'vscode';
 import type { DaemonController } from '../daemon/manager';
 import type { DaemonConnection } from '../daemon/types';
 import type { ListRuntimesResponse } from '../daemon/gen/ferretd/daemon/v1/daemon.pb';
-import { fingerprint, type RuntimeConfiguration } from './configuration';
-import { listRuntimes, supportsRuntimeSelection } from './catalog';
+import type { RuntimeConfiguration } from './configuration';
+import { fingerprintFile } from '../file-fingerprint';
+import { listRuntimes, supportsAcquisitionCancellation, supportsRuntimeSelection } from './catalog';
 import { RuntimeLaunchError, UnsupportedDiscovery } from './errors';
 
 export interface PreparedRuntime {
@@ -150,6 +151,9 @@ export class RuntimeCoordinator {
     if (provider !== 'native' && provider !== 'wire') {
       throw new RuntimeLaunchError(`Unsupported provider "${provider}" for Ferret runtime "${name}".`);
     }
+    if (provider === 'wire' && !supportsAcquisitionCancellation(connection)) {
+      throw new RuntimeLaunchError(`Wire runtime "${name}" requires ferretd API 1.4 or later in major 1. Upgrade ferretd to run on this application.`);
+    }
     return { connection, selector, name, provider };
   }
 
@@ -267,7 +271,7 @@ export class RuntimeCoordinator {
     if (!revision.config.path) return;
     let digest: string | undefined;
     try {
-      digest = await fingerprint(revision.config.path);
+      digest = await fingerprintFile(revision.config.path);
     } catch (error) {
       if (revision.digest === undefined) throw error;
     }
@@ -314,6 +318,9 @@ export class RuntimeCoordinator {
         this.publish({ status: 'reload-required', message: detail + ' ' + reloadMessage });
       } else {
         const status = error instanceof UnsupportedDiscovery ? 'unsupported' : 'failed';
+        if (status === 'unsupported' && generation.connection && generation.revision.config.entered === '') {
+          this.replacing = false;
+        }
         this.publish({ status, message: detail });
       }
     }

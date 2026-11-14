@@ -12,6 +12,7 @@ export class RunSession {
     public readonly generation: AbortSignal,
     public readonly snapshot: FerretSession,
     public readonly runtimeName: string,
+    public readonly sourceDigest: string | undefined,
   ) {}
 
   public retain(): void { this.users++; }

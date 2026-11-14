@@ -1,3 +1,4 @@
+import { InvalidParametersError } from '../execution/parameters';
 import { RuntimeCoordinator } from '../runtime/coordinator';
 import type { DaemonConnection } from '../daemon/types';
 import * as assert from 'node:assert/strict';
@@ -30,7 +31,7 @@ class FakeDaemon implements ExecutionDaemon {
   public async prepareWorkspaces(): Promise<void> {}
 
   public requireConnection() {
-    return { signal: this.generation.signal, apiVersion: { major: 1, minor: 3 } };
+    return { signal: this.generation.signal, apiVersion: { major: 1, minor: 4 } };
   }
 
   public replace(reason: unknown = new Error('daemon replaced')): void {
@@ -289,6 +290,40 @@ class FakeOutput {
 }
 
 suite('Ferret execution manager', () => {
+  test('rejects unsupported, cyclic, and non-finite parameters', async () => {
+    const fixture = createFixture();
+    const doc = asTextDocument(ferretDocument('/workspace/a.fql'));
+    try {
+      const cyclic: Record<string, unknown> = {};
+      cyclic.self = cyclic;
+      const sparse = new Array(2);
+      sparse[1] = 'value';
+      const symbolKeyed = { value: 1 };
+      Object.defineProperty(symbolKeyed, Symbol('hidden'), {
+        enumerable: true,
+        value: 2,
+      });
+
+      for (const parameters of [
+        { value: undefined },
+        { value: BigInt(1) },
+        { value: Number.NaN },
+        { value: Number.POSITIVE_INFINITY },
+        { value: new Date() },
+        { value: sparse },
+        symbolKeyed,
+        undefined,
+        null,
+        cyclic,
+      ]) {
+        await assert.rejects(
+          fixture.manager.run(doc, { parameters }),
+          InvalidParametersError,
+        );
+      }
+    } finally { await disposeFixture(fixture); }
+  });
+
   test('creates, watches, and starts before reusing one cached Session', async () => {
     const fixture = createFixture();
     const document = ferretDocument('/workspace/users.fql');
@@ -678,7 +713,8 @@ suite('Ferret execution manager', () => {
       else fixture.client.startGate = gate.promise;
       fixture.client.closeSessionGate = close.promise;
       try {
-        const run = assert.rejects(fixture.manager.run(document, { runtimeName: 'App' }), /cancelled/);
+        const launching = fixture.manager.run(document, { runtimeName: 'App' });
+        const run = stage === 'create-execution' ? assert.rejects(launching, /cancelled/) : launching;
         await settle();
         assert.ok(fixture.client.calls.includes(stage));
         const stop = fixture.manager.cancel(document.uri);
@@ -694,6 +730,87 @@ suite('Ferret execution manager', () => {
       } finally { gate.resolve(); close.resolve(); await disposeFixture(fixture); }
     });
   }
+
+  test('a terminal snapshot survives Stop while the start acknowledgment is held', async () => {
+    const fixture = createFixture(), ack = deferred();
+    const document = asTextDocument(ferretDocument('/workspace/query.fql'));
+    fixture.client.startGate = ack.promise;
+    const changes: ManagedExecutionChange[] = [];
+    const sub = fixture.manager.onDidChangeExecution(change => changes.push(change));
+    try {
+      const run = fixture.manager.run(document, { runtimeName: 'App' });
+      await settle();
+      fixture.client.send('execution-1', 'completed');
+      const stop = fixture.manager.cancel(document.uri);
+      ack.resolve();
+      const handle = await run;
+      await stop;
+      assert.deepEqual(handle.execution.output?.data, new Uint8Array([49]));
+      assert.equal(changes.filter(change => change.kind === 'finished').length, 1);
+      assert.ok(!changes.some(change => change.kind === 'preparation-cancelled'));
+      assert.deepEqual(fixture.client.closeSessionIds, [handle.sessionId]);
+    } finally { ack.resolve(); sub.dispose(); await disposeFixture(fixture); }
+  });
+
+  test('a lost start reply cannot hold admission after a terminal watch result', async () => {
+    const fixture = createFixture();
+    const document = asTextDocument(ferretDocument('/workspace/query.fql'));
+    let signal: AbortSignal | undefined;
+    const client: ExecutionClient = fixture.client;
+    client.runExecution = (_id, start) => new Promise((_resolve, reject) => {
+      signal = start;
+      start.addEventListener('abort', () => reject(start.reason), { once: true });
+    });
+    try {
+      const run = fixture.manager.run(document, { runtimeName: 'App' });
+      await settle();
+      fixture.client.send('execution-1', 'completed');
+      assert.equal((await run).execution.status, 'completed');
+      assert.equal(signal?.aborted, true);
+      assert.deepEqual(fixture.client.closeSessionIds, ['session-1']);
+      await fixture.runtime.reload();
+    } finally { await disposeFixture(fixture); }
+  });
+
+  test('discards a compiled native Session if saved bytes change during acquisition', async () => {
+    let digest = 'old';
+    const fixture = createFixture(undefined, undefined, async () => digest);
+    const document = asTextDocument(ferretDocument('/workspace/query.fql'));
+    const acquire = deferred();
+    fixture.client.createSessionGate = acquire.promise;
+    try {
+      const rejected = assert.rejects(fixture.manager.run(document), /saved source changed/);
+      await settle();
+      assert.ok(fixture.client.calls.includes('create-session'));
+      digest = 'new';
+      acquire.resolve();
+      await rejected;
+      assert.deepEqual(fixture.client.closeSessionIds, ['session-1']);
+      assert.ok(!fixture.client.calls.includes('create-execution'));
+      const next = await fixture.manager.run(document);
+      assert.equal(next.sessionId, 'session-2');
+      await next.cancel();
+    } finally { acquire.resolve(); await disposeFixture(fixture); }
+  });
+
+  test('a lost child reply retires its cached native parent and leaves the sibling usable', async () => {
+    const fixture = createFixture();
+    const a = asTextDocument(ferretDocument('/workspace/a.fql'));
+    const b = asTextDocument(ferretDocument('/workspace/b.fql'));
+    try {
+      const first = await fixture.manager.run(a);
+      await first.cancel();
+      const sibling = await fixture.manager.run(b);
+      const create = fixture.client.createExecution.bind(fixture.client);
+      fixture.client.createExecution = async (...args) => { await create(...args); throw new Error('reply lost'); };
+      await assert.rejects(fixture.manager.run(a), /reply lost/);
+      assert.deepEqual(fixture.client.closeSessionIds, [first.sessionId]);
+      assert.equal(fixture.manager.getActive(b.uri), sibling);
+      fixture.client.createExecution = create;
+      assert.notEqual((await fixture.manager.run(a)).sessionId, first.sessionId);
+      await sibling.cancel();
+    } finally { await disposeFixture(fixture); }
+  });
 
   test('failed Wire setup releases the compiled plan and retains the acquisition failure', async () => {
     const fixture = createFixture();
@@ -1063,6 +1180,7 @@ function createFixture(
     ],
   }),
   clientFor?: (generation: AbortSignal, initial: FakeExecutionClient) => FakeExecutionClient,
+  sourceFingerprint = async () => 'test-source',
 ): Fixture {
   const client = new FakeExecutionClient();
   const daemon = new FakeDaemon();
@@ -1081,6 +1199,7 @@ function createFixture(
     output,
     runtime,
     { onDidSaveTextDocument: documents.event },
+    sourceFingerprint,
   );
 
   return { runtime, client, daemon, documents, manager, output, registry };

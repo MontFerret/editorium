@@ -27,12 +27,17 @@ The execution client binds to a single daemon connection. CreateSession sends
 the requested selector and the workspace-relative source, with a 30-second
 acquisition/compilation deadline. The acknowledged runtime must match the
 resolved name on API 1.3+. Only built-in default execution on a compatible old
-daemon accepts an absent acknowledgment. A malformed creation response with a
-recoverable ID triggers rollback on the original connection.
+daemon accepts an absent acknowledgment. API 1.4 creation carries a fresh
+acquisition UUID. The daemon echoes it and accepts cancellation by workspace ID and UUID even before
+publication. A lost, late, or malformed reply is reconciled on the original
+connection. Wire requires this capability. A mismatched Execution parent causes
+the manager to retire the known Session and its children.
 
 Native Sessions can be reused in the same generation for an unchanged document,
-workspace, source, and resolved runtime. Saving retires the cached plan. A Run
-already using it releases its reference after its Execution closes. Each Wire
+workspace, source, and resolved runtime. Saving retires the cached plan. The
+manager checks the saved file digest before reuse and across compilation,
+including after external edits. A Run already using the plan releases its
+reference after its Execution closes. Each Wire
 Run owns a fresh Session until cleanup, including when preparation stops early.
 Parameters and directories are encoded at CreateExecution for both providers.
 

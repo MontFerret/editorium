@@ -100,14 +100,15 @@ function cloneObject(
           `${path} contains a symbol-keyed property`,
         );
       }
-      if (Object.getOwnPropertyDescriptor(value, key)?.enumerable !== true) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (descriptor?.enumerable !== true) {
         throw new InvalidParametersError(
           `${propertyPath(path, key)} is not an enumerable JSON property`,
         );
       }
 
       const item = cloneValue(
-        value[key],
+        'value' in descriptor ? descriptor.value : value[key],
         ancestors,
         propertyPath(path, key),
       );

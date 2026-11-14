@@ -28,6 +28,7 @@ import type {
 } from './types';
 
 export type FerretExecutionOperation =
+  | 'cancel-session-acquisition'
   | 'create-session'
   | 'create-execution'
   | 'run-execution'

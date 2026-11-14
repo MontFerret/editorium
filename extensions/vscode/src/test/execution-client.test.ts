@@ -75,6 +75,10 @@ class FakeStream extends Readable {
 
 class FakeExecutionService implements ExecutionGeneratedClient {
   public readonly stream = new FakeStream();
+  public cancelSessionAcquisition: ExecutionGeneratedClient['cancelSessionAcquisition'] = (_request, _metadata, _options, callback) => {
+    callback(null, {});
+    return fakeCall;
+  };
   public cancelCalls = 0;
   public closeExecutionCalls = 0;
   public closeSessionCalls = 0;
@@ -190,7 +194,6 @@ suite('Ferret execution client', () => {
       createdSession.id,
       parameters,
     );
-    parameters.nested.enabled = false;
 
     assert.deepStrictEqual(service.createSessionRequest, {
       workspaceId: { value: 'workspace-1' },
@@ -238,7 +241,7 @@ suite('Ferret execution client', () => {
     await assert.rejects(client.createSession('workspace-1', 'queries/example.fql', { selector: '', name: 'local' }), /Expected runtime.*Cleanup.*failed/);
   });
 
-  test('cancels real unary handles and closes late Session and Execution IDs with independent deadlines', async () => {
+  test('cancels both unary handles, closes a late legacy Session, and returns a known child to its owner', async () => {
     const service = new FakeExecutionService();
     const { client } = testClient(service, 3);
     let cancelledCalls = 0;
@@ -269,10 +272,76 @@ suite('Ferret execution client', () => {
         : client.createExecution('session-1', {}, ' C:\\literal ', controller.signal);
       controller.abort(new Error('stopped'));
       complete();
-      await assert.rejects(result, /stopped/);
+      if (operation === 'session') await assert.rejects(result, /stopped/);
+      else assert.equal((await result).id, 'execution-1');
     }
-    assert.deepEqual(close, ['session', 'execution']);
+    assert.deepEqual(close, ['session']);
     assert.equal(cancelledCalls, 2);
+  });
+
+  test('reconciles a malformed acquisition echo by its requested key', async () => {
+    const service = new FakeExecutionService();
+    const { client } = testClient(service, 4);
+    service.sessionResponse = { session: { ...session(), acquisitionId: 'foreign', runtimeName: 'local' } };
+    const keys: string[] = [];
+    service.cancelSessionAcquisition = (request, _metadata, options, callback) => {
+      assert.equal(request.workspaceId?.value, 'workspace-1');
+      assert.ok(Number(options.deadline) > Date.now());
+      keys.push(request.acquisitionId);
+      callback(null, {});
+      return fakeCall;
+    };
+    await assert.rejects(client.createSession('workspace-1', 'queries/example.fql', { selector: '', name: 'local' }), /different acquisition/);
+    assert.deepEqual(keys, [service.createSessionRequest?.acquisitionId]);
+    assert.match(keys[0]!, /^[a-f0-9-]{36}$/);
+    assert.equal(service.closeSessionCalls, 0);
+  });
+
+  test('a foreign or missing parent never authorizes closing the returned Execution', async () => {
+    const service = new FakeExecutionService();
+    const { client } = testClient(service);
+    for (const parent of [undefined, { value: 'sibling' }]) {
+      service.createExecution = (_r, _m, _o, callback) => {
+        callback(null, { execution: { ...execution(), sessionId: parent } });
+        return fakeCall;
+      };
+      await assert.rejects(client.createExecution('session-1'), /different Session|incomplete/);
+    }
+    assert.equal(service.closeExecutionCalls, 0);
+  });
+
+  test('a rejected duplicate key never cancels its existing owner', async () => {
+    const service = new FakeExecutionService();
+    service.createSession = (_r, _m, _o, cb) => { cb(serviceError(status.ALREADY_EXISTS, 'duplicate acquisition'), {}); return fakeCall; };
+    let cancels = 0;
+    service.cancelSessionAcquisition = (_r, _m, _o, cb) => { cancels++; cb(null, {}); return fakeCall; };
+    await assert.rejects(testClient(service, 4).client.createSession('ws', 'query.fql', { selector: '', name: 'local' }), /duplicate/);
+    assert.equal(cancels, 0);
+  });
+
+  test('a create deadline reconciles on its workspace and reports an unavailable cleanup alongside the timeout', async () => {
+    const service = new FakeExecutionService();
+    const keys: string[] = [];
+    service.createSession = (request, _m, _o, cb) => {
+      keys.push(request.acquisitionId!);
+      cb(serviceError(status.DEADLINE_EXCEEDED, 'lost reply'), {});
+      return fakeCall;
+    };
+    service.cancelSessionAcquisition = (request, _m, options, cb) => {
+      assert.equal(request.workspaceId?.value, 'workspace-1');
+      assert.equal(request.acquisitionId, keys.at(-1));
+      assert.ok(Number(options.deadline) > Date.now() && Number(options.deadline) <= Date.now() + 5000);
+      cb(serviceError(status.UNAVAILABLE, 'lost connection'), {});
+      return fakeCall;
+    };
+    const { client } = testClient(service, 4);
+    for (let i = 0; i < 2; i++) {
+      await assert.rejects(client.createSession('workspace-1', 'query.fql', { selector: '', name: 'App' }),
+        error => error instanceof FerretExecutionClientError && error.cause instanceof AggregateError &&
+          /Timed out.*Remote release is unconfirmed/.test(error.message));
+    }
+    assert.equal(new Set(keys).size, 2);
+    assert.equal(service.closeSessionCalls, 0);
   });
 
   test('sends an explicit empty parameter object when omitted', async () => {
@@ -309,46 +378,10 @@ suite('Ferret execution client', () => {
     assert.strictEqual(service.createSessionRequest, undefined);
   });
 
-  test('rejects unsupported, cyclic, and non-finite parameters', async () => {
-    const { client } = testClient(new FakeExecutionService());
-    const cyclic: Record<string, unknown> = {};
-    cyclic.self = cyclic;
-    const sparse = new Array(2);
-    sparse[1] = 'value';
-    const symbolKeyed = { value: 1 };
-    Object.defineProperty(symbolKeyed, Symbol('hidden'), {
-      enumerable: true,
-      value: 2,
-    });
-
-    for (const parameters of [
-      { value: undefined },
-      { value: BigInt(1) },
-      { value: Number.NaN },
-      { value: Number.POSITIVE_INFINITY },
-      { value: new Date() },
-      { value: sparse },
-      symbolKeyed,
-      null,
-      cyclic,
-    ]) {
-      await assert.rejects(
-        client.createExecution(
-          'session-1',
-          parameters as unknown as Readonly<Record<string, unknown>>,
-        ),
-        (error: unknown) =>
-          error instanceof FerretExecutionClientError &&
-          error.code === 'invalid-parameters' &&
-          error.operation === 'create-execution',
-      );
-    }
-  });
-
   test('preserves JSON object keys that overlap object prototypes', async () => {
     const service = new FakeExecutionService();
     const { client } = testClient(service);
-    const parameters: Record<string, unknown> = {};
+    const parameters: Record<string, import('../execution/types').FerretJsonValue> = {};
     Object.defineProperty(parameters, '__proto__', {
       enumerable: true,
       value: { safe: true },

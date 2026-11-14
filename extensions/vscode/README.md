@@ -118,7 +118,9 @@ Discovery requires daemon API 1.3 or a later minor version in major 1.
 **Run Current File** uses the saved picker selection. Choose **Daemon default**
 to follow the default in the configuration, or select an exact runtime name.
 Choosing `local` runs against the built-in native runtime even when a Wire
-application is the default.
+application is the default. Wire Run requires daemon API 1.4 or a later minor
+version in major 1, including when the default resolves to Wire. With a custom
+API 1.3 daemon, explicit `local` is available. Upgrade the daemon to use Wire.
 
 **Debug** requires an empty configuration path, **Daemon default**, and an
 omitted or empty launch `runtimeName`. Clear the setting, select **Daemon
@@ -159,7 +161,8 @@ daemon's nested-symlink restrictions.
 
 Settings come from the source file's workspace folder. Native relative
 directories resolve against its registered compilation workspace and may point
-outside it. Wire receives nonblank directory text verbatim, including spaces
+outside it. On Windows, use an ordinary relative path or a fully qualified drive
+or UNC path. Drive-relative paths such as `C:logs` are rejected. Wire receives nonblank directory text verbatim, including spaces
 and runtime-host separators. Enter paths literally. The source file and its
 compilation workspace stay on the extension host.
 
@@ -168,6 +171,11 @@ An extension or command keybinding can pass an options object to
 Omitting `runtimeName` uses the picker. Passing `""` chooses daemon default
 even with a saved name. An empty parameter object clears configured bindings,
 and a blank directory clears a configured directory for that Run.
+
+Stop can release a Wire Session while compilation is in flight or after the
+daemon has compiled it but its reply was lost. If the original connection
+cannot confirm cleanup, **Ferret Execution** reports that alongside the Run
+result. A later explicit Run acquires a fresh Session.
 
 ### Try the Wire host
 

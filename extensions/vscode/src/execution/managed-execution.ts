@@ -18,6 +18,9 @@ export class ManagedExecutionHandle implements ManagedExecution {
     this.current = initial;
   }
 
+  public announced = false;
+  public startFailed = false;
+  public terminal = false;
   public settled?: Promise<void>;
   public stop?: Promise<void>;
   private current: FerretExecution;
