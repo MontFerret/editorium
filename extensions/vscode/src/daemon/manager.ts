@@ -91,6 +91,7 @@ interface ActiveDaemon {
   readonly process: DaemonProcess;
   cleanup?: Promise<void>;
   logReader?: Interface;
+  configurationFailure?: string;
   ready: boolean;
   stopping: boolean;
   usesWorkspaces: boolean;
@@ -215,7 +216,7 @@ export class DaemonController implements DaemonConnectionProvider {
         usesWorkspaces: false,
         stopping: false,
       };
-      active.logReader = logDaemonOutput(process.stderr, this.output);
+      active.logReader = logDaemonOutput(active, this.output);
       this.active = active;
 
       const info = await this.waitUntilReady(active);
@@ -329,6 +330,7 @@ export class DaemonController implements DaemonConnectionProvider {
         lastError = error;
         const exited = await hasExited(active.exited);
         if (exited !== undefined) {
+          if (active.configurationFailure) throw new Error(active.configurationFailure);
           throw processExitError(exited);
         }
 
@@ -553,15 +555,21 @@ function observeExit(process: DaemonProcess): Promise<ProcessExit> {
 }
 
 function logDaemonOutput(
-  stderr: Readable | null,
+  active: ActiveDaemon,
   output: ServerOutput,
 ): Interface | undefined {
+  const stderr = active.process.stderr;
   if (stderr === null) {
     return undefined;
   }
 
   const reader = createInterface({ input: stderr });
-  reader.on('line', (line) => output.info(`Ferret daemon: ${line}`));
+  reader.on('line', (line: string) => {
+    output.info(`Ferret daemon: ${line}`);
+    if (!active.ready && line.startsWith('ferretd: invalid runtime configuration')) {
+      active.configurationFailure = line;
+    }
+  });
 
   return reader;
 }

@@ -15,6 +15,12 @@ class FakeConfigurationHost implements FerretDebugConfigurationHost {
   public workspaceFolder: vscode.WorkspaceFolder | undefined;
   public workspaceFolderRequests: vscode.Uri[] = [];
 
+  public getRunSettings(uri: vscode.Uri) {
+    assert.equal(uri, this.activeDocument?.uri);
+    const settings = { parameters: { bind: [true, 3] }, workingDirectory: ' remote ' };
+    return { get: (name: string) => Reflect.get(settings, name) };
+  }
+
   public getActiveDocument(): vscode.TextDocument | undefined {
     return this.activeDocument;
   }
@@ -99,6 +105,8 @@ suite('Ferret debug configuration provider', () => {
       type: 'ferret',
       request: 'launch',
       name: 'Debug Current Ferret File',
+      parameters: { bind: [true, 3] },
+      workingDirectory: ' remote ',
       program: '${file}',
       cwd: host.workspaceFolder.uri.fsPath,
       stopOnEntry: false,
@@ -138,6 +146,8 @@ suite('Ferret debug configuration provider', () => {
       type: 'ferret',
       request: 'launch',
       name: 'Debug Current Ferret File',
+      parameters: { bind: [true, 3] },
+      workingDirectory: ' remote ',
       program: '${file}',
       cwd: host.workspaceFolder.uri.fsPath,
       stopOnEntry: false,
@@ -341,15 +351,13 @@ suite('Ferret debug configuration provider', () => {
 
   test('checks all daemon selector spellings after variable substitution', async () => {
     const host = new FakeConfigurationHost();
-    const provider = new FerretDebugConfigurationProvider(host, selector => {
-      if (selector !== undefined && selector !== '') throw new Error('explicit selector');
-    });
+    const provider = new FerretDebugConfigurationProvider(host);
     const config = { type: 'ferret', request: 'launch', name: 'current', program: '/file.fql' };
-    for (const options of [{ RuntimeName: 'local' }, { RUNTIMENAME: 1 }, { runtimeName: '', RuntimeName: '' }]) {
+    for (const options of [{ RUNTIMENAME: 1 }, { runtimeName: '', RuntimeName: '' }]) {
       assert.equal(await provider.resolveDebugConfigurationWithSubstitutedVariables(undefined, { ...config, ...options }), undefined);
     }
-    assert.equal(host.errors.length, 3);
-    const metadata = { ...config, RunTimeName: '', __sessionId: 'opaque' };
+    assert.equal(host.errors.length, 2);
+    const metadata = { ...config, RunTimeName: 'Δ 🦦', __sessionId: 'opaque' };
     assert.strictEqual(await provider.resolveDebugConfigurationWithSubstitutedVariables(undefined, metadata), metadata);
   });
 

@@ -84,7 +84,9 @@ suite('window runtime catalog', () => {
     assert.equal(requests, 1);
     assert.deepEqual(daemon.paths, [config]);
     assert.deepEqual(runtime.view.catalog, catalog);
-    assert.throws(() => runtime.admitDebug(), /Daemon default/);
+    const debug = runtime.admitDebug();
+    assert.equal((await debug.prepareDebug(new AbortController().signal)).name, remote.name);
+    debug.release();
   });
 
   test('pins admitted launches across saves and binary restarts without adopting a pending path', async () => {
@@ -180,8 +182,7 @@ suite('window runtime catalog', () => {
       assert.notEqual(replacement, old);
       assert.equal(runtime.reload(), replacement);
       await replacement;
-      if (restoreOriginal) runtime.admitDebug().release();
-      else assert.throws(() => runtime.admitDebug(), /Daemon default/);
+      runtime.admitDebug().release();
       release.open();
       await old;
       assert.deepEqual(runtime.view.catalog, latest);
@@ -238,9 +239,15 @@ suite('window runtime catalog', () => {
     await assert.rejects(runtime.reload(), /finish/);
     b.release();
     for (const name of ['local', 'LOCAL', ' ', 'Δ 🦦', 'Daemon default']) {
-      assert.throws(() => runtime.admitDebug(name), /Daemon default/);
+      const named = runtime.admitDebug(name);
+      const signal = new AbortController().signal;
+      if (catalog.runtimes.some(entry => entry.name === name)) assert.equal((await named.prepareDebug(signal)).name, name);
+      else await assert.rejects(named.prepareDebug(signal), /unavailable/);
+      named.release();
       selection = name;
-      assert.throws(() => runtime.admitDebug(''), /Daemon default/);
+      const implicit = runtime.admitDebug('');
+      assert.equal((await implicit.prepareDebug(signal)).name, 'local');
+      implicit.release();
       selection = '';
     }
     await runtime.reload();
@@ -314,6 +321,9 @@ suite('window runtime catalog', () => {
     const configured = runtime.admitRun('');
     await assert.rejects(configured.prepareRun(), /API 1.3/);
     configured.release();
+    const debug = runtime.admitDebug('');
+    await assert.rejects(debug.prepareDebug(new AbortController().signal), /API 1.3/);
+    debug.release();
   });
 
   test('API 1.3 gates the resolved Wire default and permits explicit native', async () => {
@@ -325,7 +335,49 @@ suite('window runtime catalog', () => {
         if (selector === 'local') assert.equal((await run.prepareRun()).provider, 'native');
         else await assert.rejects(run.prepareRun(), /Δ 🦦.*API 1.4.*Upgrade/);
       } finally { run.release(); }
+      const debug = runtime.admitDebug(selector);
+      const prepared = debug.prepareDebug(new AbortController().signal);
+      if (selector === 'local') assert.equal((await prepared).provider, 'native');
+      else await assert.rejects(prepared, /API 1.4/);
+      debug.release();
     }
+  });
+
+  test('prepares direct Debug without starting serve', async () => {
+    const stopping = new AbortController();
+    const direct = runtime.admitDebug('');
+    assert.equal((await direct.prepareDebug(stopping.signal)).name, 'local');
+    assert.deepEqual(daemon.paths, []);
+    direct.release();
+  });
+
+  test('detaches one admitted Debug from discovery shared with Run and another Debug', async () => {
+    const stopping = new AbortController();
+    const entered = gate(), release = gate();
+    discover = async () => { entered.open(); await release.promise; return catalog; };
+    runtime.save(resolveRuntimeConfiguration(config));
+    selection = remote.name;
+    const stopped = runtime.admitDebug(), surviving = runtime.admitDebug(), run = runtime.admitRun('');
+    const pending = stopped.prepareDebug(stopping.signal);
+    const prepared = surviving.prepareDebug(new AbortController().signal);
+    const running = run.prepareRun();
+    await entered.promise;
+    selection = 'local';
+    runtime.save(resolveRuntimeConfiguration(join(dir, 'next.json')));
+    stopping.abort();
+    await assert.rejects(pending, /abort/i);
+    stopped.release();
+    assert.throws(() => runtime.admitDebug(), /Reload/);
+    release.open();
+    assert.deepEqual(await prepared, { selector: remote.name, name: remote.name, provider: 'wire' });
+    assert.equal((await running).name, remote.name);
+    assert.equal(requests, 1);
+    run.release();
+    await daemon.stop();
+    assert.equal(surviving.configPath, config);
+    await surviving.verifyConfiguration();
+    await assert.rejects(runtime.reload(), /finish/);
+    surviving.release();
   });
 
   test('unsupported initial discovery still permits built-in launches', async () => {

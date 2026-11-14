@@ -4,15 +4,26 @@ import type { DaemonController } from '../daemon/manager';
 import type { DaemonConnection } from '../daemon/types';
 import type { ListRuntimesResponse } from '../daemon/gen/ferretd/daemon/v1/daemon.pb';
 import type { RuntimeConfiguration } from './configuration';
+import { waitForPreparation } from '../execution/preparation';
 import { fingerprintFile } from '../file-fingerprint';
 import { listRuntimes, supportsAcquisitionCancellation, supportsRuntimeSelection } from './catalog';
 import { RuntimeLaunchError, UnsupportedDiscovery } from './errors';
 
-export interface PreparedRuntime {
-  readonly connection: DaemonConnection;
+export interface RuntimeSelection {
   readonly selector: string;
   readonly name: string;
   readonly provider: 'native' | 'wire';
+}
+
+export interface PreparedRuntime extends RuntimeSelection {
+  readonly connection: DaemonConnection;
+}
+
+export interface DebugReservation {
+  readonly configPath?: string;
+  prepareDebug(signal: AbortSignal): Promise<RuntimeSelection>;
+  verifyConfiguration(): Promise<void>;
+  release(): void;
 }
 
 export interface RunReservation {
@@ -83,7 +94,7 @@ export class RuntimeCoordinator {
     if (this.current) this.changes.fire();
   }
 
-  private checkAdmission(): void {
+  public checkAdmission(): void {
     if (this.disposed) throw new RuntimeLaunchError('Ferret is shutting down.');
     if (this.pending) throw new RuntimeLaunchError(this.view.message ?? reloadMessage);
     if (this.replacing) {
@@ -92,26 +103,36 @@ export class RuntimeCoordinator {
     if (this.saved.problem) throw new RuntimeLaunchError(this.saved.problem);
   }
 
-  public checkDebug(selector?: unknown): void {
-    this.checkAdmission();
-    if (this.saved.entered !== '' || this.selection() !== '' || (selector !== undefined && selector !== '')) {
-      throw new RuntimeLaunchError('Debug currently requires an empty ferret.runtime.configPath and Daemon default. Clear any launch runtimeName and reload runtimes if required.');
-    }
+  public admitDebug(selector?: string): DebugReservation {
+    const requested = this.requestedSelector(selector);
+    const generation = this.adopt();
+    const revision = generation.revision;
+    return {
+      configPath: revision.config.path,
+      prepareDebug: async signal => {
+        if (!revision.config.path && requested === '') {
+          return { selector: '', name: 'local', provider: 'native' };
+        }
+        const { selector, name, provider } = await waitForPreparation(this.resolveRuntime(generation, requested), signal);
+        return { selector, name, provider };
+      },
+      verifyConfiguration: () => this.verifyRevision(revision),
+      release: this.reserve(),
+    };
   }
 
-  public admitDebug(selector?: unknown): { release(): void } {
-    this.checkDebug(selector);
-    this.adopt();
-    return { release: this.reserve() };
-  }
-
-  public admitRun(selector?: string): RunReservation {
+  private requestedSelector(selector?: string): string {
     this.checkAdmission();
     const requested = selector === undefined ? this.selection() : selector;
     if (typeof requested !== 'string') throw new RuntimeLaunchError('Set runtimeName to a string.');
+    return requested;
+  }
+
+  public admitRun(selector?: string): RunReservation {
+    const requested = this.requestedSelector(selector);
     const generation = this.adopt();
     return {
-      prepareRun: () => this.prepareRun(generation, requested),
+      prepareRun: () => this.resolveRuntime(generation, requested),
       verifyConfiguration: () => this.verifyFile(generation),
       release: this.reserve(),
     };
@@ -128,7 +149,7 @@ export class RuntimeCoordinator {
     };
   }
 
-  private async prepareRun(generation: Generation, selector: string): Promise<PreparedRuntime> {
+  private async resolveRuntime(generation: Generation, selector: string): Promise<PreparedRuntime> {
     this.assertCurrent(generation);
     if (!generation.catalog && !generation.failure) await this.load(generation);
     this.assertCurrent(generation);
@@ -249,7 +270,6 @@ export class RuntimeCoordinator {
     const { config } = generation.revision;
     if (config.problem) throw new Error(config.problem);
     await this.verifyFile(generation);
-    this.assertCurrent(generation);
     await this.daemon.start(config.path, generation.executable);
     this.assertCurrent(generation);
     const connection = this.daemon.requireConnection();
@@ -262,12 +282,15 @@ export class RuntimeCoordinator {
       this.publish(this.replacing ? { status: 'reload-required', message: reloadMessage } : { status: 'unloaded' });
     }, { once: true });
     await this.verifyFile(generation);
-    this.assertCurrent(generation);
     return connection;
   }
 
   private async verifyFile(generation: Generation): Promise<void> {
-    const revision = generation.revision;
+    await this.verifyRevision(generation.revision);
+    this.assertCurrent(generation);
+  }
+
+  private async verifyRevision(revision: Revision): Promise<void> {
     if (!revision.config.path) return;
     let digest: string | undefined;
     try {
@@ -275,12 +298,13 @@ export class RuntimeCoordinator {
     } catch (error) {
       if (revision.digest === undefined) throw error;
     }
-    this.assertCurrent(generation);
     if (revision.changed || (revision.digest !== undefined && revision.digest !== digest)) {
       revision.changed = true;
-      this.generationRequiresReload = true;
       const message = 'The runtime configuration file changed or became unreadable. Use Ferret: Reload Runtimes.';
-      this.publish({ status: 'reload-required', message });
+      if (this.current?.revision === revision && !this.disposed) {
+        this.generationRequiresReload = true;
+        this.publish({ status: 'reload-required', message });
+      }
       throw new Error(message);
     }
     revision.digest = digest;
@@ -304,7 +328,6 @@ export class RuntimeCoordinator {
       this.assertCurrent(generation);
       const catalog = await this.discover(connection);
       await this.verifyFile(generation);
-      this.assertCurrent(generation);
       generation.catalog = catalog;
       if (this.pending) return;
       this.replacing = false;

@@ -1,4 +1,3 @@
-import { FerretDebugAdapterDescriptorFactory } from '../debug/adapter';
 import { withholdSessionReply } from './withheld-session';
 import { WireHost } from './wire-host';
 import { readRunOptions, type RunOptions } from '../execution/run-options';
@@ -587,17 +586,11 @@ suite('ferretd execution integration', () => {
     };
   });
 
-  test('reports an offline Wire default, preserves the Debug guard, and restores built-in Run', async () => {
+  test('resolves the same offline default for Debug and Run and restores built-in Run', async () => {
     const fixture = await RealExecutionFixture.create(executable, [
       { name: 'root', files: { 'main.fql': 'RETURN 42\n' } },
     ]);
     const config = join(fixture.temporaryRoot, 'runtimes.json');
-    let resolutions = 0;
-    const debug = new FerretDebugAdapterDescriptorFactory(async () => {
-      resolutions++;
-      return { source: 'configured', executable };
-    }, fixture.output, fixture.runtime);
-    const session = (configuration: object) => ({ id: 'guard', configuration }) as vscode.DebugSession;
     try {
       const document = await fixture.document('root', 'main.fql');
       await writeFile(config, JSON.stringify({ defaultRuntime: 'offline', runtimes: [{
@@ -607,23 +600,47 @@ suite('ferretd execution integration', () => {
       await fixture.runtime.reload();
       assert.equal(fixture.runtime.view.catalog?.defaultRuntime, 'offline');
       await assert.rejects(fixture.manager.run(document), /runtime.*unavailable/i);
-      assert.throws(() => debug.createDebugAdapterDescriptor(session({})), /Daemon default/);
+      const debug = fixture.runtime.admitDebug();
+      assert.equal((await debug.prepareDebug(new AbortController().signal)).name, 'offline');
+      debug.release();
       fixture.selection = 'offline';
       fixture.runtime.save({ entered: '' });
       await assert.rejects(fixture.manager.run(document), /Reload/);
       await fixture.runtime.reload();
       await assert.rejects(fixture.manager.run(document), /runtime.*unavailable/i);
-      assert.throws(() => debug.createDebugAdapterDescriptor(session({})), /Daemon default/);
+      const missing = fixture.runtime.admitDebug();
+      await assert.rejects(missing.prepareDebug(new AbortController().signal), /unavailable/);
+      missing.release();
       fixture.selection = '';
-      assert.throws(() => debug.createDebugAdapterDescriptor(session({ runtimeName: 'local' })), /Daemon default/);
-      assert.equal(resolutions, 0);
       assert.equal(fixture.client.createdSessions.length, 0);
       const result = await runToTerminal(fixture, document);
       assert.equal(resultValue(result.change), 42);
     } finally {
-      await debug.shutdown();
       await fixture.dispose();
     }
+  });
+
+  test('preserves daemon diagnostics for malformed Debug configuration and requires Reload after an edit', async () => {
+    const fixture = await RealExecutionFixture.create(executable, [{ name: 'root', files: { 'main.fql': 'RETURN 1' } }]);
+    const config = join(fixture.temporaryRoot, 'runtimes.json');
+    try {
+      fixture.runtime.save({ entered: config, path: config });
+      await writeFile(config, '{');
+      const malformed = fixture.runtime.admitDebug();
+      try { await assert.rejects(malformed.prepareDebug(new AbortController().signal), /invalid runtime configuration/); }
+      finally { malformed.release(); }
+      await writeFile(config, '{}');
+      await fixture.runtime.reload();
+      const debug = fixture.runtime.admitDebug();
+      try {
+        assert.equal((await debug.prepareDebug(new AbortController().signal)).name, 'local');
+        await writeFile(config, '{ }');
+        await assert.rejects(debug.verifyConfiguration(), /Reload Runtimes/);
+        assert.throws(() => fixture.runtime.admitRun(), /Reload/);
+      } finally { debug.release(); }
+      await fixture.runtime.reload();
+      assert.equal(fixture.runtime.view.status, 'ready');
+    } finally { await fixture.dispose(); }
   });
 
   test('shares a native plan across default and explicit local while applying per-Run inputs', async () => {

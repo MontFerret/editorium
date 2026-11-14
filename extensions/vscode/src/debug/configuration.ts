@@ -20,6 +20,7 @@ const unsuitableProgramMessage =
 export interface FerretDebugConfigurationHost {
   getActiveDocument(): vscode.TextDocument | undefined;
   getWorkspaceFolder(uri: vscode.Uri): vscode.WorkspaceFolder | undefined;
+  getRunSettings(uri: vscode.Uri): Pick<vscode.WorkspaceConfiguration, 'get'>;
   showErrorMessage(message: string): Thenable<unknown>;
 }
 
@@ -34,6 +35,7 @@ export interface DebugConfigurationRegistrationHost {
 const vscodeFerretDebugConfigurationHost: FerretDebugConfigurationHost = {
   getActiveDocument: () => vscode.window.activeTextEditor?.document,
   getWorkspaceFolder: (uri) => vscode.workspace.getWorkspaceFolder(uri),
+  getRunSettings: uri => vscode.workspace.getConfiguration('ferret.run', uri),
   showErrorMessage: (message) => vscode.window.showErrorMessage(message),
 };
 
@@ -43,7 +45,7 @@ export class FerretDebugConfigurationProvider
   public constructor(
     private readonly host: FerretDebugConfigurationHost =
       vscodeFerretDebugConfigurationHost,
-    private readonly checkLaunch?: (selector: unknown) => void,
+    private readonly checkLaunch?: () => void,
   ) {}
 
   public provideDebugConfigurations(): vscode.DebugConfiguration[] {
@@ -93,7 +95,8 @@ export class FerretDebugConfigurationProvider
 
     try {
       if ('debugServer' in debugConfiguration) throw new Error('Remove debugServer to use the owned Ferret debug adapter.');
-      this.checkLaunch?.(readRuntimeSelector(debugConfiguration));
+      readRuntimeSelector(debugConfiguration);
+      this.checkLaunch?.();
     } catch (error) {
       return this.reject(error instanceof Error ? error.message : String(error));
     }
@@ -115,8 +118,11 @@ export class FerretDebugConfigurationProvider
     }
 
     const workspaceFolder = this.host.getWorkspaceFolder(document.uri);
+    const settings = this.host.getRunSettings(document.uri);
 
     return {
+      parameters: settings.get<unknown>('parameters', {}),
+      workingDirectory: settings.get<unknown>('workingDirectory', ''),
       ...debugConfiguration,
       type: ferretDebugType,
       request: 'launch',
@@ -137,7 +143,7 @@ export class FerretDebugConfigurationProvider
 }
 
 export function registerFerretDebugConfigurationProvider(
-  checkLaunch: (selector: unknown) => void,
+  checkLaunch: () => void,
   registrationHost: DebugConfigurationRegistrationHost = vscode.debug,
   configurationHost: FerretDebugConfigurationHost =
     vscodeFerretDebugConfigurationHost,
