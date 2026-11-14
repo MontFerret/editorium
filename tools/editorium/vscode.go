@@ -104,7 +104,21 @@ func runVSCodeOperation(ctx context.Context, root, operation string) error {
 			return err
 		}
 
-		return runVSCodeScript(ctx, packageRoot, []string{"FERRETD_TEST_PATH=" + prepared.StagedBinary}, "test:integration")
+		fixtureDir, err := os.MkdirTemp("", "editorium-wire-host-*")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(fixtureDir)
+		name := "wire-host"
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		host := filepath.Join(fixtureDir, name)
+		if err := runCommand(ctx, filepath.Join(root, "fixtures", "wire-host"), []string{"GOWORK=off"}, "go", "build", "-mod=readonly", "-o", host, "."); err != nil {
+			return err
+		}
+
+		return runVSCodeScript(ctx, packageRoot, []string{"FERRETD_TEST_PATH=" + prepared.StagedBinary, "FERRET_WIRE_HOST_PATH=" + host}, "test:integration")
 	case "lint":
 		if _, err := syncFerretdProto(ctx, root, false, nil); err != nil {
 			return err

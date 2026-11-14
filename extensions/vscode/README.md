@@ -115,11 +115,14 @@ invoke Reload again to adopt it. You can do this while the older request is
 still running. Repeating Reload for the same in-flight revision shares its result.
 Discovery requires daemon API 1.3 or a later minor version in major 1.
 
-**Run and Debug currently require an empty configuration path and Daemon
-default.** Configured and named launches, including explicit `local`, are
-unavailable. To resume built-in launches, clear the setting, select **Daemon
-default**, remove any explicit `runtimeName` from the launch configuration, and
-complete any required Reload.
+**Run Current File** uses the saved picker selection. Choose **Daemon default**
+to follow the default in the configuration, or select an exact runtime name.
+Choosing `local` runs against the built-in native runtime even when a Wire
+application is the default.
+
+**Debug** requires an empty configuration path, **Daemon default**, and an
+omitted or empty launch `runtimeName`. Clear the setting, select **Daemon
+default**, and complete any required Reload before starting Debug.
 
 ## Run a Ferret file
 
@@ -146,6 +149,73 @@ discovery-excluded directories such as `.tmp`, `testdata`, and nested Go modules
 The original source identity and workspace are preserved. Selecting one file
 does not discover excluded neighbors or relax workspace containment and the
 daemon's nested-symlink restrictions.
+
+### Run parameters and working directory
+
+| Resource-scoped setting | Default | Behavior |
+| --- | --- | --- |
+| `ferret.run.parameters` | `{}` | JSON bind values, including nested objects, arrays, booleans, numbers, strings, and null. |
+| `ferret.run.workingDirectory` | `""` | Runtime filesystem directory. A blank value uses the provider's default. |
+
+Settings come from the source file's workspace folder. Native relative
+directories resolve against its registered compilation workspace and may point
+outside it. Wire receives nonblank directory text verbatim, including spaces
+and runtime-host separators. Enter paths literally. The source file and its
+compilation workspace stay on the extension host.
+
+An extension or command keybinding can pass an options object to
+`ferret.runFile`. Each supplied property replaces its configured value.
+Omitting `runtimeName` uses the picker. Passing `""` chooses daemon default
+even with a saved name. An empty parameter object clears configured bindings,
+and a blank directory clears a configured directory for that Run.
+
+### Try the Wire host
+
+From the Editorium checkout, start the sample application in a terminal and
+leave it running:
+
+```sh
+cd fixtures/wire-host
+go run . -root .
+```
+
+Copy the endpoint from its `ready` event into a workspace file named
+`runtimes.json`, replacing the sample port below.
+
+```json
+{
+  "defaultRuntime": "App",
+  "runtimes": [
+    { "name": "App", "provider": "wire", "endpoint": "tcp://127.0.0.1:12345", "insecure": true }
+  ]
+}
+```
+
+For a single-folder workspace, use these settings, reload runtimes if already
+adopted, and select **Daemon default**.
+
+```json
+{
+  "ferret.runtime.configPath": "runtimes.json",
+  "ferret.run.parameters": { "value": { "count": 2, "enabled": true, "items": [null, "two"] } }
+}
+```
+
+Run a saved `.fql` file containing `RETURN DEMO::IDENTITY(@value)`. The host
+returns the typed object. To run an ordinary query such as `RETURN 42` on
+native Ferret under the same Wire default, select **local** or supply the
+override from a VS Code extension:
+
+```ts
+await vscode.commands.executeCommand('ferret.runFile', {
+  runtimeName: 'local', parameters: {}, workingDirectory: ''
+});
+```
+
+Each Wire Run releases its Execution and compiled Session after completion,
+failure, or Stop. The application stays available for the next Run. If the
+application disconnects, restore it and run the file again. If its endpoint
+changed, update the configuration and reload runtimes first.
 
 ## Bundled ferretd
 

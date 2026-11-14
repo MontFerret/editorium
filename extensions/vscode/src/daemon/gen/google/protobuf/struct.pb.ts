@@ -84,7 +84,7 @@ export interface ListValue {
 }
 
 function createBaseStruct(): Struct {
-  return { fields: {} };
+  return { fields: Object.create(null) };
 }
 
 export const Struct: MessageFns<Struct> & StructWrapperFns = {
@@ -136,7 +136,7 @@ export const Struct: MessageFns<Struct> & StructWrapperFns = {
         }
         return acc;
       },
-      {},
+      Object.create(null),
     );
     return message;
   },
@@ -153,7 +153,7 @@ export const Struct: MessageFns<Struct> & StructWrapperFns = {
   },
 
   unwrap(message: Struct): { [key: string]: any } {
-    const object: { [key: string]: any } = {};
+    const object: { [key: string]: any } = Object.create(null);
     if (message.fields) {
       for (const key of globalThis.Object.keys(message.fields)) {
         object[key] = message.fields[key];

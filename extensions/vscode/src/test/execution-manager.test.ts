@@ -29,8 +29,8 @@ class FakeDaemon implements ExecutionDaemon {
 
   public async prepareWorkspaces(): Promise<void> {}
 
-  public requireConnection(): { readonly signal: AbortSignal } {
-    return { signal: this.generation.signal };
+  public requireConnection() {
+    return { signal: this.generation.signal, apiVersion: { major: 1, minor: 3 } };
   }
 
   public replace(reason: unknown = new Error('daemon replaced')): void {
@@ -118,6 +118,9 @@ class FakeExecutionClient implements ExecutionClient {
     readonly workspaceId: string;
     readonly relativePath: string;
   }> = [];
+  public executionGate?: Promise<void>;
+  public startGate?: Promise<void>;
+  public closeExecutionGate?: Promise<void>;
   public createSessionGate: Promise<void> | undefined;
   public createSessionError: Error | undefined;
   public rejectCleanup = false;
@@ -160,6 +163,7 @@ class FakeExecutionClient implements ExecutionClient {
   ): Promise<FerretExecution> {
     this.calls.push('create-execution');
     this.executionParameters.push(parameters);
+    await this.executionGate;
     const id = `execution-${++this.executionCount}`;
     this.executionSessions.set(id, sessionId);
 
@@ -168,6 +172,7 @@ class FakeExecutionClient implements ExecutionClient {
 
   public async runExecution(executionId: string): Promise<FerretExecution> {
     this.calls.push('run-execution');
+    await this.startGate;
     if (this.runError !== undefined) {
       throw this.runError;
     }
@@ -199,6 +204,7 @@ class FakeExecutionClient implements ExecutionClient {
       throw new Error('cancel unavailable');
     }
 
+    this.watches.get(executionId)?.send(executionEvent(executionId, this.requireSession(executionId), 'cancelled'));
     return execution(
       executionId,
       this.requireSession(executionId),
@@ -209,6 +215,7 @@ class FakeExecutionClient implements ExecutionClient {
   public async closeExecution(executionId: string): Promise<void> {
     this.calls.push(`close-execution:${executionId}`);
     this.closeExecutionIds.push(executionId);
+    await this.closeExecutionGate;
     if (this.rejectCleanup) {
       throw new Error('close execution unavailable');
     }
@@ -295,7 +302,7 @@ suite('Ferret execution manager', () => {
       const beforeStart = performance.now();
       const first = await fixture.manager.run(
         asTextDocument(document),
-        parameters,
+        { parameters },
       );
       const afterStart = performance.now();
 
@@ -305,13 +312,13 @@ suite('Ferret execution manager', () => {
         'watch-execution',
         'run-execution',
       ]);
-      assert.strictEqual(fixture.client.executionParameters[0], parameters);
+      assert.deepStrictEqual(fixture.client.executionParameters[0], parameters);
       assert.strictEqual(first.execution.status, 'running');
       assert.ok(first.startedAt >= beforeStart);
       assert.ok(first.startedAt <= afterStart);
       assert.strictEqual(fixture.manager.getActive(document.uri), first);
       assert.strictEqual(fixture.manager.activeCount, 1);
-      assert.deepStrictEqual(changes.map(event => event.kind), ['preparing', 'started', 'preparation-ended']);
+      assert.deepStrictEqual(changes.map(event => event.kind), ['preparing', 'runtime-resolved', 'started', 'preparation-ended']);
 
       fixture.client.send(first.id, 'created');
       await settle();
@@ -431,7 +438,7 @@ suite('Ferret execution manager', () => {
       await entered.promise;
       fixture.runtime.closeAdmissions();
       const stopped = controller.stop(fixture.manager.dispose(), debug.promise, hung ? 0 : 1500);
-      assert.throws(() => fixture.runtime.admit(), /shutting down/);
+      assert.throws(() => fixture.runtime.admitDebug(), /shutting down/);
       acquire.resolve();
       await run;
       debug.resolve();
@@ -498,6 +505,24 @@ suite('Ferret execution manager', () => {
     }
   });
 
+  test('keeps the admitted snapshot when the file is edited before the start acknowledgment', async () => {
+    const fixture = createFixture(), start = deferred();
+    const document = ferretDocument('/workspace/query.fql');
+    fixture.client.startGate = start.promise;
+    try {
+      const running = fixture.manager.run(asTextDocument(document));
+      await settle();
+      assert.ok(fixture.client.calls.includes('run-execution'));
+      document.version++;
+      document.isDirty = true;
+      start.resolve();
+      const handle = await running;
+      fixture.client.send(handle.id, 'completed');
+      await settle();
+      assert.deepEqual(fixture.client.cancelExecutionIds, []);
+    } finally { start.resolve(); await disposeFixture(fixture); }
+  });
+
   test('releases a created Execution when starting it fails', async () => {
     const fixture = createFixture();
     const document = ferretDocument('/workspace/users.fql');
@@ -558,8 +583,8 @@ suite('Ferret execution manager', () => {
       );
 
       assert.strictEqual(fixture.manager.activeCount, 0);
-      assert.deepStrictEqual(changes.map(event => event.kind), ['preparing', 'start-failed', 'preparation-ended']);
-      const change = changes[1];
+      assert.deepStrictEqual(changes.map(event => event.kind), ['preparing', 'runtime-resolved', 'start-failed', 'preparation-ended']);
+      const change = changes[2];
       assert.ok(change?.kind === 'start-failed');
       assert.strictEqual(
         change.documentUri.toString(),
@@ -614,6 +639,123 @@ suite('Ferret execution manager', () => {
       gate.resolve();
       await disposeFixture(fixture);
     }
+  });
+
+  test('cancelling a discovery waiter preserves its sibling and snapshots caller-owned parameters', async () => {
+    const entered = deferred(), release = deferred();
+    let discoveries = 0;
+    const fixture = createFixture(async () => {
+      discoveries++;
+      entered.resolve();
+      await release.promise;
+      return { defaultRuntime: 'App', runtimes: [{ name: 'App', label: 'App', provider: 'wire' }] };
+    });
+    const a = asTextDocument(ferretDocument('/workspace/a.fql')), b = asTextDocument(ferretDocument('/workspace/b.fql'));
+    try {
+      const first = assert.rejects(fixture.manager.run(a), /cancelled/);
+      const value = { typed: [null, true, 42] };
+      const second = fixture.manager.run(b, { parameters: { value } });
+      await entered.promise;
+      await fixture.manager.cancel(a.uri);
+      await first;
+      assert.equal(fixture.client.sessionRequests.length, 0);
+      value.typed.length = 0;
+      release.resolve();
+      const handle = await second;
+      assert.equal(discoveries, 1);
+      assert.deepEqual(fixture.client.executionParameters, [{ value: { typed: [null, true, 42] } }]);
+      fixture.client.send(handle.id, 'completed');
+      await settle();
+      assert.deepEqual(fixture.client.closeSessionIds, [handle.sessionId]);
+    } finally { release.resolve(); await disposeFixture(fixture); }
+  });
+
+  for (const stage of ['create-execution', 'run-execution'] as const) {
+    test(`stops during ${stage} and holds Wire admission through ordered cleanup`, async () => {
+      const fixture = createFixture(), gate = deferred(), close = deferred();
+      const document = asTextDocument(ferretDocument('/workspace/query.fql'));
+      if (stage === 'create-execution') fixture.client.executionGate = gate.promise;
+      else fixture.client.startGate = gate.promise;
+      fixture.client.closeSessionGate = close.promise;
+      try {
+        const run = assert.rejects(fixture.manager.run(document, { runtimeName: 'App' }), /cancelled/);
+        await settle();
+        assert.ok(fixture.client.calls.includes(stage));
+        const stop = fixture.manager.cancel(document.uri);
+        gate.resolve();
+        await settle();
+        assert.deepEqual(fixture.client.closeExecutionIds, ['execution-1']);
+        assert.deepEqual(fixture.client.cancelExecutionIds, ['execution-1']);
+        await assert.rejects(fixture.runtime.reload(), /finish/);
+        close.resolve();
+        await Promise.all([stop, run]);
+        assert.deepEqual(fixture.client.closeSessionIds, ['session-1']);
+        await fixture.runtime.reload();
+      } finally { gate.resolve(); close.resolve(); await disposeFixture(fixture); }
+    });
+  }
+
+  test('failed Wire setup releases the compiled plan and retains the acquisition failure', async () => {
+    const fixture = createFixture();
+    const document = asTextDocument(ferretDocument('/workspace/setup.fql'));
+    const failure = new Error('execution rejected');
+    fixture.client.runError = failure;
+    fixture.client.rejectCleanup = true;
+    try {
+      await assert.rejects(fixture.manager.run(document, { runtimeName: 'App' }), error => error === failure);
+      assert.deepEqual(fixture.client.closeExecutionIds, ['execution-1']);
+      assert.deepEqual(fixture.client.closeSessionIds, ['session-1']);
+      const cleanup = fixture.output.errors.map(({ error }) => String(error)).join(' ');
+      assert.match(cleanup, /close execution unavailable/);
+      assert.match(cleanup, /close session unavailable/);
+      await fixture.runtime.reload();
+    } finally { await disposeFixture(fixture); }
+  });
+
+  test('binding loss fails one Wire Run, releases its Session, and allows a fresh explicit Run', async () => {
+    const fixture = createFixture(), close = deferred();
+    const document = asTextDocument(ferretDocument('/workspace/a.fql'));
+    try {
+      const first = await fixture.manager.run(document, { runtimeName: 'App' });
+      fixture.client.closeExecutionGate = close.promise;
+      fixture.client.failWatch(first.id, new Error('binding lost'));
+      await settle();
+      assert.equal(fixture.client.sessionRequests.length, 1);
+      assert.deepEqual(fixture.client.closeSessionIds, []);
+      await assert.rejects(fixture.runtime.reload(), /finish/);
+      close.resolve();
+      await settle();
+      assert.deepEqual(fixture.client.closeSessionIds, [first.sessionId]);
+      const second = await fixture.manager.run(document, { runtimeName: 'App' });
+      assert.notEqual(first.sessionId, second.sessionId);
+      await second.cancel();
+      assert.deepEqual(fixture.client.closeSessionIds, [first.sessionId, second.sessionId]);
+    } finally { close.resolve(); await disposeFixture(fixture); }
+  });
+
+  test('old cleanup cannot send colliding IDs to a replacement daemon', async () => {
+    const fresh = new FakeExecutionClient(), close = deferred();
+    let replaced = false;
+    const fixture = createFixture(undefined, (_signal, original) => replaced ? fresh : original);
+    const document = asTextDocument(ferretDocument('/workspace/a.fql'));
+    try {
+      const first = await fixture.manager.run(document, { runtimeName: 'App' });
+      fixture.client.closeExecutionGate = close.promise;
+      fixture.client.send(first.id, 'completed');
+      await settle();
+      fixture.daemon.replace();
+      replaced = true;
+      const second = await fixture.manager.run(document, { runtimeName: 'App' });
+      assert.equal(first.id, second.id);
+      assert.equal(first.sessionId, second.sessionId);
+      close.resolve();
+      await settle();
+      assert.deepEqual(fresh.closeExecutionIds, []);
+      assert.deepEqual(fresh.closeSessionIds, []);
+      assert.ok(fixture.output.errors.some(({ error }) => String(error).includes('unconfirmed')));
+      await second.cancel();
+      assert.deepEqual(fresh.closeSessionIds, [second.sessionId]);
+    } finally { close.resolve(); await disposeFixture(fixture); }
   });
 
   test('invalidates only the saved document Session', async () => {
@@ -697,7 +839,7 @@ suite('Ferret execution manager', () => {
 
       await handles[2]?.cancel();
       assert.deepStrictEqual(fixture.client.cancelExecutionIds, [handles[2]?.id]);
-      assert.strictEqual(fixture.manager.isRunning(documents[2]!.uri), true);
+      assert.strictEqual(fixture.manager.isRunning(documents[2]!.uri), false);
 
       fixture.client.send(handles[0]!.id, 'completed');
       fixture.client.send(handles[1]!.id, 'failed');
@@ -708,7 +850,7 @@ suite('Ferret execution manager', () => {
         finished.map((change) =>
           change.kind === 'finished' ? change.event.kind : undefined,
         ),
-        ['completed', 'failed', 'cancelled'],
+        ['cancelled', 'completed', 'failed'],
       );
       assert.deepStrictEqual(
         new Set(fixture.client.closeExecutionIds),
@@ -758,7 +900,7 @@ suite('Ferret execution manager', () => {
       assert.strictEqual(fixture.manager.activeCount, 0);
       assert.ok(
         fixture.output.errors.some(({ message }) =>
-          message.includes(`Closing Ferret execution "${active.id}" failed`),
+          message.includes('Cleaning up Ferret Run'),
         ),
       );
     } finally {
@@ -865,7 +1007,7 @@ suite('Ferret execution manager', () => {
             change.kind === 'invalidated' && change.reason === 'workspace',
         ),
       );
-      assert.deepStrictEqual(fixture.client.closeExecutionIds, []);
+      assert.deepStrictEqual(fixture.client.closeExecutionIds, [old.id]);
 
       const fresh = await fixture.manager.run(asTextDocument(document));
       assert.notStrictEqual(fresh.sessionId, old.sessionId);
@@ -894,14 +1036,10 @@ suite('Ferret execution manager', () => {
     assert.deepStrictEqual(fixture.client.cancelExecutionIds, [active.id]);
     assert.ok(fixture.client.closeExecutionIds.includes(active.id));
     assert.ok(fixture.client.closeSessionIds.includes(active.sessionId));
-    assert.deepStrictEqual(
-      fixture.output.errors.map(({ message }) => message),
-      [
-        `Cancelling Ferret execution "${active.id}" during disposal failed`,
-        `Closing Ferret execution "${active.id}" during disposal failed`,
-        `Closing Ferret Session "${active.sessionId}" during disposal failed`,
-      ],
-    );
+    const failures = fixture.output.errors.map(({ error }) => String(error)).join(' ');
+    for (const message of ['cancel unavailable', 'close execution unavailable', 'close session unavailable']) {
+      assert.ok(failures.includes(message));
+    }
 
     const calls = fixture.client.calls.length;
     fixture.documents.fire(asTextDocument(document));
@@ -916,7 +1054,16 @@ suite('Ferret execution manager', () => {
   });
 });
 
-function createFixture(): Fixture {
+function createFixture(
+  discover = async () => ({
+    defaultRuntime: 'local',
+    runtimes: [
+      { name: 'local', label: 'Local', provider: 'native' },
+      { name: 'App', label: 'App', provider: 'wire' },
+    ],
+  }),
+  clientFor?: (generation: AbortSignal, initial: FakeExecutionClient) => FakeExecutionClient,
+): Fixture {
   const client = new FakeExecutionClient();
   const daemon = new FakeDaemon();
   const documents = new vscode.EventEmitter<vscode.TextDocument>();
@@ -926,10 +1073,10 @@ function createFixture(): Fixture {
   const runtime = new RuntimeCoordinator({
     start: async () => {}, stop: async () => { daemon.replace(); },
     requireConnection: () => daemon.requireConnection() as DaemonConnection,
-  }, { entered: '' }, () => '', async () => ({ defaultRuntime: 'local', runtimes: [{ name: 'local', label: 'Local', provider: 'native' }] }));
+  }, { entered: '' }, () => '', discover);
   const manager = new FerretExecutionManager(
     daemon,
-    client,
+    connection => clientFor?.(connection.signal, client) ?? client,
     registry,
     output,
     runtime,

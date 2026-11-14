@@ -140,6 +140,7 @@ export function mapExecution(
     parameters,
     options: {
       outputContentType: value.options.outputContentType,
+      ...(value.options.workingDirectory === undefined ? {} : { workingDirectory: value.options.workingDirectory }),
     },
   };
 

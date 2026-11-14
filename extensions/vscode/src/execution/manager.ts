@@ -3,12 +3,12 @@ import { performance } from 'node:perf_hooks';
 import * as vscode from 'vscode';
 
 import type { FerretWorkspaceInvalidation } from '../daemon/workspaces';
-import type { ResolvedFerretDocument } from '../daemon/types';
-import type { RuntimeCoordinator } from '../runtime/coordinator';
+import type { DaemonConnection, ResolvedFerretDocument } from '../daemon/types';
+import type { PreparedRuntime, RunReservation, RuntimeCoordinator } from '../runtime/coordinator';
 import { RuntimeLaunchError } from '../runtime/errors';
 import { isFerretDocument } from '../language-client';
 import {
-  ExecutionManagerError,
+  managerError,
   FerretExecutionClientError,
 } from './errors';
 import type {
@@ -17,6 +17,13 @@ import type {
   FerretExecutionFailure,
   FerretSession,
 } from './types';
+import { ManagedExecutionHandle } from './managed-execution';
+import { waitForPreparation } from './preparation';
+import { RunResources } from './run-resources';
+import type { RunOptions } from './run-options';
+import { RunSession } from './session';
+import { validateParameters } from './parameters';
+import { resolveWorkingDirectory } from './working-directory';
 
 export interface ManagedExecution {
   readonly id: string;
@@ -30,6 +37,9 @@ export interface ManagedExecution {
 }
 
 export type ManagedExecutionChange =
+  | { readonly kind: 'runtime-resolved'; readonly documentUri: vscode.Uri; readonly runtime: string; readonly provider: string }
+  | { readonly kind: 'cleanup-failed'; readonly documentUri: vscode.Uri; readonly error: unknown }
+  | { readonly kind: 'preparation-cancelled'; readonly documentUri: vscode.Uri; readonly startedAt: number }
   | { readonly kind: 'preparing' | 'preparation-ended'; readonly documentUri: vscode.Uri }
   | {
       readonly kind: 'started';
@@ -66,19 +76,22 @@ export type ManagedExecutionChange =
 
 export interface ExecutionDaemon {
   prepareWorkspaces(signal: AbortSignal): Promise<void>;
-  requireConnection(): { readonly signal: AbortSignal };
 }
 
 export interface ExecutionClient {
   createSession(
     workspaceId: string,
     relativePath: string,
+    runtime: PreparedRuntime,
+    signal: AbortSignal,
   ): Promise<FerretSession>;
   createExecution(
     sessionId: string,
-    parameters?: Readonly<Record<string, unknown>>,
+    parameters: Readonly<Record<string, unknown>>,
+    workingDirectory: string | undefined,
+    signal: AbortSignal,
   ): Promise<FerretExecution>;
-  runExecution(executionId: string): Promise<FerretExecution>;
+  runExecution(executionId: string, signal: AbortSignal): Promise<FerretExecution>;
   watchExecution(
     executionId: string,
     signal?: AbortSignal,
@@ -102,96 +115,35 @@ export interface ExecutionManagerOutput {
   error(message: string, ...args: unknown[]): void;
 }
 
-interface CachedSession {
-  readonly documentKey: string;
-  readonly documentUri: vscode.Uri;
-  readonly generation: AbortSignal;
-  readonly relativePath: string;
-  readonly session: FerretSession;
-  readonly workspaceId: string;
-}
-
 interface PendingRun {
-  cancelled?: boolean;
+  readonly abort: AbortController;
   readonly settled: Promise<void>;
-  readonly documentKey: string;
   readonly documentVersion: number;
-  executionId?: string;
   generation?: AbortSignal;
-  invalidated?: 'daemon-generation' | 'workspace';
-  relativePath?: string;
-  sessionId?: string;
-  watchAbort?: AbortController;
   workspaceId?: string;
-}
-
-class ManagedExecutionHandle implements ManagedExecution {
-  public constructor(
-    private readonly manager: FerretExecutionManager,
-    public readonly documentUri: vscode.Uri,
-    public readonly startedAt: number,
-    public readonly workspaceId: string,
-    public readonly relativePath: string,
-    initial: FerretExecution,
-    public readonly watchAbort: AbortController,
-  ) {
-    this.current = initial;
-  }
-
-  private current: FerretExecution;
-
-  public get id(): string {
-    return this.current.id;
-  }
-
-  public get sessionId(): string {
-    return this.current.sessionId;
-  }
-
-  public get execution(): FerretExecution {
-    return this.current;
-  }
-
-  public cancel(): Promise<void> {
-    return this.manager.cancelHandle(this);
-  }
-
-  public update(execution: FerretExecution): void {
-    if (
-      execution.id === this.current.id &&
-      execution.sessionId === this.current.sessionId &&
-      statusRank(execution.status) >= statusRank(this.current.status)
-    ) {
-      this.current = execution;
-    }
-  }
 }
 
 export class FerretExecutionManager {
   private readonly active =
     new Map<string, ManagedExecutionHandle>();
-  private readonly cache = new Map<string, CachedSession>();
+  private readonly cache = new Map<string, RunSession>();
   private readonly changeEmitter =
     new vscode.EventEmitter<ManagedExecutionChange>();
   private readonly cleanupTasks = new Set<Promise<void>>();
-  private readonly closingExecutions = new Map<string, Promise<void>>();
-  private readonly closingSessions = new Map<string, Promise<void>>();
-  private currentGeneration: AbortSignal | undefined;
   private disposed = false;
   private disposePromise: Promise<void> | undefined;
   private readonly documentSaveListener: vscode.Disposable;
   private readonly pending = new Map<string, PendingRun>();
-  private readonly retiredSessions = new Map<string, CachedSession>();
   private readonly workspaceListener: vscode.Disposable;
 
   public readonly onDidChangeExecution = this.changeEmitter.event;
 
   public constructor(
     private readonly daemon: ExecutionDaemon,
-    private readonly client: ExecutionClient,
+    private readonly bindClient: (connection: DaemonConnection) => ExecutionClient,
     private readonly workspaces: ExecutionWorkspaceResolver,
     private readonly output: ExecutionManagerOutput,
-    private readonly runtime: Pick<RuntimeCoordinator, 'admit' | 'holdCleanup'>,
+    private readonly runtime: Pick<RuntimeCoordinator, 'admitRun' | 'holdCleanup'>,
     documents: ExecutionDocumentEvents = vscode.workspace,
   ) {
     this.documentSaveListener = documents.onDidSaveTextDocument(
@@ -203,7 +155,7 @@ export class FerretExecutionManager {
   }
 
   public isRunning(documentUri: vscode.Uri): boolean {
-    const key = documentIdentity(documentUri);
+    const key = documentUri.toString();
     return this.active.has(key) || this.pending.has(key);
   }
 
@@ -214,174 +166,113 @@ export class FerretExecutionManager {
   public getActive(
     documentUri: vscode.Uri,
   ): ManagedExecution | undefined {
-    return this.active.get(documentIdentity(documentUri));
+    return this.active.get(documentUri.toString());
   }
 
   public async run(
     document: vscode.TextDocument,
-    parameters: Readonly<Record<string, unknown>> = {},
-    selector?: unknown,
+    options: RunOptions = {},
   ): Promise<ManagedExecution> {
     this.ensureUsable();
     this.validateDocument(document);
-
-    const documentKey = documentIdentity(document.uri);
-    if (this.active.has(documentKey) || this.pending.has(documentKey)) {
-      throw managerError(
-        'execution-already-running',
-        'This document already has an active Ferret execution.',
-        document.uri,
-      );
+    const documentKey = document.uri.toString();
+    if (this.isRunning(document.uri)) {
+      throw managerError('execution-already-running', 'This document already has an active Ferret execution.', document.uri);
     }
-
-    const reservation = this.runtime.admit(selector);
+    const parameters = validateParameters(options.parameters === undefined ? {} : options.parameters);
+    const directory = options.workingDirectory;
+    let reservation: RunReservation;
+    try {
+      reservation = this.runtime.admitRun(options.runtimeName);
+    } catch (error) {
+      this.reportStartFailure(document.uri, performance.now(), error);
+      throw error;
+    }
     let finishSetup!: () => void;
-    let observing = false;
     const pending: PendingRun = {
-      settled: new Promise(resolve => { finishSetup = resolve; }),
-      documentKey,
+      abort: new AbortController(), settled: new Promise(resolve => { finishSetup = resolve; }),
       documentVersion: document.version,
     };
-    const startedAt = performance.now();
+    const { signal } = pending.abort;
     this.pending.set(documentKey, pending);
-
+    const startedAt = performance.now();
+    let resources: RunResources | undefined;
+    let observing = false;
+    const watchAbort = new AbortController();
     try {
       this.changeEmitter.fire({ kind: 'preparing', documentUri: document.uri });
-      const connection = await reservation.prepareRun();
-      this.ensureUsable();
-      const generation = this.resolveGeneration();
-      if (connection.signal !== generation) {
-        throw managerError('workspace-unavailable', 'Ferret daemon changed during startup.');
-      }
+      signal.throwIfAborted();
+      const runtime = await waitForPreparation(reservation.prepareRun(), signal);
+      signal.throwIfAborted();
+      const generation = runtime.connection.signal;
+      generation.throwIfAborted();
       pending.generation = generation;
-      this.assertGenerationStillUsable(pending, document.uri);
-      await this.daemon.prepareWorkspaces(generation);
-      this.assertGenerationStillUsable(pending, document.uri);
+      this.changeEmitter.fire({ kind: 'runtime-resolved', documentUri: document.uri, runtime: runtime.name, provider: runtime.provider });
+      await waitForPreparation(this.daemon.prepareWorkspaces(generation), signal);
+      signal.throwIfAborted();
       const target = this.resolveTarget(document.uri);
       pending.workspaceId = target.workspaceId;
-      pending.relativePath = target.relativePath;
-
+      const workingDirectory = await waitForPreparation(resolveWorkingDirectory(directory, target.root, runtime), signal);
       this.assertCanStart(document, pending, target);
-      let cached = this.cache.get(documentKey);
-      if (
-        cached !== undefined &&
-        (cached.generation !== generation ||
-          cached.workspaceId !== target.workspaceId ||
-          cached.relativePath !== target.relativePath)
-      ) {
-        this.retireSession(cached);
-        cached = undefined;
+      await waitForPreparation(reservation.verifyConfiguration(), signal);
+      this.assertCanStart(document, pending, target);
+
+      let session = runtime.provider === 'native' ? this.cache.get(documentKey) : undefined;
+      if (session && (session.generation !== generation || session.runtimeName !== runtime.name ||
+          session.snapshot.source.workspaceId !== target.workspaceId || session.snapshot.source.relativePath !== target.relativePath)) {
+        this.retire(documentKey, session);
+        session = undefined;
       }
-
-      let session = cached?.session;
-      if (session === undefined) {
-        session = await this.client.createSession(
-          target.workspaceId,
-          target.relativePath,
-        );
-        pending.sessionId = session.id;
-        try {
-          this.assertCanStart(document, pending, target);
-        } catch (error) {
-          if (this.canCleanUp(pending)) {
-            await this.scheduleSessionClose(session.id);
-          }
-          throw error;
-        }
-
-        cached = {
-          documentKey,
-          documentUri: document.uri,
-          generation,
-          relativePath: target.relativePath,
-          session,
-          workspaceId: target.workspaceId,
-        };
-        this.cache.set(documentKey, cached);
-      } else {
-        pending.sessionId = session.id;
-      }
-
-      let execution: FerretExecution;
-      try {
-        execution = await this.client.createExecution(
-          session.id,
-          parameters,
-        );
-        pending.executionId = execution.id;
+      if (!session) {
+        const client = this.bindClient(runtime.connection);
+        const created = await client.createSession(target.workspaceId, target.relativePath, runtime, signal);
+        session = new RunSession(client, generation, created, runtime.name);
+        resources = new RunResources(session);
         this.assertCanStart(document, pending, target);
-      } catch (error) {
-        if (
-          pending.executionId !== undefined &&
-          this.canCleanUp(pending)
-        ) {
-          await this.scheduleExecutionClose(pending.executionId);
+        if (runtime.provider === 'native') {
+          session.cache();
+          this.cache.set(documentKey, session);
         }
-        throw error;
+      } else {
+        resources = new RunResources(session);
       }
-
-      const watchAbort = new AbortController();
-      pending.watchAbort = watchAbort;
-      let watch: AsyncIterable<FerretExecutionEvent>;
-      try {
-        watch = this.client.watchExecution(
-          execution.id,
-          watchAbort.signal,
-        );
-      } catch (error) {
-        if (this.canCleanUp(pending)) {
-          await this.scheduleExecutionClose(execution.id);
-        }
-        throw error;
-      }
-
-      let started: FerretExecution;
-      try {
-        started = await this.client.runExecution(execution.id);
-      } catch (error) {
-        watchAbort.abort();
-        if (this.canCleanUp(pending)) {
-          await this.scheduleExecutionClose(execution.id);
-        }
-        throw error;
-      }
-
-      try {
-        this.assertGenerationStillUsable(pending, document.uri);
-      } catch (error) {
-        watchAbort.abort();
-        if (this.canCleanUp(pending)) {
-          try { await this.client.cancelExecution(execution.id); }
-          finally { await this.scheduleExecutionClose(execution.id); }
-        }
-        throw error;
-      }
-      const handle = new ManagedExecutionHandle(
-        this,
-        document.uri,
-        performance.now(),
-        target.workspaceId,
-        target.relativePath,
-        execution,
-        watchAbort,
-      );
+      const execution = await session.client.createExecution(session.snapshot.id, parameters, workingDirectory, signal);
+      resources.executionId = execution.id;
+      this.assertCanStart(document, pending, target);
+      const watch = session.client.watchExecution(execution.id, watchAbort.signal);
+      const started = await session.client.runExecution(execution.id, signal);
+      // RunExecution has admitted the immutable plan. A subsequent source edit
+      // affects the next Run, even if the start acknowledgment was delayed.
+      this.assertGeneration(pending, document.uri);
+      const handle = new ManagedExecutionHandle(this, document.uri, performance.now(), target.workspaceId, resources, execution, watchAbort);
       handle.update(started);
       this.active.set(documentKey, handle);
-      this.changeEmitter.fire({ kind: 'started', execution: handle });
+      const lost = () => this.invalidateHandle(handle, 'daemon-generation', generation.reason);
+      generation.addEventListener('abort', lost, { once: true });
       observing = true;
-      void this.observeExecution(documentKey, handle, watch).finally(reservation.release);
-
+      handle.settled = this.observeExecution(documentKey, handle, watch).finally(() => {
+        generation.removeEventListener('abort', lost);
+        reservation.release();
+      });
+      this.trackCleanup(handle.settled);
+      this.changeEmitter.fire({ kind: 'started', execution: handle });
       return handle;
     } catch (error) {
-      this.reportStartFailure(document.uri, startedAt, error);
-      throw error;
+      watchAbort.abort();
+      const primary: unknown = signal.aborted ? signal.reason : error;
+      if (signal.aborted && primary instanceof RuntimeLaunchError) {
+        this.changeEmitter.fire({ kind: 'preparation-cancelled', documentUri: document.uri, startedAt });
+      } else {
+        this.reportStartFailure(document.uri, startedAt, primary);
+      }
+      if (resources) await this.closeResources(resources, document.uri, true);
+      // Invalid create responses can carry a second failure from their rollback.
+      if (error !== primary && error instanceof FerretExecutionClientError && error.cause instanceof AggregateError) {
+        this.reportCleanup(document.uri, error);
+      }
+      throw primary;
     } finally {
-      if (this.pending.get(documentKey) === pending) {
-        this.pending.delete(documentKey);
-      }
-      if (pending.sessionId !== undefined) {
-        await this.releaseRetiredSession(pending.sessionId);
-      }
+      this.pending.delete(documentKey);
       if (!observing) reservation.release();
       finishSetup();
       this.changeEmitter.fire({ kind: 'preparation-ended', documentUri: document.uri });
@@ -393,31 +284,24 @@ export class FerretExecutionManager {
     startedAt: number,
     error: unknown,
   ): void {
-    if (
-      !(error instanceof FerretExecutionClientError) ||
-      error.code !== 'compilation-failed'
-    ) {
-      return;
-    }
-
     this.changeEmitter.fire({
       kind: 'start-failed',
       documentUri,
       startedAt,
       failure: {
         category: 'session-creation',
-        message: error.message,
-        diagnostics: error.diagnostics ?? [],
+        message: error instanceof Error ? error.message : String(error),
+        diagnostics: error instanceof FerretExecutionClientError ? error.diagnostics ?? [] : [],
       },
     });
   }
 
   public async cancel(documentUri: vscode.Uri): Promise<void> {
-    const key = documentIdentity(documentUri);
+    const key = documentUri.toString();
     const handle = this.active.get(key);
     const pending = this.pending.get(key);
     if (!handle && pending) {
-      pending.cancelled = true;
+      pending.abort.abort(new RuntimeLaunchError('Starting the Ferret execution was cancelled.'));
       await pending.settled;
       return;
     }
@@ -427,14 +311,26 @@ export class FerretExecutionManager {
   }
 
   public cancelHandle(handle: ManagedExecutionHandle): Promise<void> {
-    const current = this.active.get(documentIdentity(handle.documentUri));
+    const current = this.active.get(handle.documentUri.toString());
     if (current !== handle) {
-      return Promise.resolve();
+      return handle.settled ?? Promise.resolve();
     }
 
-    const cancel = this.client.cancelExecution(handle.id).then(() => undefined);
-    this.runtime.holdCleanup(cancel);
-    return cancel;
+    return handle.stop ??= this.stopHandle(handle);
+  }
+
+  private async stopHandle(handle: ManagedExecutionHandle): Promise<void> {
+    // Keep the watch until it supplies the terminal snapshot. A broken watch
+    // must not indefinitely delay explicit close after Stop.
+    try {
+      await handle.resources.cancel();
+    } catch (error) {
+      handle.watchAbort.abort();
+      await handle.settled;
+      throw error;
+    }
+    const timer = setTimeout(() => handle.watchAbort.abort(), 5000);
+    try { await handle.settled; } finally { clearTimeout(timer); }
   }
 
   public dispose(): Promise<void> {
@@ -451,197 +347,48 @@ export class FerretExecutionManager {
     this.documentSaveListener.dispose();
     this.workspaceListener.dispose();
     const preparing = [...this.pending.values()];
-    for (const run of preparing) run.cancelled = true;
+    for (const run of preparing) run.abort.abort(new RuntimeLaunchError('Starting the Ferret execution was cancelled.'));
     await Promise.all(preparing.map(run => run.settled));
-    this.detachGeneration();
-
-    const active = [...this.active.values()];
-    this.active.clear();
-    for (const handle of active) {
-      handle.watchAbort.abort();
-    }
-    const sessions = unique([
-      ...this.cache.values(),
-      ...this.retiredSessions.values(),
-    ]);
-    this.cache.clear();
-    this.retiredSessions.clear();
-
-    await Promise.allSettled(
-      active.map(async ({ id: executionId }) => {
-        try {
-          await this.client.cancelExecution(executionId);
-        } catch (error) {
-          this.output.error(
-            `Cancelling Ferret execution "${executionId}" during disposal failed`,
-            error,
-          );
-        }
-        try {
-          await this.client.closeExecution(executionId);
-        } catch (error) {
-          this.output.error(
-            `Closing Ferret execution "${executionId}" during disposal failed`,
-            error,
-          );
-        }
-      }),
-    );
-    await Promise.allSettled(
-      sessions.map(async ({ session }) => {
-        try {
-          await this.client.closeSession(session.id);
-        } catch (error) {
-          this.output.error(
-            `Closing Ferret Session "${session.id}" during disposal failed`,
-            error,
-          );
-        }
-      }),
-    );
-    await this.waitForCleanups();
-
+    for (const handle of this.active.values()) handle.watchAbort.abort();
+    for (const [key, session] of this.cache) this.retire(key, session);
+    while (this.cleanupTasks.size) await Promise.allSettled([...this.cleanupTasks]);
     this.changeEmitter.dispose();
   }
 
-  private resolveGeneration(): AbortSignal {
-    const generation = this.daemon.requireConnection().signal;
-    if (generation.aborted) {
-      throw managerError(
-        'workspace-unavailable',
-        'The Ferret daemon is unavailable for execution.',
-      );
-    }
-
-    if (this.currentGeneration !== generation) {
-      if (this.currentGeneration !== undefined) {
-        this.invalidateGeneration(
-          this.currentGeneration.reason,
-        );
-      }
-      this.detachGeneration();
-      this.currentGeneration = generation;
-      generation.addEventListener('abort', this.onGenerationAbort, {
-        once: true,
-      });
-    }
-
-    return generation;
+  private invalidateHandle(handle: ManagedExecutionHandle, reason: 'workspace' | 'daemon-generation', cause?: unknown): void {
+    const key = handle.documentUri.toString();
+    if (this.active.get(key) !== handle) return;
+    this.active.delete(key);
+    handle.watchAbort.abort();
+    this.changeEmitter.fire({ kind: 'invalidated', execution: handle, reason, cause });
   }
 
-  private readonly onGenerationAbort = (): void => {
-    const generation = this.currentGeneration;
-    if (generation !== undefined) {
-      this.currentGeneration = undefined;
-      this.invalidateGeneration(generation.reason);
-    }
-  };
-
-  private detachGeneration(): void {
-    this.currentGeneration?.removeEventListener(
-      'abort',
-      this.onGenerationAbort,
-    );
-    this.currentGeneration = undefined;
-  }
-
-  private invalidateGeneration(cause: unknown): void {
-    this.cache.clear();
-    this.retiredSessions.clear();
-    for (const pending of this.pending.values()) {
-      pending.invalidated = 'daemon-generation';
-      pending.watchAbort?.abort();
-    }
-    for (const [key, handle] of this.active) {
-      this.active.delete(key);
-      handle.watchAbort.abort();
-      this.changeEmitter.fire({
-        kind: 'invalidated',
-        execution: handle,
-        reason: 'daemon-generation',
-        cause,
-      });
-    }
-  }
-
-  private invalidateWorkspaces(
-    event: FerretWorkspaceInvalidation,
-  ): void {
+  private invalidateWorkspaces(event: FerretWorkspaceInvalidation): void {
     const invalid = new Set(event.workspaceIds);
-    for (const [key, cached] of this.cache) {
-      if (invalid.has(cached.workspaceId)) {
-        this.cache.delete(key);
-      }
-    }
-    for (const [id, cached] of this.retiredSessions) {
-      if (invalid.has(cached.workspaceId)) {
-        this.retiredSessions.delete(id);
-      }
+    for (const [key, session] of this.cache) {
+      if (invalid.has(session.snapshot.source.workspaceId)) this.retire(key, session);
     }
     for (const pending of this.pending.values()) {
-      if (
-        pending.workspaceId !== undefined &&
-        invalid.has(pending.workspaceId)
-      ) {
-        pending.invalidated = 'workspace';
-        pending.watchAbort?.abort();
+      if (pending.workspaceId && invalid.has(pending.workspaceId)) {
+        pending.abort.abort(managerError('workspace-unavailable', 'The Ferret workspace changed during preparation.'));
       }
     }
-    for (const [key, handle] of this.active) {
-      if (invalid.has(handle.workspaceId)) {
-        this.active.delete(key);
-        handle.watchAbort.abort();
-        this.changeEmitter.fire({
-          kind: 'invalidated',
-          execution: handle,
-          reason: 'workspace',
-        });
-      }
+    for (const handle of this.active.values()) {
+      if (invalid.has(handle.workspaceId)) this.invalidateHandle(handle, 'workspace');
     }
   }
 
   private invalidateSavedDocument(document: vscode.TextDocument): void {
-    const key = documentIdentity(document.uri);
-    const cached = this.cache.get(key);
-    if (cached !== undefined) {
-      this.retireSession(cached);
-    }
+    const key = document.uri.toString();
+    const session = this.cache.get(key);
+    if (session) this.retire(key, session);
   }
 
-  private retireSession(cached: CachedSession): void {
-    if (this.cache.get(cached.documentKey) === cached) {
-      this.cache.delete(cached.documentKey);
-    }
-
-    if (this.isSessionInUse(cached.session.id)) {
-      this.retiredSessions.set(cached.session.id, cached);
-    } else {
-      this.scheduleSessionClose(cached.session.id);
-    }
-  }
-
-  private isSessionInUse(sessionId: string): boolean {
-    return (
-      [...this.active.values()].some(
-        (handle) => handle.sessionId === sessionId,
-      ) ||
-      [...this.pending.values()].some(
-        (pending) => pending.sessionId === sessionId,
-      )
-    );
-  }
-
-  private releaseRetiredSession(
-    sessionId: string,
-  ): Promise<void> {
-    if (
-      this.retiredSessions.has(sessionId) &&
-      !this.isSessionInUse(sessionId)
-    ) {
-      this.retiredSessions.delete(sessionId);
-      return this.scheduleSessionClose(sessionId);
-    }
-    return Promise.resolve();
+  private retire(key: string, session: RunSession): void {
+    this.cache.delete(key);
+    const closed = session.retire().catch((error: unknown) => this.reportCleanup(vscode.Uri.parse(key), error));
+    this.runtime.holdCleanup(closed);
+    this.trackCleanup(closed);
   }
 
   private async observeExecution(
@@ -649,6 +396,7 @@ export class FerretExecutionManager {
     handle: ManagedExecutionHandle,
     watch: AsyncIterable<FerretExecutionEvent>,
   ): Promise<void> {
+    let terminal = false;
     try {
       for await (const event of watch) {
         if (this.active.get(documentKey) !== handle) {
@@ -656,7 +404,7 @@ export class FerretExecutionManager {
         }
 
         handle.update(event.execution);
-        if (isTerminal(event)) {
+        if (event.kind === 'completed' || event.kind === 'failed' || event.kind === 'cancelled') {
           this.active.delete(documentKey);
           handle.watchAbort.abort();
           this.changeEmitter.fire({
@@ -664,8 +412,7 @@ export class FerretExecutionManager {
             execution: handle,
             event,
           });
-          await this.scheduleExecutionClose(handle.id);
-          await this.releaseRetiredSession(handle.sessionId);
+          terminal = true;
           return;
         }
 
@@ -693,71 +440,23 @@ export class FerretExecutionManager {
         execution: handle,
         error,
       });
-      await this.scheduleExecutionClose(handle.id);
-      await this.releaseRetiredSession(handle.sessionId);
+    } finally {
+      await this.closeResources(handle.resources, handle.documentUri, !terminal);
     }
   }
 
-  private scheduleExecutionClose(executionId: string): Promise<void> {
-    const existing = this.closingExecutions.get(executionId);
-    if (existing !== undefined) {
-      return existing;
-    }
-
-    const cleanup = this.trackCleanup(
-      Promise.resolve().then(() =>
-        this.client.closeExecution(executionId),
-      ),
-      `Closing Ferret execution "${executionId}" failed`,
-    );
-    this.closingExecutions.set(executionId, cleanup);
-    void cleanup.finally(() => {
-      if (this.closingExecutions.get(executionId) === cleanup) {
-        this.closingExecutions.delete(executionId);
-      }
-    });
-
-    return cleanup;
+  private async closeResources(resources: RunResources, uri: vscode.Uri, cancel: boolean): Promise<void> {
+    try { await resources.close(cancel); } catch (error) { this.reportCleanup(uri, error); }
   }
 
-  private scheduleSessionClose(sessionId: string): Promise<void> {
-    const existing = this.closingSessions.get(sessionId);
-    if (existing !== undefined) {
-      return existing;
-    }
-
-    const cleanup = this.trackCleanup(
-      Promise.resolve().then(() => this.client.closeSession(sessionId)),
-      `Closing Ferret Session "${sessionId}" failed`,
-    );
-    this.closingSessions.set(sessionId, cleanup);
-    void cleanup.finally(() => {
-      if (this.closingSessions.get(sessionId) === cleanup) {
-        this.closingSessions.delete(sessionId);
-      }
-    });
-
-    return cleanup;
+  private reportCleanup(uri: vscode.Uri, error: unknown): void {
+    this.output.error(`Cleaning up Ferret Run for ${uri.fsPath} failed`, error);
+    this.changeEmitter.fire({ kind: 'cleanup-failed', documentUri: uri, error });
   }
 
-  private trackCleanup(
-    task: Promise<void>,
-    failureMessage: string,
-  ): Promise<void> {
-    const settled = task.catch((error: unknown) => {
-      this.output.error(failureMessage, error);
-    });
-    this.cleanupTasks.add(settled);
-    this.runtime.holdCleanup(settled);
-    void settled.finally(() => this.cleanupTasks.delete(settled));
-
-    return settled;
-  }
-
-  private async waitForCleanups(): Promise<void> {
-    while (this.cleanupTasks.size > 0) {
-      await Promise.allSettled([...this.cleanupTasks]);
-    }
+  private trackCleanup(task: Promise<void>): void {
+    this.cleanupTasks.add(task);
+    void task.then(() => this.cleanupTasks.delete(task), () => this.cleanupTasks.delete(task));
   }
 
   private validateDocument(document: vscode.TextDocument): void {
@@ -795,7 +494,7 @@ export class FerretExecutionManager {
     pending: PendingRun,
     expected: ResolvedFerretDocument,
   ): void {
-    this.assertGenerationStillUsable(pending, document.uri);
+    this.assertGeneration(pending, document.uri);
     if (document.isDirty) {
       throw managerError(
         'document-dirty',
@@ -824,38 +523,11 @@ export class FerretExecutionManager {
     }
   }
 
-  private assertGenerationStillUsable(
-    pending: PendingRun,
-    documentUri: vscode.Uri,
-  ): void {
-    if (pending.cancelled) throw new RuntimeLaunchError('Starting the Ferret execution was cancelled.');
-    if (this.disposed) {
-      throw managerError(
-        'disposed',
-        'The Ferret execution manager has been disposed.',
-        documentUri,
-      );
+  private assertGeneration(pending: PendingRun, uri: vscode.Uri): void {
+    pending.abort.signal.throwIfAborted();
+    if (pending.generation?.aborted) {
+      throw managerError('workspace-unavailable', 'The Ferret daemon changed during preparation.', uri);
     }
-    if (
-      pending.invalidated !== undefined ||
-      pending.generation?.aborted === true ||
-      pending.generation !== this.currentGeneration
-    ) {
-      throw managerError(
-        'workspace-unavailable',
-        'The Ferret daemon or document workspace changed while execution was starting.',
-        documentUri,
-      );
-    }
-  }
-
-  private canCleanUp(pending: PendingRun): boolean {
-    return (
-      pending.invalidated === undefined &&
-      pending.generation !== undefined &&
-      !pending.generation.aborted &&
-      pending.generation === this.currentGeneration
-    );
   }
 
   private ensureUsable(): void {
@@ -866,49 +538,4 @@ export class FerretExecutionManager {
       );
     }
   }
-}
-
-function documentIdentity(uri: vscode.Uri): string {
-  return uri.toString();
-}
-
-function isTerminal(event: FerretExecutionEvent): boolean {
-  return (
-    event.kind === 'completed' ||
-    event.kind === 'failed' ||
-    event.kind === 'cancelled'
-  );
-}
-
-function statusRank(status: FerretExecution['status']): number {
-  switch (status) {
-    case 'created':
-      return 0;
-    case 'running':
-      return 1;
-    case 'completed':
-    case 'failed':
-    case 'cancelled':
-      return 2;
-  }
-}
-
-function managerError(
-  code: ConstructorParameters<typeof ExecutionManagerError>[0],
-  message: string,
-  documentUri?: vscode.Uri,
-): ExecutionManagerError {
-  return new ExecutionManagerError(
-    code,
-    message,
-    documentUri?.toString(),
-  );
-}
-
-function unique(sessions: readonly CachedSession[]): readonly CachedSession[] {
-  return [
-    ...new Map(
-      sessions.map((session) => [session.session.id, session]),
-    ).values(),
-  ];
 }

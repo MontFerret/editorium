@@ -11,7 +11,7 @@ export class InvalidParametersError extends Error {
 }
 
 export function validateParameters(
-  parameters: Readonly<Record<string, unknown>>,
+  parameters: unknown,
 ): FerretParameters {
   return validateParameterObject(parameters);
 }

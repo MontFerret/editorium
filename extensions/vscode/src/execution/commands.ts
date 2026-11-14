@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { readRuntimeSelector } from '../runtime/selector';
+import { readRunOptions, type RunOptions } from './run-options';
+import { InvalidParametersError } from './parameters';
 
 import { RuntimeLaunchError } from '../runtime/errors';
 import { DaemonError } from '../daemon/errors';
@@ -39,7 +40,7 @@ export interface ExecutionCommandManager {
 
   cancel(documentUri: vscode.Uri): Promise<void>;
   isRunning(documentUri: vscode.Uri): boolean;
-  run(document: vscode.TextDocument, parameters?: Readonly<Record<string, unknown>>, selector?: unknown): Promise<unknown>;
+  run(document: vscode.TextDocument, options?: RunOptions): Promise<unknown>;
 }
 
 export interface ExecutionCommandOutput {
@@ -47,6 +48,7 @@ export interface ExecutionCommandOutput {
 }
 
 export interface ExecutionCommandHost {
+  getRunSettings(uri: vscode.Uri): Pick<vscode.WorkspaceConfiguration, 'get'>;
   getActiveDocument(): vscode.TextDocument | undefined;
   onDidChangeActiveEditor(listener: () => void): vscode.Disposable;
   registerCommand(
@@ -134,8 +136,8 @@ export class ExecutionCommandController implements vscode.Disposable {
     }
 
     try {
-      const selector = readRuntimeSelector(options);
-      await this.manager.run(document, undefined, selector);
+      const settings = this.host.getRunSettings(document.uri);
+      await this.manager.run(document, readRunOptions(options, settings));
     } catch (error) {
       await this.reportRunError(error);
     }
@@ -184,7 +186,7 @@ export class ExecutionCommandController implements vscode.Disposable {
   }
 
   private async reportRunError(error: unknown): Promise<void> {
-    if (error instanceof RuntimeLaunchError) {
+    if (error instanceof RuntimeLaunchError || error instanceof InvalidParametersError) {
       void this.showError(error.message);
       return;
     }
@@ -220,7 +222,7 @@ export class ExecutionCommandController implements vscode.Disposable {
       if (error.code === 'compilation-failed') {
         return;
       }
-      await this.showError(executionClientErrorMessage(error));
+      void this.showError(executionClientErrorMessage(error));
       return;
     }
 
@@ -328,6 +330,7 @@ function executionClientErrorMessage(
 }
 
 const vscodeExecutionCommandHost: ExecutionCommandHost = {
+  getRunSettings: uri => vscode.workspace.getConfiguration('ferret.run', uri),
   getActiveDocument: () => vscode.window.activeTextEditor?.document,
   onDidChangeActiveEditor: (listener) =>
     vscode.window.onDidChangeActiveTextEditor(listener),

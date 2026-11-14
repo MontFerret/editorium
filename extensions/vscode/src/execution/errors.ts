@@ -1,3 +1,4 @@
+import type { Uri } from 'vscode';
 import { status, type ServiceError } from '@grpc/grpc-js';
 
 import {
@@ -182,8 +183,12 @@ export function normalizeExecutionError(
         `${operation} was cancelled`,
         error,
       );
-    case status.UNAVAILABLE:
     case status.DEADLINE_EXCEEDED:
+      if (operation === 'create-session') {
+        return clientError('execution-rejected', operation, 'Timed out acquiring or compiling the Ferret Session.', error);
+      }
+      return clientError('execution-rejected', operation, `Timed out during ${operation}.`, error);
+    case status.UNAVAILABLE:
       return clientError(
         'daemon-unavailable',
         operation,
@@ -414,4 +419,16 @@ function clientError(
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+export function managerError(
+  code: ExecutionManagerErrorCode,
+  message: string,
+  documentUri?: Uri,
+): ExecutionManagerError {
+  return new ExecutionManagerError(
+    code,
+    message,
+    documentUri?.toString(),
+  );
 }

@@ -91,7 +91,7 @@ suite('owned Ferret debug adapter', () => {
     const runtime = new RuntimeCoordinator({
       start: async () => {}, stop: async () => {}, requireConnection: () => { throw new Error('unused'); },
     }, { entered: '' }, () => '');
-    const lease = runtime.admit();
+    const lease = runtime.admitDebug();
     const adapter = new FerretDebugTransport(executable, output, lease.release, () => child.process, 0);
     adapter.handleMessage(initialize);
     await new Promise(resolve => setImmediate(resolve));

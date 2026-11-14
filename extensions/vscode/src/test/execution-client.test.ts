@@ -4,6 +4,7 @@ import { Readable } from 'node:stream';
 import {
   Metadata,
   status,
+  type CallOptions,
   type Channel,
   type ClientReadableStream,
   type ClientUnaryCall,
@@ -22,7 +23,7 @@ import {
   type CloseExecutionResponse,
   type CloseSessionRequest,
   type CloseSessionResponse,
-  type CreateExecutionRequest,
+  CreateExecutionRequest,
   type CreateExecutionResponse,
   type CreateSessionRequest,
   type CreateSessionResponse,
@@ -33,7 +34,7 @@ import {
 } from '../daemon/gen/ferretd/execution/v1/execution.pb';
 import type {
   DaemonConnection,
-  DaemonConnectionProvider,
+
   ExecutionGeneratedClient,
 } from '../daemon/types';
 import { FerretExecutionClient } from '../execution/client';
@@ -80,20 +81,25 @@ class FakeExecutionService implements ExecutionGeneratedClient {
   public createExecutionRequest: CreateExecutionRequest | undefined;
   public createSessionRequest: CreateSessionRequest | undefined;
   public runCalls = 0;
+  public sessionResponse: CreateSessionResponse = { session: session() };
   public watchCalls = 0;
 
   public createSession = (
     request: CreateSessionRequest,
+    _metadata: Metadata,
+    _options: Partial<CallOptions>,
     callback: UnaryCallback<CreateSessionResponse>,
   ): ClientUnaryCall => {
     this.createSessionRequest = request;
-    callback(null, { session: session() });
+    callback(null, this.sessionResponse);
 
     return fakeCall;
   };
 
   public createExecution = (
     request: CreateExecutionRequest,
+    _metadata: Metadata,
+    _options: Partial<CallOptions>,
     callback: UnaryCallback<CreateExecutionResponse>,
   ): ClientUnaryCall => {
     this.createExecutionRequest = request;
@@ -104,6 +110,8 @@ class FakeExecutionService implements ExecutionGeneratedClient {
 
   public runExecution = (
     _request: RunExecutionRequest,
+    _metadata: Metadata,
+    _options: Partial<CallOptions>,
     callback: UnaryCallback<RunExecutionResponse>,
   ): ClientUnaryCall => {
     this.runCalls += 1;
@@ -116,6 +124,8 @@ class FakeExecutionService implements ExecutionGeneratedClient {
 
   public cancelExecution = (
     _request: CancelExecutionRequest,
+    _metadata: Metadata,
+    _options: Partial<CallOptions>,
     callback: UnaryCallback<CancelExecutionResponse>,
   ): ClientUnaryCall => {
     this.cancelCalls += 1;
@@ -128,6 +138,8 @@ class FakeExecutionService implements ExecutionGeneratedClient {
 
   public closeExecution = (
     _request: CloseExecutionRequest,
+    _metadata: Metadata,
+    _options: Partial<CallOptions>,
     callback: UnaryCallback<CloseExecutionResponse>,
   ): ClientUnaryCall => {
     this.closeExecutionCalls += 1;
@@ -138,6 +150,8 @@ class FakeExecutionService implements ExecutionGeneratedClient {
 
   public closeSession = (
     _request: CloseSessionRequest,
+    _metadata: Metadata,
+    _options: Partial<CallOptions>,
     callback: UnaryCallback<CloseSessionResponse>,
   ): ClientUnaryCall => {
     this.closeSessionCalls += 1;
@@ -166,7 +180,7 @@ suite('Ferret execution client', () => {
 
     const createdSession = await client.createSession(
       'workspace-1',
-      'queries/example.fql',
+      'queries/example.fql', { selector: '', name: 'local' },
     );
     const parameters = {
       value: 42,
@@ -205,6 +219,62 @@ suite('Ferret execution client', () => {
     assert.strictEqual(service.closeSessionCalls, 1);
   });
 
+  test('checks negotiated selection and rolls back recoverable invalid responses on the same client', async () => {
+    const service = new FakeExecutionService();
+    const legacy = testClient(service);
+    await assert.rejects(legacy.client.createSession('workspace-1', 'query.fql', { selector: 'local', name: 'local' }), /API 1.3/);
+    assert.equal(Boolean(service.createSessionRequest), false);
+    const { client } = testClient(service, 3);
+    for (const response of [session(), { ...session(), runtimeName: 'local' }, { ...session(), source: undefined }]) {
+      service.sessionResponse = { session: response };
+      await assert.rejects(client.createSession('workspace-1', 'queries/example.fql', { selector: '', name: 'App' }), /runtime|source snapshot/);
+      assert.equal(service.createSessionRequest?.runtimeName, '');
+    }
+    assert.equal(service.closeSessionCalls, 3);
+    service.sessionResponse = { session: { ...session(), runtimeName: 'App' } };
+    const ok = await client.createSession('workspace-1', 'queries/example.fql', { selector: 'App', name: 'App' });
+    assert.equal(ok.runtimeName, 'App');
+    service.closeSession = (_r, _m, _o, cb) => { cb(serviceError(status.UNAVAILABLE, 'lost'), {}); return fakeCall; };
+    await assert.rejects(client.createSession('workspace-1', 'queries/example.fql', { selector: '', name: 'local' }), /Expected runtime.*Cleanup.*failed/);
+  });
+
+  test('cancels real unary handles and closes late Session and Execution IDs with independent deadlines', async () => {
+    const service = new FakeExecutionService();
+    const { client } = testClient(service, 3);
+    let cancelledCalls = 0;
+    let complete!: () => void;
+    const close: string[] = [];
+    const now = Date.now();
+    service.createSession = (_r, _m, opts, cb) => {
+      assert.ok(Number(opts.deadline) >= now + 30_000 && Number(opts.deadline) <= Date.now() + 30_000);
+      complete = () => cb(null, { session: { ...session(), runtimeName: 'App' } });
+      return { cancel: () => { cancelledCalls++; } } as ClientUnaryCall;
+    };
+    service.createExecution = (req, _m, opts, cb) => {
+      assert.equal(req.options?.workingDirectory, ' C:\\literal ');
+      assert.equal(opts.deadline, undefined);
+      complete = () => cb(null, { execution: execution() });
+      return { cancel: () => { cancelledCalls++; } } as ClientUnaryCall;
+    };
+    for (const operation of ['session', 'execution']) {
+      const controller = new AbortController();
+      const cleanup = (opts: Partial<CallOptions>) => {
+        assert.ok(Number(opts.deadline) > Date.now() && Number(opts.deadline) <= Date.now() + 5000);
+        close.push(operation);
+      };
+      service.closeSession = (_r, _m, opts, cb) => { cleanup(opts); cb(null, {}); return fakeCall; };
+      service.closeExecution = (_r, _m, opts, cb) => { cleanup(opts); cb(null, {}); return fakeCall; };
+      const result = operation === 'session'
+        ? client.createSession('workspace-1', 'queries/example.fql', { selector: 'App', name: 'App' }, controller.signal)
+        : client.createExecution('session-1', {}, ' C:\\literal ', controller.signal);
+      controller.abort(new Error('stopped'));
+      complete();
+      await assert.rejects(result, /stopped/);
+    }
+    assert.deepEqual(close, ['session', 'execution']);
+    assert.equal(cancelledCalls, 2);
+  });
+
   test('sends an explicit empty parameter object when omitted', async () => {
     const service = new FakeExecutionService();
     const { client } = testClient(service);
@@ -229,7 +299,7 @@ suite('Ferret execution client', () => {
       'query\0.fql',
     ]) {
       await assert.rejects(
-        client.createSession('workspace-1', path),
+        client.createSession('workspace-1', path, { selector: '', name: 'local' }),
         (error: unknown) =>
           error instanceof FerretExecutionClientError &&
           error.code === 'protocol' &&
@@ -292,6 +362,13 @@ suite('Ferret execution client', () => {
       true,
     );
     assert.deepStrictEqual(sent?.['__proto__'], { safe: true });
+  });
+
+  test('round-trips arbitrary JSON property names through the generated binary codec', () => {
+    const nested = Object.fromEntries([['__proto__', { enabled: true }], ['constructor', 123]]);
+    const parameters = Object.fromEntries([['__proto__', 'literal'], ['list', [nested, null]]]);
+    const bytes = CreateExecutionRequest.encode({ parameters }).finish();
+    assert.deepEqual(JSON.parse(JSON.stringify(CreateExecutionRequest.decode(bytes).parameters)), parameters);
   });
 
   test('starts watches eagerly and preserves ordered terminal events', async () => {
@@ -428,23 +505,20 @@ suite('Ferret execution client', () => {
   });
 });
 
-function testClient(service: FakeExecutionService): {
+function testClient(service: FakeExecutionService, minor = 2): {
   readonly abort: AbortController;
   readonly client: FerretExecutionClient;
 } {
   const abort = new AbortController();
   const connection = {
+    apiVersion: { major: 1, minor },
     channel: {} as Channel,
     daemon: {},
     executions: service,
     signal: abort.signal,
     workspaces: {},
   } as unknown as DaemonConnection;
-  const provider: DaemonConnectionProvider = {
-    requireConnection: () => connection,
-  };
-
-  return { abort, client: new FerretExecutionClient(provider) };
+  return { abort, client: new FerretExecutionClient(connection) };
 }
 
 async function collect<T>(values: AsyncIterable<T>): Promise<T[]> {

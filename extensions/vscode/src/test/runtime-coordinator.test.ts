@@ -23,6 +23,7 @@ function gate() {
 }
 
 class RuntimeDaemon {
+  public minor = 3;
   public executables: (string | undefined)[] = [];
   public paths: (string | undefined)[] = [];
   public process = new AbortController();
@@ -37,7 +38,7 @@ class RuntimeDaemon {
     this.process = new AbortController();
   }
   public requireConnection(): DaemonConnection {
-    return { signal: this.process.signal, apiVersion: { major: 1, minor: 3 } } as DaemonConnection;
+    return { signal: this.process.signal, apiVersion: { major: 1, minor: this.minor } } as DaemonConnection;
   }
 }
 
@@ -81,15 +82,15 @@ suite('window runtime catalog', () => {
     assert.equal(requests, 1);
     assert.deepEqual(daemon.paths, [config]);
     assert.deepEqual(runtime.view.catalog, catalog);
-    assert.throws(() => runtime.admit(), /Daemon default/);
+    assert.throws(() => runtime.admitDebug(), /Daemon default/);
   });
 
   test('pins admitted launches across saves and binary restarts without adopting a pending path', async () => {
-    const debug = runtime.admit();
+    const admitted = runtime.admitRun();
     await runtime.restartExecutable('/override');
     assert.deepEqual(daemon.paths, []);
     runtime.save(resolveRuntimeConfiguration(config));
-    await debug.prepareRun();
+    await admitted.prepareRun();
     assert.deepEqual(daemon.paths, [undefined]);
     const restart = runtime.restartExecutable('/override');
     assert.equal(runtime.restartExecutable('/override'), restart);
@@ -98,14 +99,14 @@ suite('window runtime catalog', () => {
     await assert.rejects(runtime.reload(), /finish/);
     runtime.save({ entered: '' });
     runtime.save({ entered: '' });
-    assert.throws(() => runtime.admit(), /Reload/);
-    debug.release();
-    debug.release();
+    assert.throws(() => runtime.admitDebug(), /Reload/);
+    admitted.release();
+    admitted.release();
     await runtime.reload();
-    const run = runtime.admit();
+    const run = runtime.admitRun();
     await run.prepareRun();
     run.release();
-    assert.equal(requests, 1);
+    assert.equal(requests, 2);
   });
 
   test('keeps a save pending during startup, including after failed startup', async () => {
@@ -119,7 +120,7 @@ suite('window runtime catalog', () => {
     await discovery;
     assert.equal(runtime.view.status, 'reload-required');
     await assert.rejects(runtime.retry(), /Reload/);
-    assert.throws(() => runtime.admit(), /Reload/);
+    assert.throws(() => runtime.admitDebug(), /Reload/);
     daemon.beforeStart = async () => {};
     await runtime.reload();
     assert.equal(runtime.view.status, 'ready');
@@ -177,8 +178,8 @@ suite('window runtime catalog', () => {
       assert.notEqual(replacement, old);
       assert.equal(runtime.reload(), replacement);
       await replacement;
-      if (restoreOriginal) runtime.admit().release();
-      else assert.throws(() => runtime.admit(), /Daemon default/);
+      if (restoreOriginal) runtime.admitDebug().release();
+      else assert.throws(() => runtime.admitDebug(), /Daemon default/);
       release.open();
       await old;
       assert.deepEqual(runtime.view.catalog, latest);
@@ -204,21 +205,21 @@ suite('window runtime catalog', () => {
     assert.equal(runtime.view.status, 'reload-required');
   });
 
-  test('keeps ordinary launches independent of discovery failures and preserves live replacement on retry', async () => {
+  test('reports discovery failures to Run and preserves live replacement on retry', async () => {
     discover = async () => { throw new Error('RPC failed'); };
     await runtime.catalog();
-    const run = runtime.admit();
-    await run.prepareRun();
+    const run = runtime.admitRun();
+    await assert.rejects(run.prepareRun(), /RPC failed/);
     run.release();
     assert.deepEqual(daemon.paths, [undefined]);
     await runtime.reload();
     assert.equal(runtime.view.status, 'failed');
-    assert.throws(() => runtime.admit(), /reload/i);
+    assert.throws(() => runtime.admitDebug(), /reload/i);
     discover = async () => catalog;
     await runtime.retry();
     assert.deepEqual(daemon.paths, [undefined, undefined]);
     assert.equal(runtime.view.status, 'ready');
-    runtime.admit().release();
+    runtime.admitDebug().release();
     discover = async () => { throw new Error('again'); };
     await runtime.reload();
     await daemon.stop();
@@ -228,16 +229,16 @@ suite('window runtime catalog', () => {
 
   test('keeps independent Debug reservations on daemon loss and honors literal selectors', async () => {
     await runtime.catalog();
-    const a = runtime.admit(), b = runtime.admit();
+    const a = runtime.admitDebug(), b = runtime.admitDebug();
     await daemon.stop();
     assert.equal(runtime.view.catalog, undefined);
     a.release();
     await assert.rejects(runtime.reload(), /finish/);
     b.release();
     for (const name of ['local', 'LOCAL', ' ', 'Δ 🦦', 'Daemon default']) {
-      assert.throws(() => runtime.admit(name), /Daemon default/);
+      assert.throws(() => runtime.admitDebug(name), /Daemon default/);
       selection = name;
-      assert.throws(() => runtime.admit(''), /Daemon default/);
+      assert.throws(() => runtime.admitDebug(''), /Daemon default/);
       selection = '';
     }
     await runtime.reload();
@@ -259,12 +260,66 @@ suite('window runtime catalog', () => {
     assert.equal(runtime.view.status, 'reload-required');
   });
 
+  test('resolves against admitted A after Save B and detects edits before memoized reuse', async () => {
+    runtime.save(resolveRuntimeConfiguration(config));
+    selection = remote.name;
+    const entered = gate(), release = gate();
+    discover = async () => { entered.open(); await release.promise; return catalog; };
+    const named = runtime.admitRun(), implicit = runtime.admitRun(''), native = runtime.admitRun('local');
+    const results = Promise.all([named.prepareRun(), implicit.prepareRun(), native.prepareRun()]);
+    await entered.promise;
+    runtime.save(resolveRuntimeConfiguration(join(dir, 'other.json')));
+    selection = 'changed';
+    release.open();
+    const [first, second, third] = await results;
+    assert.deepEqual([first.selector, second.selector, third.selector], [remote.name, '', 'local']);
+    assert.deepEqual([first.name, second.name, third.name], [remote.name, remote.name, 'local']);
+    assert.deepEqual([first.provider, second.provider, third.provider], ['wire', 'wire', 'native']);
+    assert.equal(first.connection, third.connection);
+    assert.equal(requests, 1);
+    assert.equal(runtime.view.status, 'reload-required');
+    assert.throws(() => runtime.admitRun(), /Reload/);
+    await named.verifyConfiguration();
+    for (const run of [named, implicit, native]) run.release();
+    runtime.save(resolveRuntimeConfiguration(config));
+    await runtime.reload();
+    const reuse = runtime.admitRun('local');
+    await reuse.prepareRun();
+    await writeFile(config, 'different bytes');
+    await assert.rejects(reuse.verifyConfiguration(), /Reload/);
+    assert.throws(() => runtime.admitRun(), /Reload/);
+    reuse.release();
+  });
+
+  test('rejects exact-name misses, unknown providers, and explicit or configured selection on API 1.2', async () => {
+    discover = async () => ({ ...catalog, runtimes: [local, { ...remote, provider: 'future' }] });
+    for (const [name, message] of [['LOCAL', /unavailable/], ['', /Unsupported provider/]] as const) {
+      const run = runtime.admitRun(name);
+      await assert.rejects(run.prepareRun(), message);
+      run.release();
+    }
+    await runtime.shutdown();
+    daemon.minor = 2;
+    runtime = new RuntimeCoordinator(daemon, { entered: '' }, () => '');
+    const fallback = runtime.admitRun('');
+    assert.equal((await fallback.prepareRun()).provider, 'native');
+    fallback.release();
+    const explicit = runtime.admitRun('local');
+    await assert.rejects(explicit.prepareRun(), /API 1.3/);
+    explicit.release();
+    await runtime.shutdown();
+    runtime = new RuntimeCoordinator(daemon, resolveRuntimeConfiguration(config), () => '');
+    const configured = runtime.admitRun('');
+    await assert.rejects(configured.prepareRun(), /API 1.3/);
+    configured.release();
+  });
+
   test('unsupported initial discovery still permits built-in launches', async () => {
     discover = async () => { throw new UnsupportedDiscovery('Unsupported daemon'); };
     await runtime.catalog();
     assert.equal(runtime.view.status, 'unsupported');
     assert.equal(runtime.view.catalog, undefined);
-    const run = runtime.admit();
+    const run = runtime.admitRun();
     await run.prepareRun();
     run.release();
     assert.equal(requests, 1);
@@ -279,7 +334,7 @@ suite('window runtime catalog', () => {
     release.open();
     await Promise.all([shutdown, work]);
     assert.equal(runtime.view.catalog, undefined);
-    assert.throws(() => runtime.admit(), /shutting down/);
+    assert.throws(() => runtime.admitDebug(), /shutting down/);
   });
 
   test('shutdown joins superseded discovery even after its replacement has completed', async () => {

@@ -32,6 +32,7 @@ export type FerretExecutionStatus =
   | 'cancelled';
 
 export interface FerretExecutionOptions {
+  readonly workingDirectory?: string;
   readonly outputContentType: string;
 }
 

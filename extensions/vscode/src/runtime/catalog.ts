@@ -11,9 +11,12 @@ import { UnsupportedDiscovery } from './errors';
 // U+FEFF is valid at the start of a literal runtime name.
 const boundaryWhitespace = /^\p{White_Space}|\p{White_Space}$/u;
 
+export function supportsRuntimeSelection(connection: DaemonConnection): boolean {
+  return connection.apiVersion?.major === 1 && connection.apiVersion.minor >= 3;
+}
+
 export async function listRuntimes(connection: DaemonConnection): Promise<ListRuntimesResponse> {
-  const version = connection.apiVersion;
-  if (version?.major !== 1 || version.minor < 3) {
+  if (!supportsRuntimeSelection(connection)) {
     throw new UnsupportedDiscovery('Runtime discovery requires ferretd API 1.3 or later in major 1.');
   }
   try {

@@ -75,19 +75,26 @@ export interface WorkspaceGeneratedClient {
   close: UnaryMethod<CloseRequest, CloseResponse>;
 }
 
+type ExecutionUnary<Request, Response> = (
+  request: Request,
+  metadata: Metadata,
+  options: Partial<CallOptions>,
+  callback: UnaryCallback<Response>,
+) => ClientUnaryCall;
+
 export interface ExecutionGeneratedClient {
-  createSession: UnaryMethod<CreateSessionRequest, CreateSessionResponse>;
-  closeSession: UnaryMethod<CloseSessionRequest, CloseSessionResponse>;
-  createExecution: UnaryMethod<
+  createSession: ExecutionUnary<CreateSessionRequest, CreateSessionResponse>;
+  closeSession: ExecutionUnary<CloseSessionRequest, CloseSessionResponse>;
+  createExecution: ExecutionUnary<
     CreateExecutionRequest,
     CreateExecutionResponse
   >;
-  runExecution: UnaryMethod<RunExecutionRequest, RunExecutionResponse>;
-  cancelExecution: UnaryMethod<
+  runExecution: ExecutionUnary<RunExecutionRequest, RunExecutionResponse>;
+  cancelExecution: ExecutionUnary<
     CancelExecutionRequest,
     CancelExecutionResponse
   >;
-  closeExecution: UnaryMethod<
+  closeExecution: ExecutionUnary<
     CloseExecutionRequest,
     CloseExecutionResponse
   >;
@@ -102,6 +109,7 @@ export interface FerretWorkspace {
 }
 
 export interface ResolvedFerretDocument {
+  readonly root: string;
   readonly workspaceId: string;
   readonly relativePath: string;
 }

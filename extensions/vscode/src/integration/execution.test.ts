@@ -1,4 +1,6 @@
 import { FerretDebugAdapterDescriptorFactory } from '../debug/adapter';
+import { WireHost } from './wire-host';
+import type { RunOptions } from '../execution/run-options';
 import { RuntimeCoordinator } from '../runtime/coordinator';
 import * as assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -111,7 +113,7 @@ class CaptureOutput {
   }
 }
 
-class InstrumentedExecutionClient implements ExecutionClient {
+class InstrumentedExecutionClient {
   public activeWatches = 0;
   public readonly closedExecutions: string[] = [];
   public readonly closedSessions: string[] = [];
@@ -122,37 +124,38 @@ class InstrumentedExecutionClient implements ExecutionClient {
     new vscode.EventEmitter<string>();
   private readonly watchCountEmitter = new vscode.EventEmitter<number>();
 
-  public constructor(private readonly inner: FerretExecutionClient) {}
+  public bind(inner: FerretExecutionClient): ExecutionClient {
+    return {
+      createSession: (...args) => this.createSession(inner, ...args),
+      createExecution: (...args) => this.createExecution(inner, ...args),
+      watchExecution: (...args) => this.watchExecution(inner, ...args),
+      runExecution: (...args) => inner.runExecution(...args),
+      cancelExecution: id => inner.cancelExecution(id),
+      closeExecution: id => this.closeExecution(inner, id),
+      closeSession: id => this.closeSession(inner, id),
+    };
+  }
 
-  public async createSession(
-    workspaceId: string,
-    relativePath: string,
-  ): Promise<FerretSession> {
-    const session = await this.inner.createSession(workspaceId, relativePath);
+  private async createSession(inner: FerretExecutionClient, ...args: Parameters<ExecutionClient['createSession']>): Promise<FerretSession> {
+    const session = await inner.createSession(...args);
     this.createdSessions.push(session);
 
     return session;
   }
 
-  public async createExecution(
-    sessionId: string,
-    parameters?: Readonly<Record<string, unknown>>,
-  ): Promise<FerretExecution> {
-    const execution = await this.inner.createExecution(sessionId, parameters);
+  private async createExecution(inner: FerretExecutionClient, ...args: Parameters<ExecutionClient['createExecution']>): Promise<FerretExecution> {
+    const execution = await inner.createExecution(...args);
     this.createdExecutions.push(execution);
 
     return execution;
   }
 
-  public runExecution(executionId: string): Promise<FerretExecution> {
-    return this.inner.runExecution(executionId);
-  }
-
-  public watchExecution(
+  private watchExecution(
+    inner: FerretExecutionClient,
     executionId: string,
     signal?: AbortSignal,
   ): AsyncIterable<FerretExecutionEvent> {
-    const source = this.inner.watchExecution(executionId, signal);
+    const source = inner.watchExecution(executionId, signal);
     // The async iterator method has its own `this`; retain the client owner.
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     const client = this;
@@ -176,18 +179,14 @@ class InstrumentedExecutionClient implements ExecutionClient {
     };
   }
 
-  public cancelExecution(executionId: string): Promise<FerretExecution> {
-    return this.inner.cancelExecution(executionId);
-  }
-
-  public async closeExecution(executionId: string): Promise<void> {
-    await this.inner.closeExecution(executionId);
+  private async closeExecution(inner: FerretExecutionClient, executionId: string): Promise<void> {
+    await inner.closeExecution(executionId);
     this.closedExecutions.push(executionId);
     this.executionCloseEmitter.fire(executionId);
   }
 
-  public async closeSession(sessionId: string): Promise<void> {
-    await this.inner.closeSession(sessionId);
+  private async closeSession(inner: FerretExecutionClient, sessionId: string): Promise<void> {
+    await inner.closeSession(sessionId);
     this.closedSessions.push(sessionId);
   }
 
@@ -302,6 +301,10 @@ class IntegrationFeedbackHost implements ExecutionFeedbackHost {
 }
 
 class IntegrationCommandHost implements ExecutionCommandHost {
+  public getRunSettings(uri: vscode.Uri): vscode.WorkspaceConfiguration {
+    return vscode.workspace.getConfiguration('ferret.run', uri);
+  }
+
   private readonly activeEditorEmitter = new vscode.EventEmitter<void>();
   private readonly handlers = new Map<string, () => Promise<void>>();
   public activeDocument: vscode.TextDocument | undefined;
@@ -388,13 +391,11 @@ class RealExecutionFixture {
         return endpoint;
       },
     );
-    this.client = new InstrumentedExecutionClient(
-      new FerretExecutionClient(this.daemon),
-    );
+    this.client = new InstrumentedExecutionClient();
     this.runtime = new RuntimeCoordinator(this.daemon, { entered: '' }, () => this.selection);
     this.manager = new FerretExecutionManager(
       this.daemon,
-      this.client,
+      connection => this.client.bind(new FerretExecutionClient(connection)),
       this.daemon.workspaceRegistry,
       this.output,
       this.runtime,
@@ -585,7 +586,7 @@ suite('ferretd execution integration', () => {
     };
   });
 
-  test('discovers an offline Wire default, blocks both launch paths, and restores built-in Run', async () => {
+  test('reports an offline Wire default, preserves the Debug guard, and restores built-in Run', async () => {
     const fixture = await RealExecutionFixture.create(executable, [
       { name: 'root', files: { 'main.fql': 'RETURN 42\n' } },
     ]);
@@ -604,16 +605,15 @@ suite('ferretd execution integration', () => {
       fixture.runtime.save({ entered: config, path: config });
       await fixture.runtime.reload();
       assert.equal(fixture.runtime.view.catalog?.defaultRuntime, 'offline');
-      await assert.rejects(fixture.manager.run(document), /Daemon default/);
+      await assert.rejects(fixture.manager.run(document), /runtime.*unavailable/i);
       assert.throws(() => debug.createDebugAdapterDescriptor(session({})), /Daemon default/);
       fixture.selection = 'offline';
       fixture.runtime.save({ entered: '' });
       await assert.rejects(fixture.manager.run(document), /Reload/);
       await fixture.runtime.reload();
-      await assert.rejects(fixture.manager.run(document), /Daemon default/);
+      await assert.rejects(fixture.manager.run(document), /runtime.*unavailable/i);
       assert.throws(() => debug.createDebugAdapterDescriptor(session({})), /Daemon default/);
       fixture.selection = '';
-      await assert.rejects(fixture.manager.run(document, {}, 'local'), /Daemon default/);
       assert.throws(() => debug.createDebugAdapterDescriptor(session({ runtimeName: 'local' })), /Daemon default/);
       assert.equal(resolutions, 0);
       assert.equal(fixture.client.createdSessions.length, 0);
@@ -622,6 +622,90 @@ suite('ferretd execution integration', () => {
     } finally {
       await debug.shutdown();
       await fixture.dispose();
+    }
+  });
+
+  test('shares a native plan across default and explicit local while applying per-Run inputs', async () => {
+    const fixture = await RealExecutionFixture.create(executable, [
+      { name: 'root', files: {
+        '.tmp/query.fql': 'RETURN [@item, TO_STRING(IO::FS::READ("marker.txt"))]',
+        'marker.txt': 'workspace',
+      } },
+      { name: 'other', files: { 'marker.txt': 'override' } },
+    ]);
+    try {
+      const config = join(fixture.temporaryRoot, 'runtimes.json');
+      await writeFile(config, '{}');
+      fixture.runtime.save({ entered: config, path: config });
+      const query = await fixture.document('root', '.tmp/query.fql');
+      const a = await runToTerminal(fixture, query, { parameters: { item: false } });
+      assert.deepEqual(resultValue(a.change), [false, 'workspace']);
+      const b = await runToTerminal(fixture, query, { runtimeName: 'local', parameters: { item: 7 }, workingDirectory: '../other' });
+      assert.deepEqual(resultValue(b.change), [7, 'override']);
+      assert.equal(a.handle.sessionId, b.handle.sessionId);
+      assert.equal(fixture.client.createdSessions.length, 1);
+      await writeFile(config, '{ }');
+      await assert.rejects(fixture.manager.run(query, { runtimeName: 'local' }), /Reload/);
+      assert.equal(fixture.client.createdExecutions.length, 2);
+    } finally { await fixture.dispose(); }
+  });
+
+  test('runs on the living Wire host, releases each binding, and reacquires after Stop', async () => {
+    const binary = process.env.FERRET_WIRE_HOST_PATH;
+    assert.ok(binary, 'make test vscode must supply the independent Wire host');
+    const fixture = await RealExecutionFixture.create(executable, [
+      { name: 'source', files: {
+        'query.fql': 'RETURN {value: DEMO::IDENTITY(@value), marker: TO_STRING(IO::FS::READ("marker.txt"))}',
+        'block.fql': 'RETURN DEMO::BLOCK(@token)',
+        'local.fql': 'RETURN TO_STRING(IO::FS::READ("marker.txt"))',
+        'marker.txt': 'editor',
+      } },
+    ]);
+    const appRoot = join(fixture.temporaryRoot, 'application');
+    let host: WireHost | undefined;
+    try {
+      await vscode.workspace.fs.createDirectory(vscode.Uri.file(appRoot));
+      await writeFile(join(appRoot, 'marker.txt'), 'application');
+      host = new WireHost(binary, appRoot);
+      const { endpoint } = await host.wait('ready');
+      assert.ok(endpoint);
+      const config = join(fixture.temporaryRoot, 'runtimes.json');
+      await writeFile(config, JSON.stringify({ defaultRuntime: 'App', runtimes: [
+        { name: 'App', provider: 'wire', endpoint, insecure: true },
+      ] }));
+      fixture.runtime.save({ entered: config, path: config });
+      const value = { boolean: true, number: 7, text: '7', nested: [null, { valid: false }] };
+      const query = await fixture.document('source', 'query.fql');
+      const first = await runToTerminal(fixture, query, { parameters: { value } });
+      assert.deepEqual(resultValue(first.change), { value, marker: 'application' });
+      const firstId = (await host.wait('connected')).id;
+      assert.ok(firstId);
+      await host.wait('released', 1, firstId);
+
+      const local = await runToTerminal(fixture, await fixture.document('source', 'local.fql'), { runtimeName: 'local' });
+      assert.equal(resultValue(local.change), 'editor');
+      assert.equal(host.count('connected'), 1);
+
+      const block = await fixture.document('source', 'block.fql');
+      const terminal = waitForTerminal(fixture.manager, block.uri);
+      const handle = await fixture.manager.run(block, { runtimeName: 'App', parameters: { token: 'stop' } });
+      const secondId = (await host.wait('connected', 2)).id;
+      assert.ok(secondId && secondId !== firstId);
+      await host.wait('entered', 1, undefined, 'stop');
+      await handle.cancel();
+      assertFinished(await terminal, 'cancelled');
+      await host.wait('cancelled', 1, undefined, 'stop');
+      await host.wait('released', 1, secondId);
+
+      const again = await runToTerminal(fixture, query, { runtimeName: 'App', parameters: { value }, workingDirectory: fixture.path('source', '') });
+      assert.deepEqual(resultValue(again.change), { value, marker: 'editor' });
+      assert.notEqual(again.handle.sessionId, first.handle.sessionId);
+      const thirdId = (await host.wait('connected', 3)).id;
+      assert.ok(thirdId && thirdId !== secondId);
+      await host.wait('released', 1, thirdId);
+      assert.equal(host.count('engineClosed'), 0);
+    } finally {
+      try { await fixture.dispose(); } finally { await host?.close(); }
     }
   });
 
@@ -1121,12 +1205,13 @@ async function fixtureSource(name: string): Promise<string> {
 async function runToTerminal(
   fixture: RealExecutionFixture,
   document: vscode.TextDocument,
+  options?: RunOptions,
 ): Promise<{
   readonly change: TerminalChange;
   readonly handle: ManagedExecution;
 }> {
   const terminal = waitForTerminal(fixture.manager, document.uri);
-  const handle = await fixture.manager.run(document);
+  const handle = await fixture.manager.run(document, options);
   return { change: await terminal, handle };
 }
 
