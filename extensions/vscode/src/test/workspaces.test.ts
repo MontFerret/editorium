@@ -1,6 +1,6 @@
 import * as assert from 'node:assert/strict';
 import { stat } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 
 import { createDaemonEndpoint } from '../daemon/endpoint';
 import { FerretWorkspaceRegistry } from '../daemon/workspaces';
@@ -53,6 +53,7 @@ suite('Ferret daemon endpoints and workspaces', () => {
         '/workspace/packages/app/queries/main.fql',
       ),
       {
+        root: resolve('/workspace/packages/app'),
         workspaceId: 'nested',
         relativePath: 'queries/main.fql',
       },
@@ -60,6 +61,7 @@ suite('Ferret daemon endpoints and workspaces', () => {
     assert.deepStrictEqual(
       registry.resolveDocument('/workspace/shared/main.fql'),
       {
+        root: resolve('/workspace'),
         workspaceId: 'outer-replaced',
         relativePath: 'shared/main.fql',
       },

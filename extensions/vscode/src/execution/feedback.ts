@@ -95,6 +95,17 @@ export class ExecutionFeedbackController implements vscode.Disposable {
     }
 
     switch (change.kind) {
+      case 'runtime-resolved':
+        this.output.appendLine(`[${this.timestamp()}] Preparing ${this.path(change.documentUri)} on ${change.runtime} (${change.provider})`);
+        return;
+      case 'cleanup-failed':
+        this.output.appendLine(`Cleanup failed for ${this.path(change.documentUri)}: ${String(change.error)}`);
+        this.output.show(true);
+        return;
+      case 'preparation-cancelled':
+        this.output.appendLine(`Preparation cancelled for ${this.path(change.documentUri)} after ${this.elapsed(change.startedAt)}`);
+        this.showTerminalStatus('cancelled');
+        return;
       case 'started':
         this.started(change.execution);
         return;

@@ -89,7 +89,7 @@ export async function activate(
   const activeController = new FerretServerController(languageServer, runtimes, () => readExecutable().executable);
   const activeExecutionManager = new FerretExecutionManager(
     daemon,
-    new FerretExecutionClient(daemon),
+    connection => new FerretExecutionClient(connection),
     daemon.workspaceRegistry,
     output,
     runtimes,
@@ -108,7 +108,7 @@ export async function activate(
     runtimes,
   );
   const debugConfigurationRegistration =
-    registerFerretDebugConfigurationProvider(selector => runtimes.checkLaunch(selector));
+    registerFerretDebugConfigurationProvider(selector => runtimes.checkDebug(selector));
   const debugCommandRegistration = registerFerretDebugCommand();
 
   shutdown = async () => {

@@ -206,11 +206,23 @@
           "scope": "window",
           "markdownDescription": "Controls Language Server Protocol tracing in the **Ferret** output channel for troubleshooting."
         },
+        "ferret.run.parameters": {
+          "type": "object",
+          "default": {},
+          "scope": "resource",
+          "markdownDescription": "JSON bind parameter values for **Ferret: Run Current File**."
+        },
+        "ferret.run.workingDirectory": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "Runtime filesystem directory for **Ferret: Run Current File**. Native relative paths resolve against the compilation workspace. Wire receives the literal path. A blank value uses the runtime default."
+        },
         "ferret.runtime.configPath": {
           "type": "string",
           "default": "",
           "scope": "window",
-          "markdownDescription": "Runtime configuration file on the extension host. Relative paths require a single file-backed workspace folder. After first use, run **Ferret: Reload Runtimes** to adopt changes. Run and Debug currently require an empty path and **Daemon default**."
+          "markdownDescription": "Runtime configuration file on the extension host. Relative paths require a single file-backed workspace folder. After first use, run **Ferret: Reload Runtimes** to adopt changes. Run uses the selected native or Wire runtime. Wire Run requires ferretd API 1.4 or later in major 1. Debug requires an empty path and **Daemon default**."
         }
       }
     }

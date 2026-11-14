@@ -91,10 +91,12 @@ if (process.exitCode === undefined) {
       join(root, 'query.fql'),
     );
     assert.ok(resolved, 'daemon did not register the temporary workspace');
-    const client = new FerretExecutionClient(controller);
+    const client = new FerretExecutionClient(controller.requireConnection());
+    const runtime = { selector: '', name: 'local' };
     const session = await client.createSession(
       resolved.workspaceId,
       resolved.relativePath,
+      runtime,
     );
     assert.deepStrictEqual(session.parameters, ['value']);
 
@@ -126,6 +128,7 @@ if (process.exitCode === undefined) {
     const refreshedSession = await client.createSession(
       resolved.workspaceId,
       resolved.relativePath,
+      runtime,
     );
     assert.ok(
       refreshedSession.source.revision > session.source.revision,

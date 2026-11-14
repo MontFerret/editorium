@@ -3,14 +3,21 @@ import * as vscode from 'vscode';
 import type { DaemonController } from '../daemon/manager';
 import type { DaemonConnection } from '../daemon/types';
 import type { ListRuntimesResponse } from '../daemon/gen/ferretd/daemon/v1/daemon.pb';
-import { fingerprint, type RuntimeConfiguration } from './configuration';
-import { listRuntimes } from './catalog';
+import type { RuntimeConfiguration } from './configuration';
+import { fingerprintFile } from '../file-fingerprint';
+import { listRuntimes, supportsAcquisitionCancellation, supportsRuntimeSelection } from './catalog';
 import { RuntimeLaunchError, UnsupportedDiscovery } from './errors';
 
-export interface RuntimeReservation {
-  readonly configuration: RuntimeConfiguration;
-  readonly selection: string;
-  prepareRun(): Promise<DaemonConnection>;
+export interface PreparedRuntime {
+  readonly connection: DaemonConnection;
+  readonly selector: string;
+  readonly name: string;
+  readonly provider: 'native' | 'wire';
+}
+
+export interface RunReservation {
+  prepareRun(): Promise<PreparedRuntime>;
+  verifyConfiguration(): Promise<void>;
   release(): void;
 }
 
@@ -23,6 +30,7 @@ export interface CatalogView {
 interface Revision {
   readonly config: RuntimeConfiguration;
   digest?: string;
+  changed?: boolean;
 }
 
 interface Generation {
@@ -34,6 +42,8 @@ interface Generation {
   reloading?: boolean;
   connection?: DaemonConnection;
   discovery?: Promise<void>;
+  catalog?: ListRuntimesResponse;
+  failure?: Error;
 }
 
 const reloadMessage = 'Use Ferret: Reload Runtimes to adopt the saved runtime configuration.';
@@ -73,34 +83,78 @@ export class RuntimeCoordinator {
     if (this.current) this.changes.fire();
   }
 
-  public checkLaunch(selector?: unknown): void {
+  private checkAdmission(): void {
     if (this.disposed) throw new RuntimeLaunchError('Ferret is shutting down.');
     if (this.pending) throw new RuntimeLaunchError(this.view.message ?? reloadMessage);
     if (this.replacing) {
       throw new RuntimeLaunchError('Runtime reload is incomplete. Complete discovery or reload runtimes before launching.');
     }
     if (this.saved.problem) throw new RuntimeLaunchError(this.saved.problem);
+  }
+
+  public checkDebug(selector?: unknown): void {
+    this.checkAdmission();
     if (this.saved.entered !== '' || this.selection() !== '' || (selector !== undefined && selector !== '')) {
-      throw new RuntimeLaunchError('Run and Debug currently require an empty ferret.runtime.configPath and Daemon default. Clear any launch runtimeName and reload runtimes if required.');
+      throw new RuntimeLaunchError('Debug currently requires an empty ferret.runtime.configPath and Daemon default. Clear any launch runtimeName and reload runtimes if required.');
     }
   }
 
-  public admit(selector?: unknown): RuntimeReservation {
-    this.checkLaunch(selector);
+  public admitDebug(selector?: unknown): { release(): void } {
+    this.checkDebug(selector);
+    this.adopt();
+    return { release: this.reserve() };
+  }
+
+  public admitRun(selector?: string): RunReservation {
+    this.checkAdmission();
+    const requested = selector === undefined ? this.selection() : selector;
+    if (typeof requested !== 'string') throw new RuntimeLaunchError('Set runtimeName to a string.');
     const generation = this.adopt();
+    return {
+      prepareRun: () => this.prepareRun(generation, requested),
+      verifyConfiguration: () => this.verifyFile(generation),
+      release: this.reserve(),
+    };
+  }
+
+  private reserve(): () => void {
     this.activities++;
     let released = false;
-    return {
-      configuration: generation.revision.config,
-      selection: this.selection(),
-      prepareRun: () => this.start(generation),
-      release: () => {
-        if (!released) {
-          released = true;
-          this.activities--;
-        }
-      },
+    return () => {
+      if (!released) {
+        released = true;
+        this.activities--;
+      }
     };
+  }
+
+  private async prepareRun(generation: Generation, selector: string): Promise<PreparedRuntime> {
+    this.assertCurrent(generation);
+    if (!generation.catalog && !generation.failure) await this.load(generation);
+    this.assertCurrent(generation);
+    const connection = generation.connection;
+    const catalog = generation.catalog;
+    const configured = !!generation.revision.config.path || selector !== '';
+    if (connection && configured && !supportsRuntimeSelection(connection)) {
+      throw new RuntimeLaunchError('Runtime selection requires ferretd API 1.3 or later in major 1.');
+    }
+    if (!catalog || !connection) {
+      if (connection && !configured && generation.failure instanceof UnsupportedDiscovery) {
+        return { connection, selector, name: 'local', provider: 'native' };
+      }
+      throw new RuntimeLaunchError(generation.failure?.message ?? 'Ferret runtime discovery failed.');
+    }
+    const name = selector === '' ? catalog.defaultRuntime : selector;
+    const entry = catalog.runtimes.find(runtime => runtime.name === name);
+    if (!entry) throw new RuntimeLaunchError(`Ferret runtime "${name}" is unavailable. Select a runtime or reload its configuration.`);
+    const { provider } = entry;
+    if (provider !== 'native' && provider !== 'wire') {
+      throw new RuntimeLaunchError(`Unsupported provider "${provider}" for Ferret runtime "${name}".`);
+    }
+    if (provider === 'wire' && !supportsAcquisitionCancellation(connection)) {
+      throw new RuntimeLaunchError(`Wire runtime "${name}" requires ferretd API 1.4 or later in major 1. Upgrade ferretd to run on this application.`);
+    }
+    return { connection, selector, name, provider };
   }
 
   public catalog(): Promise<void> {
@@ -217,12 +271,13 @@ export class RuntimeCoordinator {
     if (!revision.config.path) return;
     let digest: string | undefined;
     try {
-      digest = await fingerprint(revision.config.path);
+      digest = await fingerprintFile(revision.config.path);
     } catch (error) {
       if (revision.digest === undefined) throw error;
     }
     this.assertCurrent(generation);
-    if (revision.digest !== undefined && revision.digest !== digest) {
+    if (revision.changed || (revision.digest !== undefined && revision.digest !== digest)) {
+      revision.changed = true;
       this.generationRequiresReload = true;
       const message = 'The runtime configuration file changed or became unreadable. Use Ferret: Reload Runtimes.';
       this.publish({ status: 'reload-required', message });
@@ -233,6 +288,7 @@ export class RuntimeCoordinator {
 
   private load(generation: Generation): Promise<void> {
     if (generation.discovery) return generation.discovery;
+    generation.failure = undefined;
     const discovery = this.track(this.loadCatalog(generation)).finally(() => {
       generation.discovery = undefined;
       generation.reloading = false;
@@ -249,10 +305,12 @@ export class RuntimeCoordinator {
       const catalog = await this.discover(connection);
       await this.verifyFile(generation);
       this.assertCurrent(generation);
+      generation.catalog = catalog;
       if (this.pending) return;
       this.replacing = false;
       this.publish({ status: 'ready', catalog });
     } catch (error) {
+      generation.failure = error instanceof Error ? error : new Error(String(error));
       if (this.disposed || this.current !== generation || this.pending) return;
       if (this.replacing && !generation.connection) this.generationRequiresReload = true;
       const detail = error instanceof Error ? error.message : String(error);
@@ -260,6 +318,9 @@ export class RuntimeCoordinator {
         this.publish({ status: 'reload-required', message: detail + ' ' + reloadMessage });
       } else {
         const status = error instanceof UnsupportedDiscovery ? 'unsupported' : 'failed';
+        if (status === 'unsupported' && generation.connection && generation.revision.config.entered === '') {
+          this.replacing = false;
+        }
         this.publish({ status, message: detail });
       }
     }
