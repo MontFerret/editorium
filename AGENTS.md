@@ -59,7 +59,8 @@ The current integration state is intentionally asymmetric:
 
 * VS Code provides a TextMate fallback, standard LSP-backed language features
   and formatting, gRPC-backed execution, and direct per-session `ferretd dap`
-  debugging.
+  debugging. Run and Debug share runtime selection, catalog discovery, and
+  window activity reservations.
 * JetBrains registers Ferret and `.fql` files, provides bundled-binary
   distribution and current-host executable resolution, and connects local files
   to a lazy project-wide JetBrains native LSP client running `ferretd lsp`.
@@ -203,6 +204,16 @@ workspace, and execution gRPC clients; and each debug session launches its own
 direct `ferretd dap` adapter process. Server-backed features require file-backed
 Ferret documents. Untitled Ferret documents retain declarative TextMate support
 but are not sent to daemon endpoints that require file URIs.
+
+VS Code Debug captures the executable and selector at descriptor admission.
+The unconfigured default starts DAP directly. Other launches use the same
+generation, negotiated API, and provider checks as Run. The inline adapter
+checks the configuration fingerprint before spawn and after initialize, gates
+launch on adapter capability, and verifies the acknowledged runtime before
+publishing a stop. Keep the reservation through process closure. Stop detaches
+only that launch from shared discovery. Current-file Debug uses resource-scoped
+Run settings. Explicit launch configurations own their parameters and runtime
+directory.
 
 VS Code packaging is target-specific. Each VSIX contains exactly one daemon for
 one of `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64`,

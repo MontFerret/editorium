@@ -103,8 +103,8 @@ bundled in distributions and the ferretd protocol schemas used to generate
 editor clients. The current pin is `1.0.0-alpha.13`, which advertises API 1.4.
 Both editors request API 1.1 for local execution and accept API major 1 with
 minor 1 or later. Catalog-based runtime selection requires API 1.3. VS Code
-Wire Run requires API 1.4 so Stop can release a Session even if its creation
-reply is lost. JetBrains Debug also checks its own adapter’s
+Wire Run and Debug require API 1.4. Run uses acquisition cancellation when a
+Session creation reply is lost. Each editor’s Debug integration checks its own adapter’s
 `supportsFerretRuntimeSelection` capability for a configured file or explicit
 selector, including `local`.
 

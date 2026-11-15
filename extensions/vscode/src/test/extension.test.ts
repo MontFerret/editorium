@@ -223,6 +223,8 @@ suite('Ferret declarative language support', () => {
     const launch = debuggerContribution.configurationAttributes.launch;
     assert.ok(launch);
     assert.ok(launch.required.includes('program'));
+    assert.equal(launch.properties.runtimeName?.type, 'string');
+    assert.equal(launch.properties.workingDirectory?.type, 'string');
     assert.deepStrictEqual(
       {
         type: launch.properties.program?.type,
@@ -242,7 +244,7 @@ suite('Ferret declarative language support', () => {
       {
         type: 'string',
         description:
-          "Working directory for the debugged Ferret program. Optional; zero-configuration debugging uses the containing workspace folder or the file's directory.",
+          "Local compilation workspace containing the .fql program. Current-file debugging uses the containing workspace folder or the file's directory.",
       },
     );
     assert.deepStrictEqual(

@@ -21,6 +21,12 @@ root that registered it. Native directory overrides resolve on the extension
 host. Wire receives literal application paths. An omitted directory uses the
 provider's default.
 
+Debug reserves the same window activity and uses the same runtime catalog.
+The unconfigured default can start DAP directly. A configured Debug adapter
+reads the admitted configuration independently. The inline transport checks
+the adapter’s runtime-selection capability and its launch acknowledgment. Its DAP process owns
+acquisition and cleanup through final process closure.
+
 ## Protocol and ownership
 
 The execution client binds to a single daemon connection. CreateSession sends

@@ -20,7 +20,6 @@ import {
 import { FerretExecutionManager } from './execution/manager';
 import {
   readFerretdExecutable,
-  requireFerretdExecutable,
 } from './ferretd';
 import { createLanguageClient } from './language-client';
 import { RuntimeCoordinator } from './runtime/coordinator';
@@ -103,12 +102,12 @@ export async function activate(
     output,
   );
   const factory = new FerretDebugAdapterDescriptorFactory(
-    () => requireFerretdExecutable(readExecutable()),
+    readExecutable,
     output,
     runtimes,
   );
   const debugConfigurationRegistration =
-    registerFerretDebugConfigurationProvider(selector => runtimes.checkDebug(selector));
+    registerFerretDebugConfigurationProvider(() => runtimes.checkAdmission());
   const debugCommandRegistration = registerFerretDebugCommand();
 
   shutdown = async () => {

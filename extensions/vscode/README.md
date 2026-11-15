@@ -56,18 +56,22 @@ custom save command or a language-server restart.
 Open a file-backed `.fql` document and use the editor Debug button, run
 **Ferret: Debug Current File**, or press `F5`. All three start the native VS Code
 debugger backed by `ferretd dap`. The extension uses the active file as the
-program and selects its containing workspace folder as the working directory.
+program and its containing workspace folder as the compilation root. It reads
+`ferret.run.parameters` and `ferret.run.workingDirectory` for that file.
 A standalone `.fql` file outside the open workspace uses its own directory, so
 the standard workflow does not require `.vscode/launch.json`.
 
-Create an explicit launch configuration when a script needs custom paths,
-parameters, or entry behavior:
+An explicit launch configuration supplies its own parameters and runtime
+directory. Omitted parameters give an empty set. Omit `runtimeName` to use
+**Ferret: Select Runtime**, set it to `""` to follow the daemon default, or
+supply the exact runtime name. This example selects native execution.
 
 ```json
 {
   "type": "ferret",
   "request": "launch",
-  "name": "Debug API scraper",
+  "name": "Debug API scraper locally",
+  "runtimeName": "local",
   "program": "${workspaceFolder}/scripts/scrape.fql",
   "cwd": "${workspaceFolder}",
   "parameters": {
@@ -101,8 +105,9 @@ disappears, the picker marks it unavailable until you choose another entry.
 
 The first catalog request or admitted Run or Debug captures the current setting.
 Opening a document starts only language services. Built-in Debug starts its own
-adapter without starting the execution daemon. After first use, changing or
-clearing the setting requires **Ferret: Reload Runtimes**. Also use Reload after
+adapter without starting the execution daemon when both the configuration path
+and effective selector are empty. After first use, changing or clearing the
+setting requires **Ferret: Reload Runtimes**. Also use Reload after
 editing the file at the same path. Reload rereads it and replaces the execution
 daemon. Catalog discovery reads daemon metadata. The first Run on each daemon
 registers the window’s workspace folders for execution. Wait for every Run and
@@ -123,9 +128,22 @@ version in major 1, including when the default resolves to Wire. The bundled
 daemon provides API 1.4. With a custom API 1.3 daemon, explicit `local` is
 available. Upgrade the daemon to use Wire.
 
-**Debug** requires an empty configuration path, **Daemon default**, and an
-omitted or empty launch `runtimeName`. Clear the setting, select **Daemon
-default**, and complete any required Reload before starting Debug.
+**Debug Current File** and F5 use the same selection and admitted catalog as
+Run. Configured or explicitly selected native Debug requires daemon API 1.3+ in
+major 1. Wire Debug requires API 1.4+. Each adapter must also advertise runtime
+selection during initialization and acknowledge the expected runtime on launch.
+An older adapter can still debug the unconfigured built-in default with a blank
+or omitted `workingDirectory`. An explicit directory requires the adapter to
+advertise runtime selection. This also applies to older releases such as
+`1.0.0-alpha.7`, which accept the directory but cannot advertise support.
+
+Configured Debug starts `ferretd dap --runtime-config <absolute-path>`. The
+extension compares the file fingerprint recorded during catalog startup before
+spawn and again after initialize. These comparisons detect ordinary edits
+between the processes' independent reads. A detected edit requires Reload.
+Changing the picker affects future launches. Saving a new configuration path
+leaves admitted launches on their original path and requires Reload for new
+launches.
 
 ## Run a Ferret file
 
@@ -153,7 +171,7 @@ The original source identity and workspace are preserved. Selecting one file
 does not discover excluded neighbors or relax workspace containment and the
 daemon's nested-symlink restrictions.
 
-### Run parameters and working directory
+### Current-file parameters and working directory
 
 | Resource-scoped setting | Default | Behavior |
 | --- | --- | --- |
@@ -164,7 +182,8 @@ Settings come from the source file's workspace folder. Native relative
 directories resolve against its registered compilation workspace and may point
 outside it. On Windows, use an ordinary relative path or a fully qualified drive
 or UNC path. Drive-relative paths such as `C:logs` are rejected. Wire receives nonblank directory text verbatim, including spaces
-and runtime-host separators. Enter paths literally. The source file and its
+and runtime-host separators. Explicit Debug configurations support normal VS Code
+variable substitution. Run settings use literal paths. The source file and its
 compilation workspace stay on the extension host.
 
 An extension or command keybinding can pass an options object to
@@ -210,8 +229,29 @@ adopted, and select **Daemon default**.
 }
 ```
 
-Run a saved `.fql` file containing `RETURN DEMO::IDENTITY(@value)`. The host
-returns the typed object. To run an ordinary query such as `RETURN 42` on
+Save the following query in a workspace `.fql` file.
+
+```fql
+LET result = DEMO::IDENTITY(@value)
+LET count = result.count
+RETURN count + 1
+```
+
+Set a breakpoint on the second line and press F5. Inspect `result` in Locals
+and `@value` in Parameters. Add `result.count` to Watch, step over the
+assignment, then continue to see `3` in the Debug Console. With the runtime
+directory omitted, the application uses the root passed to `go run`. Debug
+source paths and breakpoints remain in the local workspace.
+
+To try Stop, start the same query again, stop at the breakpoint, and press
+the red Stop button. The host emits a `released` event for that connection
+and stays available for the next launch. Stop also cancels pending launch
+preparation. Reload becomes available after all owned adapters have closed.
+If the host disappears, the affected session ends with a diagnostic, including
+while paused. Start the host again, update its endpoint and Reload if it
+changed, then start a new Debug session.
+
+To run an ordinary query such as `RETURN 42` on
 native Ferret under the same Wire default, select **local** or supply the
 override from a VS Code extension:
 

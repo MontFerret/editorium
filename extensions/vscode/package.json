@@ -89,7 +89,15 @@
               },
               "cwd": {
                 "type": "string",
-                "description": "Working directory for the debugged Ferret program. Optional; zero-configuration debugging uses the containing workspace folder or the file's directory."
+                "description": "Local compilation workspace containing the .fql program. Current-file debugging uses the containing workspace folder or the file's directory."
+              },
+              "runtimeName": {
+                "type": "string",
+                "description": "Exact Ferret runtime name. Omit to use the runtime picker or supply an empty string for the daemon default."
+              },
+              "workingDirectory": {
+                "type": "string",
+                "description": "Runtime filesystem directory. A nonblank override requires a debug adapter that advertises runtime selection. Native relative paths resolve against the compilation workspace. Wire receives the value verbatim. Blank uses the runtime default."
               },
               "parameters": {
                 "type": "object",
@@ -210,19 +218,19 @@
           "type": "object",
           "default": {},
           "scope": "resource",
-          "markdownDescription": "JSON bind parameter values for **Ferret: Run Current File**."
+          "markdownDescription": "JSON bind parameter values for **Ferret: Run Current File** and **Ferret: Debug Current File**."
         },
         "ferret.run.workingDirectory": {
           "type": "string",
           "default": "",
           "scope": "resource",
-          "markdownDescription": "Runtime filesystem directory for **Ferret: Run Current File**. Native relative paths resolve against the compilation workspace. Wire receives the literal path. A blank value uses the runtime default."
+          "markdownDescription": "Runtime filesystem directory for **Ferret: Run Current File** and **Ferret: Debug Current File**. Native relative paths resolve against the compilation workspace. Wire receives the literal path. A blank value uses the runtime default."
         },
         "ferret.runtime.configPath": {
           "type": "string",
           "default": "",
           "scope": "window",
-          "markdownDescription": "Runtime configuration file on the extension host. Relative paths require a single file-backed workspace folder. After first use, run **Ferret: Reload Runtimes** to adopt changes. Run uses the selected native or Wire runtime. Wire Run requires ferretd API 1.4 or later in major 1. Debug requires an empty path and **Daemon default**."
+          "markdownDescription": "Runtime configuration file on the extension host. Relative paths require a single file-backed workspace folder. After first use, run **Ferret: Reload Runtimes** to adopt changes. Run and Debug use the selected native or Wire runtime. Wire requires ferretd API 1.4 or later in major 1."
         }
       }
     }
