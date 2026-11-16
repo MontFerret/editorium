@@ -72,14 +72,13 @@ suite('Wire debugging through VS Code', () => {
 
   teardown(async () => {
     try {
-      host?.command('releaseAll');
+      const [runStop] = await Promise.allSettled([stopBlockedRun()]);
       const stops = await Promise.allSettled(observers.map(async observer => {
         try { await observer.stopIfActive(); }
         finally { observer.dispose(); }
       }));
-      if (blockedRun && host) await released(blockedRun);
       await processes.closed(processes.starts('dap'));
-      for (const stop of stops) if (stop.status === 'rejected') throw stop.reason;
+      for (const stop of [runStop, ...stops]) if (stop.status === 'rejected') throw stop.reason;
     } finally {
       try { await host?.close(); } finally {
         host = undefined;
@@ -215,14 +214,34 @@ suite('Wire debugging through VS Code', () => {
     await vscode.commands.executeCommand('ferret.runFile', options);
   }
 
+  async function startBlockedRun(file: string, options: object = {}): Promise<void> {
+    await focus(file);
+    blockedRun = file;
+    await vscode.commands.executeCommand('ferret.runFile', options);
+  }
+
+  async function stopBlockedRun(): Promise<void> {
+    let cancellation: Thenable<unknown> | undefined;
+    try {
+      if (blockedRun) {
+        await focus(blockedRun);
+        cancellation = vscode.commands.executeCommand('ferret.cancelExecution');
+      }
+    } finally {
+      // A pending acquisition can finish cancelling only after compilation returns.
+      host?.command('releaseAll');
+    }
+    await cancellation;
+    blockedRun = undefined;
+  }
+
   async function reload(): Promise<void> {
     await vscode.commands.executeCommand('ferret.reloadRuntimes');
   }
 
   async function released(file: string, ordinal = 1): Promise<number> {
     const id = await host!.binding(uri(file).fsPath, ordinal);
-    await host!.wait('released', 1, id);
-    assert.equal(host!.count('released', id), 1);
+    await host!.waitForGracefulRelease(id);
     assert.equal(host!.count('engineClosed'), 0);
     return id;
   }
@@ -260,20 +279,19 @@ suite('Wire debugging through VS Code', () => {
   test('Reload preserves active bindings and survivors make independent progress', async () => {
     const daemon = processes.starts('serve');
     assert.equal(daemon.length, 1);
-    await program('held-run.fql', 'RETURN DEMO::BLOCK("surviving-run")');
+    const shared = 'shared.fql';
+    await program(shared, 'LET value = @block ? DEMO::BLOCK(@token) : DEMO::IDENTITY(@value)\nRETURN value');
+    breakpoint(shared, 2);
     await host!.arm('block:surviving-run');
-    await run('held-run.fql');
+    await startBlockedRun(shared, { parameters: { block: true, token: 'surviving-run', value: 0 } });
     await host!.wait('held', 1, undefined, 'block:surviving-run');
-    blockedRun = 'held-run.fql';
-    const runId = await host!.binding(uri('held-run.fql').fsPath);
+    const runId = await host!.binding(uri(shared).fsPath);
     await reload(); // Run alone.
     assert.equal(processes.starts('serve').length, daemon.length);
 
-    await program('survivor.fql', 'LET value = DEMO::IDENTITY(101)\nRETURN value + 1');
-    breakpoint('survivor.fql', 2);
-    const survivor = await launch('survivor', 'survivor.fql', {});
-    await inspect(survivor, 'survivor.fql', 2, 101);
-    const survivorId = await host!.binding(uri('survivor.fql').fsPath);
+    const survivor = await launch('survivor', shared, { parameters: { block: false, token: 'survivor', value: 101 } });
+    await inspect(survivor, shared, 2, 101);
+    const survivorId = await host!.binding(uri(shared).fsPath, 2);
     await reload(); // Both operations.
     assert.equal(processes.starts('serve').length, daemon.length);
 
@@ -284,29 +302,27 @@ suite('Wire debugging through VS Code', () => {
     await finisher.session!.customRequest('continue', { threadId: thread });
     await completed(finisher, '302');
     const finishedId = await released('finisher.fql');
+    assert.equal(host!.count('debugStart', finishedId), 1);
 
-    await program('stopped.fql', 'RETURN DEMO::BLOCK("stop-only-me")');
-    const stopped = await launch('stopped', 'stopped.fql', {});
+    const stopped = await launch('stopped', shared, { parameters: { block: true, token: 'stop-only-me', value: 202 } });
     await host!.wait('entered', 1, undefined, 'stop-only-me');
+    const stoppedId = await host!.binding(uri(shared).fsPath, 3);
     await vscode.debug.stopDebugging(stopped.session!);
     await host!.wait('cancelled', 1, undefined, 'stop-only-me');
-    const stoppedId = await released('stopped.fql');
+    await host!.waitForGracefulRelease(stoppedId);
     assert.equal(new Set([finishedId, stoppedId, survivorId, runId]).size, 4);
     assert.equal(host!.count('released', survivorId), 0);
     assert.equal(host!.count('released', runId), 0);
 
     host!.command('release', 'block:surviving-run');
-    await waitForExecutionOutput(/"surviving-run"\s+Completed [^\n]*held-run\.fql/);
-    await released('held-run.fql');
+    await waitForExecutionOutput(/"surviving-run"\s+Completed [^\n]*shared\.fql/);
+    await host!.waitForGracefulRelease(runId);
     blockedRun = undefined;
-    await reload(); // Only the suspended Debug remains.
-    assert.equal(processes.starts('serve').length, daemon.length);
-    assert.equal(daemon[0]!.exitCode, null);
-    const survivingThread = await inspect(survivor, 'survivor.fql', 2, 101);
+    const survivingThread = await inspect(survivor, shared, 2, 101);
     await survivor.session!.customRequest('continue', { threadId: survivingThread });
-    await completed(survivor, '102');
+    await completed(survivor, '101');
     assert.equal(survivor.count(m => m.event === 'output' && !!m.body?.output?.includes('302')), 0);
-    await released('survivor.fql');
+    await host!.waitForGracefulRelease(survivorId);
     assert.equal(host!.count('released'), 4);
     await processes.closed(processes.starts('dap'));
     await reload();
@@ -329,6 +345,9 @@ suite('Wire debugging through VS Code', () => {
       const captured = await launch('captured', 'captured.fql', {});
       const threadId = await inspect(captured, 'captured.fql', 2, 50);
       const daemon = processes.starts('serve');
+      await reload(); // Only this suspended Debug holds an activity reservation.
+      assert.deepEqual(processes.starts('serve'), daemon);
+      assert.equal(daemon[0]!.exitCode, null);
       const changedPath = transition === 'save another path';
       const alternate = join(source, 'alternate.json');
       await configureFile(changedPath ? alternate : config, 'Changed');
@@ -409,22 +428,45 @@ suite('Wire debugging through VS Code', () => {
     assert.equal(processes.starts('serve').length, 1);
   });
 
-  test('reports loss of a running and a suspended host without another debug request', async () => {
+  test('cancels the owned Run while compilation is held and permits Reload', async () => {
+    const file = 'pending-cleanup.fql';
+    await program(file, 'RETURN DEMO::BLOCK("pending-cleanup")');
+    await host!.arm('compile');
+    await host!.arm('block:pending-cleanup');
+    const started = startBlockedRun(file);
+    try {
+      const id = (await host!.wait('held', 1, undefined, 'compile')).id;
+      assert.ok(id);
+      assert.equal(host!.count('entered'), 0);
+      await stopBlockedRun();
+      await started;
+      await host!.waitForGracefulRelease(id);
+      assert.equal(host!.count('entered'), 0);
+      const original = processes.starts('serve');
+      await reload();
+      assert.equal(processes.starts('serve').length, original.length + 1);
+      await processes.closed(original);
+    } finally {
+      try { await stopBlockedRun(); } finally { await started; }
+    }
+  });
+
+  test('reports concurrent host loss and recovers through explicit launches', async () => {
     await writeFile(uri('blocked.fql').fsPath, 'RETURN DEMO::BLOCK("active")');
     await writeFile(uri('paused.fql').fsPath, 'RETURN DEMO::IDENTITY(42)');
     await program('lost-run.fql', 'RETURN DEMO::BLOCK("lost-run")');
     await host!.arm('block:lost-run');
-    await run('lost-run.fql');
+    await startBlockedRun('lost-run.fql');
     await host!.wait('held', 1, undefined, 'block:lost-run');
-    blockedRun = 'lost-run.fql';
     const active = await launch('running host loss', 'blocked.fql', {});
     await host!.wait('entered', 1, undefined, 'active');
     const paused = await launch('paused host loss', 'paused.fql', { stopOnEntry: true });
     await paused.wait(m => m.event === 'stopped');
     const originalEndpoint = (await host!.wait('ready')).endpoint;
-    await host!.kill();
+    const lostHost = host!;
+    await lostHost.kill();
     host = undefined;
-    blockedRun = undefined;
+    await assert.rejects(lostHost.kill(), /already exited/);
     for (const debug of [paused, active]) {
       const diagnostic = await debug.wait(m => m.event === 'output' && m.body?.category === 'stderr');
       assert.ok(diagnostic.body?.output?.trim());
@@ -433,6 +475,7 @@ suite('Wire debugging through VS Code', () => {
       await debug.wait(m => m.event === 'terminated');
     }
     await waitForExecutionOutput(/Execution failed: [^\n]*lost-run\.fql\s+[^\n]*(unavailable|connection|transport|EOF|closed)/i);
+    blockedRun = undefined;
     await processes.closed(processes.starts('dap'));
     const offline = observe('offline application');
     // VS Code versions surface failed launches as either false or a rejected promise.

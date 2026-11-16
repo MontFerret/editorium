@@ -54,6 +54,13 @@ export class WireHost {
     return event.id;
   }
 
+  public async waitForGracefulRelease(id: number): Promise<void> {
+    await Promise.all([this.wait('connectionClosed', 1, id), this.wait('released', 1, id)]);
+    for (const event of ['connectionClosed', 'released']) {
+      if (this.count(event, id) !== 1) throw new Error(`Expected one ${event} for Wire connection ${id}`);
+    }
+  }
+
   public async arm(name: string): Promise<void> {
     const ordinal = 1 + this.events.filter(item => item.event === 'armed' && item.token === name).length;
     this.command('arm', name);
@@ -87,7 +94,8 @@ export class WireHost {
     try {
       await this.waitForClose(5000);
     } catch {
-      await this.kill();
+      if (!this.ended) this.child.kill('SIGKILL');
+      await this.waitForClose(10_000);
     }
     if (this.child.exitCode !== 0 || this.count('engineClosed') !== 1) {
       throw new Error(`Wire fixture teardown failed (exit ${this.child.exitCode}, ${this.child.signalCode}): ${this.diagnostics}`);
@@ -95,7 +103,12 @@ export class WireHost {
   }
 
   public async kill(): Promise<void> {
-    if (!this.ended && !this.child.kill('SIGKILL')) throw new Error(`Failed to terminate Wire fixture pid ${this.child.pid}`);
+    if (this.ended || this.child.exitCode !== null || this.child.signalCode !== null) {
+      throw new Error(`Wire fixture already exited (code ${this.child.exitCode}, signal ${this.child.signalCode}): ${this.diagnostics}`);
+    }
+    if (!this.child.kill('SIGKILL')) {
+      throw new Error(`Failed to kill Wire fixture pid ${this.child.pid} (code ${this.child.exitCode}, signal ${this.child.signalCode}): ${this.diagnostics}`);
+    }
     await this.waitForClose(10_000);
   }
 

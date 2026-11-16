@@ -1,11 +1,10 @@
 import * as assert from 'node:assert/strict';
-import { dirname } from 'node:path';
-import type * as vscode from 'vscode';
 import { FerretDebugAdapterDescriptorFactory } from '../debug/adapter';
 import { requireFerretdExecutable } from '../ferretd';
 import type { RuntimeCoordinator } from '../runtime/coordinator';
 import type { ServerOutput } from '../server';
-import { DebugObserver } from './debug-observer';
+import type { DebugObserver } from './debug-observer';
+import { launchInlineDebug } from './inline-debug-launch';
 import { FerretdProcesses } from './ferretd-processes';
 import type { WireHost } from './wire-host';
 
@@ -27,14 +26,9 @@ export async function stopDuringStartup(boundary: StartupBoundary, program: stri
   let observer: DebugObserver | undefined;
   try {
     if (rpc) await host.arm(boundary);
-    const configuration = { type: 'ferret', request: 'launch', name: boundary, program, cwd: dirname(program), stopOnEntry: true };
-    const descriptor = factory.createDebugAdapterDescriptor({ configuration } as unknown as vscode.DebugSession);
-    const adapter = (descriptor as { implementation: vscode.DebugAdapter }).implementation;
-    observer = new DebugObserver(boundary, adapter);
-    adapter.handleMessage({ type: 'request', seq: 1, command: 'initialize', arguments: {
-      adapterID: 'ferret', pathFormat: 'path', linesStartAt1: true, columnsStartAt1: true,
-    } });
-    adapter.handleMessage({ type: 'request', seq: 2, command: 'launch', arguments: configuration });
+    const launch = launchInlineDebug(factory, boundary, program);
+    const { adapter } = launch;
+    observer = launch.observer;
 
     let id: number | undefined;
     if (rpc) {
@@ -60,13 +54,21 @@ export async function stopDuringStartup(boundary: StartupBoundary, program: stri
     const children = processes.starts('dap');
     assert.equal(children.length, boundary === 'before spawn' ? 0 : 1);
     await processes.closed(children);
-    assert.ok(children.every(child => child.signalCode === null), 'Expected cooperative DAP shutdown');
+    for (const child of children) {
+      assert.deepEqual([child.exitCode, child.signalCode], [0, null], `Expected cooperative DAP shutdown for pid ${child.pid}`);
+    }
     assert.equal(observer.count(m => m.event === 'stopped'), 0);
     assert.equal(host.count('engineClosed'), 0);
     if (id !== undefined) {
-      await host.wait('released', 1, id);
-      assert.equal(host.count('released', id), 1);
+      if (boundary === 'connect') {
+        // Stop interrupted the handshake before the client learned its connection ID.
+        await host.wait('released', 1, id);
+        assert.equal(host.count('released', id), 1);
+      } else {
+        await host.waitForGracefulRelease(id);
+      }
     }
+    assert.equal(host.count('debugStart'), 0, `The host received a Debug START after Stop at ${boundary}`);
   } finally {
     releaseAccess();
     if (rpc) host.command('release', boundary);

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -43,7 +42,10 @@ func (e *events) emit(value event) {
 }
 
 func (e *events) observe(host any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handle grpc.StreamHandler) error {
-	if !strings.HasSuffix(info.FullMethod, "/Connect") {
+	if info.FullMethod == wirev1.DebugService_RunCommand_FullMethodName && e.controls != nil {
+		return handle(host, &debugCommandStream{ServerStream: stream, events: e})
+	}
+	if info.FullMethod != wirev1.RuntimeService_Connect_FullMethodName {
 		return handle(host, stream)
 	}
 	id := e.nextID.Add(1)
@@ -88,5 +90,9 @@ func (e *events) observeOperation(ctx context.Context, request any, _ *grpc.Unar
 			return nil, err
 		}
 	}
-	return handle(ctx, request)
+	reply, err := handle(ctx, request)
+	if barrier == "close" && err == nil {
+		e.emit(event{Event: "connectionClosed", ID: id})
+	}
+	return reply, err
 }
