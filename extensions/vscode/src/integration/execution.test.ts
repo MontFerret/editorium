@@ -1,4 +1,5 @@
 import { withholdSessionReply } from './withheld-session';
+import { stopDuringStartup } from './wire-startup';
 import { WireHost } from './wire-host';
 import { readRunOptions, type RunOptions } from '../execution/run-options';
 import { RuntimeCoordinator } from '../runtime/coordinator';
@@ -709,6 +710,52 @@ suite('ferretd execution integration', () => {
     }
   });
 
+  for (const boundary of ['before spawn', 'connect', 'compile', 'before configurationDone', 'close'] as const) {
+    test(`Stop during Debug startup at ${boundary} settles the real launch`, async () => {
+      const fixture = await RealExecutionFixture.create(executable, [{ name: 'source', files: {
+        'cancel.fql': boundary === 'close' ? 'RETURN )' : 'RETURN DEMO::BLOCK("cancelled-debug")',
+        'run.fql': 'RETURN DEMO::BLOCK("independent-run")',
+        'fresh.fql': 'RETURN DEMO::IDENTITY(28)',
+      } }]);
+      const appRoot = await mkdtemp(join(tmpdir(), 'ferret-startup-host-'));
+      const host = new WireHost(process.env.FERRET_WIRE_HOST_PATH!, appRoot, true);
+      try {
+        const { endpoint } = await host.wait('ready');
+        const config = join(fixture.temporaryRoot, 'runtimes.json');
+        await writeFile(config, JSON.stringify({ defaultRuntime: 'App', runtimes: [
+          { name: 'App', provider: 'wire', endpoint, insecure: true },
+        ] }));
+        fixture.runtime.save({ entered: config, path: config });
+        await fixture.runtime.reload();
+        // Hold a sibling only in the acquisition case. At the cleanup and
+        // pre-spawn gates the Debug lease must be the sole reason Reload fails.
+        const sibling = boundary === 'connect' ? await fixture.document('source', 'run.fql') : undefined;
+        let siblingRun: ManagedExecution | undefined;
+        if (sibling) {
+          await host.arm('block:independent-run');
+          siblingRun = await fixture.manager.run(sibling);
+          await host.wait('held', 1, undefined, 'block:independent-run');
+        }
+        await stopDuringStartup(boundary, fixture.path('source', 'cancel.fql'), executable, fixture.runtime, fixture.output, host);
+        assert.equal(host.count('entered'), sibling ? 1 : 0);
+        if (sibling) {
+          const terminal = waitForTerminal(fixture.manager, sibling.uri);
+          host.command('release', 'block:independent-run');
+          assert.equal(resultValue(await terminal), 'independent-run');
+          await host.wait('released', 1, await host.binding(sibling.uri.fsPath));
+          await siblingRun!.cancel(); // A terminal handle joins its owned cleanup.
+        }
+        await fixture.runtime.reload();
+        assert.equal(resultValue((await runToTerminal(fixture, await fixture.document('source', 'fresh.fql'))).change), 28);
+      } finally {
+        host.command('releaseAll');
+        try { await fixture.dispose(); } finally {
+          try { await host.close(); } finally { await rm(appRoot, { recursive: true, force: true }); }
+        }
+      }
+    });
+  }
+
   test('runs on the living Wire host, releases each binding, and reacquires after Stop', async () => {
     const binary = process.env.FERRET_WIRE_HOST_PATH;
     assert.ok(binary, 'make test vscode must supply the independent Wire host');
@@ -1085,15 +1132,16 @@ RETURN [first, second, third]`,
     }
   });
 
-  test('isolates equal relative paths and invalidates only a removed workspace', async () => {
+  test('isolates equal relative paths in nested roots and invalidates only the removed workspace', async () => {
+    const secondary = join('project-a', 'project-b');
     const fixture = await RealExecutionFixture.create(executable, [
       { name: 'project-a', files: { 'main.fql': sources.long! } },
-      { name: 'project-b', files: { 'main.fql': sources.long! } },
+      { name: secondary, files: { 'main.fql': sources.long! } },
     ]);
 
     try {
       const a = await fixture.document('project-a', 'main.fql');
-      const b = await fixture.document('project-b', 'main.fql');
+      const b = await fixture.document(secondary, 'main.fql');
       const aTerminal = waitForTerminal(fixture.manager, a.uri);
       const bTerminal = waitForTerminal(fixture.manager, b.uri);
       const [aExecution, bExecution] = await Promise.all([
@@ -1110,13 +1158,16 @@ RETURN [first, second, third]`,
       assert.strictEqual(sessions[0]?.source.relativePath, 'main.fql');
       assert.strictEqual(sessions[1]?.source.relativePath, 'main.fql');
 
+      assert.equal(sessions.find(s => s.id === bExecution.sessionId)?.source.workspaceId,
+        fixture.daemon.workspaceRegistry.resolveDocument(b.uri.fsPath)?.workspaceId);
+      assert.equal(fixture.processes.length, 1);
       const removedWorkspace =
         fixture.daemon.workspaceRegistry.resolveDocument(a.uri.fsPath)
           ?.workspaceId;
       assert.ok(removedWorkspace);
       fixture.expectWorkspaceLoss(removedWorkspace);
       await fixture.daemon.updateWorkspaceFolders([
-        fixture.roots.get('project-b')!,
+        fixture.roots.get(secondary)!,
       ]);
       const removed = await aTerminal;
       assert.ok(

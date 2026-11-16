@@ -314,7 +314,7 @@ export class RuntimeCoordinator {
         this.generationRequiresReload = true;
         this.publish({ status: 'reload-required', message });
       }
-      throw new Error(message);
+      throw new RuntimeLaunchError(message);
     }
     revision.digest = digest;
   }

@@ -21,8 +21,9 @@ import (
 
 func main() {
 	root := flag.String("root", ".", "application filesystem root")
+	controlled := flag.Bool("control", false, "enable integration-test barriers on stdin")
 	flag.Parse()
-	if err := serve(*root); err != nil {
+	if err := serve(*root, *controlled); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -39,12 +40,17 @@ func coreVersion() (api.Version, error) {
 	return "", errors.New("missing Ferret Core module version in fixture build")
 }
 
-func serve(root string) (err error) {
+func serve(root string, controlled bool) (err error) {
 	version, err := coreVersion()
 	if err != nil {
 		return err
 	}
 	events := newEvents(os.Stdout)
+	options := []server.Option{server.WithStreamInterceptors(events.observe)}
+	if controlled {
+		events.controls = newBarriers(events)
+		options = append(options, server.WithUnaryInterceptors(events.observeOperation))
+	}
 	host, err := uapi.New(version, ferret.WithFSRoot(root),
 		ferret.WithFunctionsRegistrar(func(ns runtime.Namespace) {
 			functions := ns.Namespace("DEMO").Function().A1()
@@ -53,6 +59,11 @@ func serve(root string) (err error) {
 			})
 			functions.Add("BLOCK", func(ctx context.Context, token runtime.Value) (runtime.Value, error) {
 				events.emit(event{Event: "entered", Token: token.String()})
+				if controlled {
+					if held, err := events.controls.wait(ctx, "block:"+token.String(), 0); held && err == nil {
+						return token, nil
+					}
+				}
 				<-ctx.Done()
 				events.emit(event{Event: "cancelled", Token: token.String()})
 				return nil, ctx.Err()
@@ -65,7 +76,7 @@ func serve(root string) (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, host.Close()) }()
-	wire, err := server.New(host, server.WithStreamInterceptors(events.observe))
+	wire, err := server.New(host, options...)
 	if err != nil {
 		return err
 	}
@@ -77,6 +88,14 @@ func serve(root string) (err error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {
+		if controlled {
+			if err := events.controls.read(os.Stdin); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+			}
+			cancel()
+			_ = events.controls.command("releaseAll", "")
+			return
+		}
 		_, _ = io.Copy(io.Discard, os.Stdin)
 		cancel()
 	}()
