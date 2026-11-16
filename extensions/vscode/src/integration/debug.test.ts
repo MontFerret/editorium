@@ -44,10 +44,12 @@ suite('ferretd DAP integration', () => {
       await observer.wait(m => m.event === 'output' && !!m.body?.output?.includes('local runtime override'));
       await observer.wait(m => m.event === 'terminated');
     } finally {
-      if (observer.session) await vscode.debug.stopDebugging(observer.session);
-      observer.dispose();
-      await rm(directory, { recursive: true, force: true });
-      await rm(root, { recursive: true, force: true });
+      try { await observer.stopIfActive(); }
+      finally {
+        observer.dispose();
+        await rm(directory, { recursive: true, force: true });
+        await rm(root, { recursive: true, force: true });
+      }
     }
   });
 

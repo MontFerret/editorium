@@ -64,6 +64,19 @@ export class DebugObserver implements vscode.Disposable {
     await this.until(() => this.editorEnded || undefined, 'VS Code session termination');
   }
 
+  public async stopIfActive(): Promise<void> {
+    if (!this.session || this.editorEnded) return;
+    if (!this.history.some(m => m.event === 'terminated')) {
+      try {
+        await vscode.debug.stopDebugging(this.session);
+      } catch (error) {
+        if (!this.editorEnded && !this.history.some(m => m.event === 'terminated')) throw error;
+      }
+    }
+    // VS Code can reject a launch before registering it as a started session.
+    if (this.history.some(m => m.command === 'launch' && m.success)) await this.waitForEditorEnd();
+  }
+
   private until<T>(find: () => T | undefined, description: string): Promise<T> {
     return new Promise((resolve, reject) => {
       const check = () => {

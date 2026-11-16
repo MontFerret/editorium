@@ -74,11 +74,7 @@ suite('Wire debugging through VS Code', () => {
     try {
       host?.command('releaseAll');
       const stops = await Promise.allSettled(observers.map(async observer => {
-        try {
-          if (observer.session && !observer.count(m => m.event === 'terminated')) {
-            await vscode.debug.stopDebugging(observer.session);
-          }
-        }
+        try { await observer.stopIfActive(); }
         finally { observer.dispose(); }
       }));
       if (blockedRun && host) await released(blockedRun);
