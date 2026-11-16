@@ -22,34 +22,72 @@ export class DebugObserver implements vscode.Disposable {
   private readonly history: DebugMessage[] = [];
   private readonly changes = new vscode.EventEmitter<void>();
   private readonly tracker: vscode.Disposable;
+  private editorEnded = false;
   public session?: vscode.DebugSession;
 
-  public constructor(private readonly name: string) {
-    this.tracker = vscode.debug.registerDebugAdapterTrackerFactory('ferret', {
+  public constructor(private readonly name: string, adapter?: vscode.DebugAdapter) {
+    if (adapter) {
+      this.tracker = adapter.onDidSendMessage(m => this.record(m as DebugMessage));
+      return;
+    }
+    const tracker = vscode.debug.registerDebugAdapterTrackerFactory('ferret', {
       createDebugAdapterTracker: session => {
-        if (session.name !== this.name) return undefined;
+        if (this.session || session.name !== this.name) return undefined;
         this.session = session;
         return {
-          onDidSendMessage: (message: DebugMessage) => {
-            this.history.push(message);
-            this.changes.fire();
-          },
+          onDidSendMessage: (message: DebugMessage) => this.record(message),
         };
       },
     });
+    this.tracker = vscode.Disposable.from(tracker, vscode.debug.onDidTerminateDebugSession(session => {
+      if (session.id === this.session?.id) {
+        this.editorEnded = true;
+        this.changes.fire();
+      }
+    }));
+  }
+
+  private record(message: DebugMessage): void {
+    this.history.push(message);
+    this.changes.fire();
+  }
+
+  public count(predicate: (value: DebugMessage) => boolean): number {
+    return this.history.filter(predicate).length;
   }
 
   public wait(predicate: (value: DebugMessage) => boolean, ordinal = 1): Promise<DebugMessage> {
+    return this.until(() => this.history.filter(predicate)[ordinal - 1], 'DAP message');
+  }
+
+  public async waitForEditorEnd(): Promise<void> {
+    await this.until(() => this.editorEnded || undefined, 'VS Code session termination');
+  }
+
+  public async stopIfActive(): Promise<void> {
+    if (!this.session || this.editorEnded) return;
+    if (!this.history.some(m => m.event === 'terminated')) {
+      try {
+        await vscode.debug.stopDebugging(this.session);
+      } catch (error) {
+        if (!this.editorEnded && !this.history.some(m => m.event === 'terminated')) throw error;
+      }
+    }
+    // VS Code can reject a launch before registering it as a started session.
+    if (this.history.some(m => m.command === 'launch' && m.success)) await this.waitForEditorEnd();
+  }
+
+  private until<T>(find: () => T | undefined, description: string): Promise<T> {
     return new Promise((resolve, reject) => {
       const check = () => {
-        const found = this.history.filter(predicate)[ordinal - 1];
-        if (found) { clearTimeout(timer); listener.dispose(); resolve(found); }
+        const found = find();
+        if (found !== undefined) { clearTimeout(timer); listener.dispose(); resolve(found); }
       };
       const listener = this.changes.event(check);
       const timer = setTimeout(() => {
         listener.dispose();
         const events = this.history.map(item => item.event ?? item.command);
-        reject(new Error(`Missing DAP message for ${this.name} after ${events.join(', ')}`));
+        reject(new Error(`Missing ${description} for ${this.name} after ${events.join(', ')}`));
       }, 15_000);
       check();
     });

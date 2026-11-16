@@ -1,4 +1,8 @@
 import { withholdSessionReply } from './withheld-session';
+import { stopDuringStartup } from './wire-startup';
+import { launchInlineDebug } from './inline-debug-launch';
+import type { DebugObserver } from './debug-observer';
+import { FerretDebugAdapterDescriptorFactory } from '../debug/adapter';
 import { WireHost } from './wire-host';
 import { readRunOptions, type RunOptions } from '../execution/run-options';
 import { RuntimeCoordinator } from '../runtime/coordinator';
@@ -466,6 +470,16 @@ class RealExecutionFixture {
     return process;
   }
 
+  public async adoptWireHost(host: WireHost): Promise<void> {
+    const { endpoint } = await host.wait('ready');
+    const config = join(this.temporaryRoot, 'runtimes.json');
+    await writeFile(config, JSON.stringify({ defaultRuntime: 'App', runtimes: [
+      { name: 'App', provider: 'wire', endpoint, insecure: true },
+    ] }));
+    this.runtime.save({ entered: config, path: config });
+    await this.runtime.reload();
+  }
+
   public expectGenerationLoss(): void {
     for (const execution of this.client.createdExecutions) {
       if (!this.client.closedExecutions.includes(execution.id)) {
@@ -498,6 +512,20 @@ class RealExecutionFixture {
         this.invalidatedExecutions.add(execution.id);
       }
     }
+  }
+
+  public observeHostLossCleanup(run: ManagedExecution): vscode.Disposable {
+    // Successful closes are tracked by the instrumented client. The killed
+    // host can also leave a specific close unconfirmed by the live daemon.
+    return this.manager.onDidChangeExecution(change => {
+      if (change.kind !== 'cleanup-failed' || change.documentUri.toString() !== run.documentUri.toString() ||
+          !(change.error instanceof AggregateError)) return;
+      for (const cause of change.error.errors) {
+        if (!(cause instanceof FerretExecutionClientError) || cause.code !== 'execution-rejected') continue;
+        if (cause.operation === 'close-execution') this.invalidatedExecutions.add(run.id);
+        if (cause.operation === 'close-session') this.invalidatedSessions.add(run.sessionId);
+      }
+    });
   }
 
   public async dispose(): Promise<void> {
@@ -706,6 +734,97 @@ suite('ferretd execution integration', () => {
     } finally {
       await settings().update('parameters', undefined, vscode.ConfigurationTarget.Global);
       await fixture.dispose();
+    }
+  });
+
+  for (const boundary of ['before spawn', 'connect', 'compile', 'before configurationDone', 'close'] as const) {
+    test(`Stop during Debug startup at ${boundary} settles the real launch`, async () => {
+      const fixture = await RealExecutionFixture.create(executable, [{ name: 'source', files: {
+        'cancel.fql': boundary === 'close' ? 'RETURN )' : 'RETURN DEMO::BLOCK("cancelled-debug")',
+        'run.fql': 'RETURN DEMO::BLOCK("independent-run")',
+        'fresh.fql': 'RETURN DEMO::IDENTITY(28)',
+      } }]);
+      const appRoot = await mkdtemp(join(tmpdir(), 'ferret-startup-host-'));
+      const host = new WireHost(process.env.FERRET_WIRE_HOST_PATH!, appRoot, true);
+      try {
+        await fixture.adoptWireHost(host);
+        // Hold a sibling only in the acquisition case. At the cleanup and
+        // pre-spawn gates the Debug lease must be the sole reason Reload fails.
+        const sibling = boundary === 'connect' ? await fixture.document('source', 'run.fql') : undefined;
+        let siblingRun: ManagedExecution | undefined;
+        if (sibling) {
+          await host.arm('block:independent-run');
+          siblingRun = await fixture.manager.run(sibling);
+          await host.wait('held', 1, undefined, 'block:independent-run');
+        }
+        await stopDuringStartup(boundary, fixture.path('source', 'cancel.fql'), executable, fixture.runtime, fixture.output, host);
+        assert.equal(host.count('entered'), sibling ? 1 : 0);
+        if (sibling) {
+          const terminal = waitForTerminal(fixture.manager, sibling.uri);
+          host.command('release', 'block:independent-run');
+          assert.equal(resultValue(await terminal), 'independent-run');
+          await host.waitForGracefulRelease(await host.binding(sibling.uri.fsPath));
+          await siblingRun!.cancel(); // A terminal handle joins its owned cleanup.
+        }
+        await fixture.runtime.reload();
+        assert.equal(resultValue((await runToTerminal(fixture, await fixture.document('source', 'fresh.fql'))).change), 28);
+      } finally {
+        host.command('releaseAll');
+        try { await fixture.dispose(); } finally {
+          try { await host.close(); } finally { await rm(appRoot, { recursive: true, force: true }); }
+        }
+      }
+    });
+  }
+
+  test('detects passive host loss with a suspended adapter and a running query', async () => {
+    const fixture = await RealExecutionFixture.create(executable, [{ name: 'source', files: {
+      'paused.fql': 'RETURN DEMO::IDENTITY(42)',
+      'blocked.fql': 'RETURN DEMO::BLOCK("running")',
+    } }]);
+    const host = new WireHost(process.env.FERRET_WIRE_HOST_PATH!, fixture.temporaryRoot, true);
+    const factory = new FerretDebugAdapterDescriptorFactory(() => ({ executable, source: 'configured' }), fixture.output, fixture.runtime);
+    let observer: DebugObserver | undefined;
+    let cleanup: vscode.Disposable | undefined;
+    let killed = false;
+    try {
+      await fixture.adoptWireHost(host);
+      const daemon = fixture.latestProcess();
+      const doc = await fixture.document('source', 'blocked.fql');
+      const run = await fixture.manager.run(doc);
+      await host.wait('entered', 1, undefined, 'running');
+      const program = fixture.path('source', 'paused.fql');
+      const launch = launchInlineDebug(factory, 'quiet session', program);
+      observer = launch.observer;
+      await observer.wait(m => m.event === 'initialized');
+      launch.adapter.handleMessage({ type: 'request', seq: 3, command: 'configurationDone' });
+      assert.equal((await observer.wait(m => m.command === 'launch')).body?.runtimeName, 'App');
+      assert.equal((await observer.wait(m => m.event === 'stopped')).body?.reason, 'entry');
+      const id = await host.binding(program);
+      await host.wait('debugStart', 1, id);
+      assert.equal(host.count('debugStart', id), 1);
+
+      // No inspection, disconnect or other DAP request can trigger detection.
+      cleanup = fixture.observeHostLossCleanup(run);
+      const [terminal] = await Promise.all([waitForTerminal(fixture.manager, doc.uri), host.kill().then(() => { killed = true; })]);
+      assertFinished(terminal, 'failed');
+      assert.match(terminal.execution.execution.failure?.message ?? '', /unavailable|connection|transport|EOF|closed/i);
+      const diagnostic = await observer.wait(m => m.event === 'output' && m.body?.category === 'stderr');
+      assert.match(diagnostic.body?.output ?? '', /App/);
+      assert.equal((await observer.wait(m => m.event === 'exited')).body?.exitCode, 1);
+      await observer.wait(m => m.event === 'terminated');
+      await factory.shutdown();
+      await run.cancel(); // Join the terminal Run's local cleanup.
+      await fixture.runtime.reload();
+      assert.notEqual(fixture.latestProcess(), daemon);
+      assert.equal(fixture.runtime.view.status, 'ready');
+    } finally {
+      try { await factory.shutdown(); } finally {
+        observer?.dispose();
+        try { if (!killed) await host.close(); } finally {
+          try { await fixture.dispose(); } finally { cleanup?.dispose(); }
+        }
+      }
     }
   });
 
@@ -1085,15 +1204,16 @@ RETURN [first, second, third]`,
     }
   });
 
-  test('isolates equal relative paths and invalidates only a removed workspace', async () => {
+  test('isolates equal relative paths in nested roots and invalidates only the removed workspace', async () => {
+    const secondary = join('project-a', 'project-b');
     const fixture = await RealExecutionFixture.create(executable, [
       { name: 'project-a', files: { 'main.fql': sources.long! } },
-      { name: 'project-b', files: { 'main.fql': sources.long! } },
+      { name: secondary, files: { 'main.fql': sources.long! } },
     ]);
 
     try {
       const a = await fixture.document('project-a', 'main.fql');
-      const b = await fixture.document('project-b', 'main.fql');
+      const b = await fixture.document(secondary, 'main.fql');
       const aTerminal = waitForTerminal(fixture.manager, a.uri);
       const bTerminal = waitForTerminal(fixture.manager, b.uri);
       const [aExecution, bExecution] = await Promise.all([
@@ -1110,13 +1230,16 @@ RETURN [first, second, third]`,
       assert.strictEqual(sessions[0]?.source.relativePath, 'main.fql');
       assert.strictEqual(sessions[1]?.source.relativePath, 'main.fql');
 
+      assert.equal(sessions.find(s => s.id === bExecution.sessionId)?.source.workspaceId,
+        fixture.daemon.workspaceRegistry.resolveDocument(b.uri.fsPath)?.workspaceId);
+      assert.equal(fixture.processes.length, 1);
       const removedWorkspace =
         fixture.daemon.workspaceRegistry.resolveDocument(a.uri.fsPath)
           ?.workspaceId;
       assert.ok(removedWorkspace);
       fixture.expectWorkspaceLoss(removedWorkspace);
       await fixture.daemon.updateWorkspaceFolders([
-        fixture.roots.get('project-b')!,
+        fixture.roots.get(secondary)!,
       ]);
       const removed = await aTerminal;
       assert.ok(

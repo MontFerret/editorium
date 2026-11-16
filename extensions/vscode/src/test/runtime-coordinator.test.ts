@@ -11,7 +11,7 @@ import { Metadata, status } from '@grpc/grpc-js';
 import type { DaemonConnection } from '../daemon/types';
 import { listRuntimes, validateCatalog } from '../runtime/catalog';
 import { resolveRuntimeConfiguration } from '../runtime/configuration';
-import { UnsupportedDiscovery } from '../runtime/errors';
+import { RuntimeLaunchError, UnsupportedDiscovery } from '../runtime/errors';
 import { RuntimeCoordinator } from '../runtime/coordinator';
 
 const local = { name: 'local', label: 'Built-in', provider: 'native' };
@@ -366,7 +366,8 @@ suite('window runtime catalog', () => {
     const reuse = runtime.admitRun('local');
     await reuse.prepareRun();
     await writeFile(config, 'different bytes');
-    await assert.rejects(reuse.verifyConfiguration(), /Reload/);
+    await assert.rejects(reuse.verifyConfiguration(), (error: unknown) =>
+      error instanceof RuntimeLaunchError && /Reload/.test(error.message));
     assert.throws(() => runtime.admitRun(), /Reload/);
     reuse.release();
   });
