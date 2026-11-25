@@ -121,7 +121,7 @@ jobs:
       - &certificate
         name: Prepare public author certificate chain
         env:
-          CERTIFICATE: ${{ vars.JB_SIGNING_CERTIFICATE }}
+          CERTIFICATE: ${{ secrets.JB_SIGNING_CERTIFICATE }}
         run: |
           : "${CERTIFICATE:?Missing JB_SIGNING_CERTIFICATE}"
           printf '%s\n' "$CERTIFICATE" > "$RUNNER_TEMP/ferret-certificate.pem"
