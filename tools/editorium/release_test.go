@@ -262,28 +262,11 @@ func TestReleasePushFailureRollsBackLocalTag(t *testing.T) {
 			hook := filepath.Join(fixture.remote, "hooks", "pre-receive")
 			writeTestFile(t, hook, []byte("#!/bin/sh\nexit 1\n"), 0o755)
 			err := runReleaseWithValidator(context.Background(), fixture.work, extension, "0.1.0", func(context.Context, string, string) error { return nil })
-			if err == nil || !strings.Contains(err.Error(), "removed local tag") {
+			if err == nil || !strings.Contains(err.Error(), "atomic release push failed") {
 				t.Fatalf("release error = %v", err)
 			}
 			assertMissingGitRef(t, fixture.work, "refs/tags/"+extension+"/v0.1.0")
 			assertMissingBareGitRef(t, fixture.remote, "refs/tags/"+extension+"/v0.1.0")
-		})
-	}
-}
-
-func TestFailedPushReconciliationKeepsConfirmedRemoteTag(t *testing.T) {
-	for _, extension := range extensionNames() {
-		t.Run(extension, func(t *testing.T) {
-			fixture := newReleaseGitFixture(t)
-			fixture.git(t, "tag", "-a", extension+"/v0.1.0", "-m", "Release vscode/v0.1.0")
-			fixture.git(t, "push", "origin", "refs/tags/"+extension+"/v0.1.0")
-			head := fixture.git(t, "rev-parse", "HEAD")
-			if err := reconcileFailedTagPush(context.Background(), fixture.work, extension+"/v0.1.0", head, errors.New("injected transport error")); err != nil {
-				t.Fatal(err)
-			}
-			if got := fixture.git(t, "rev-parse", "refs/tags/"+extension+"/v0.1.0^{}"); got != head {
-				t.Fatalf("confirmed local tag was removed: %s", got)
-			}
 		})
 	}
 }
@@ -314,6 +297,7 @@ type releaseGitFixture struct {
 
 func newReleaseGitFixture(t *testing.T) releaseGitFixture {
 	t.Helper()
+	t.Setenv("RELEASE_CHECK_ONLY", "0")
 	root := t.TempDir()
 	fixture := releaseGitFixture{work: filepath.Join(root, "work"), remote: filepath.Join(root, "origin.git")}
 	if err := os.MkdirAll(fixture.work, 0o755); err != nil {
@@ -323,7 +307,9 @@ func newReleaseGitFixture(t *testing.T) releaseGitFixture {
 	runTestCommand(t, fixture.work, "git", "init", "-b", "main")
 	fixture.git(t, "config", "user.name", "Editorium Tests")
 	fixture.git(t, "config", "user.email", "editorium@example.test")
+	writeTestFile(t, filepath.Join(fixture.work, ".gitignore"), []byte("node_modules/\n"), 0o644)
 	writeVSCodePackageManifest(t, fixture.work, "0.1.0")
+	writeTestFile(t, filepath.Join(fixture.work, "extensions/vscode/package-lock.json"), []byte(`{"name":"ferret-lang","version":"0.1.0","lockfileVersion":3,"packages":{"":{"version":"0.1.0"}}}`+"\n"), 0o644)
 	writeTestFile(t, filepath.Join(fixture.work, jetbrainsVersionSource), []byte("pluginVersion=0.1.0\n"), 0o644)
 	writeTestFile(t, filepath.Join(fixture.work, "ferretd.json"), []byte("{\"ferretd\":\"1.0.0-alpha.4\"}\n"), 0o644)
 	fixture.git(t, "add", ".")

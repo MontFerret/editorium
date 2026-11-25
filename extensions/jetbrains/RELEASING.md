@@ -2,30 +2,64 @@
 
 ## Qualification and tagging
 
-Commit the plugin's intended full SemVer as `pluginVersion` in
-`gradle.properties`. Gradle and the release tool read that property.
-`ferretd.json` independently pins the daemon bundled in both editors.
-Before tagging, run the following from the repository root.
+From a clean local `main` tracking and exactly matching `origin/main`, run:
 
 ```sh
-make test
-make lint
-make package jetbrains
-make package-check jetbrains
-FERRET_TEST_PASSIVE_HOST_LOSS=1 make test jetbrains
+make release jetbrains patch
+make release jetbrains minor
+make release jetbrains major
+make release jetbrains 0.2.0
+make release jetbrains 0.3.0-rc.1
+make release jetbrains rc
 ```
 
-The strict test kills the owned Wire application at a confirmed breakpoint and
-requires a stderr diagnostic, exit code 1, adapter shutdown and released
-admission without sending Continue. The integration suite checks that the
-daemon and fixture use the same Wire module version. Record these results and
-the interactive GoLand smoke in the [validation record](docs/debugger-validation.md).
+`pluginVersion` in `gradle.properties` remains the version source. The command
+calculates relative increments from the highest SemVer remote
+`jetbrains/v<version>` release tag, independently of VS Code. With no prior
+release, it uses the manifest. An already-prepared manifest is accepted only if
+it equals the calculated target; another advanced version requires an explicit
+request. A manifest behind the latest remote release is rejected even for an
+explicit request and must be corrected in a separate commit. Explicit versions
+cannot downgrade the manifest and must exceed the latest release in SemVer
+precedence; build metadata does not increase precedence. Existing tags are
+never replaced.
 
-Once the workflow and version source are merged into `main`, run `make release jetbrains <version>` from clean `main` tracking
-`origin/main`. The command checks the tracked version against HEAD, rejects an
-existing tag, runs Go tooling, preparation, build, lint, strict tests, packaging
-and package checks, then rechecks the checkout. It creates the annotated
-`jetbrains/v<version>` tag at that commit and pushes only the tag.
+A prerelease identifier increments only a matching series: `0.3.0-rc.1` plus
+`rc` becomes `0.3.0-rc.2`. Start a series with an explicit version. `patch`
+promotes a prerelease to its stable core, `minor` promotes when patch is zero,
+and `major` promotes when minor and patch are both zero. Otherwise the selected
+component increments and lower components reset.
+
+The command prints the release plan, updates only `pluginVersion`, and runs Go
+checks, preparation, build, lint, strict tests, packaging, and package verification.
+Before packaging, it removes recognized generated plugin ZIPs from the distribution
+output so older versions cannot violate the exact-one-archive check; unexpected
+ZIPs fail preparation and are preserved.
+The strict test uses `FERRET_TEST_PASSIVE_HOST_LOSS=1`: it kills the owned Wire
+application at a confirmed breakpoint and requires a stderr diagnostic, exit
+code 1, adapter shutdown, and released admission without Continue. Record these
+results and the interactive GoLand smoke in the
+[validation record](docs/debugger-validation.md).
+
+After rechecking the expected manifest edits, repository, and remote refs, the
+command creates `chore(release): jetbrains v<version>` when a manifest change is
+needed, annotates `jetbrains/v<version>` at that commit, and atomically pushes
+`main` plus the tag. Already-matching manifests produce no redundant commit.
+Git identity must be configured; `origin` must have one identical fetch/push
+URL and support atomic pushes. Branch protection and rejected pushes fail
+without force-pushing or falling back to independent pushes. `ferretd.json`
+continues independently pinning the daemon bundled in both editors.
+
+For full qualification without a release:
+
+```sh
+RELEASE_CHECK_ONLY=1 make release jetbrains minor
+```
+
+The same checks run using the proposed version, then original manifest bytes
+are restored without staging, creating a release commit/tag, or pushing. Fetch
+refs and ignored build caches may remain. The local unsigned package is not a
+signing input; CI rebuilds from the final tagged commit and embeds that commit.
 
 Tag CI reads the annotated tag object and its peeled commit from `origin`.
 The Linux, macOS and Windows test jobs check out that commit. The package job
@@ -95,6 +129,27 @@ Ordinary plugin development uses the unsigned package and needs no credentials.
    version. The initial submission is performed once. [First submission](https://plugins.jetbrains.com/docs/marketplace/uploading-a-new-plugin.html)
 
 ## Recovery
+
+Local transaction failures restore only owned manifest edits, staging, commit,
+and tag when safe. Unexpected edits, changed refs, and concurrent commits are
+preserved. Cancellation attempts bounded cleanup; a forcibly killed process
+cannot run cleanup.
+
+A push transport error is reconciled against remote `main`, the annotated tag
+object, and its peeled commit. Matching intended refs mean success; confirmed
+non-publication permits local rollback. Unknown or conflicting results retain
+local recovery state and report the intended commit and tag object. Inspect
+`git status`, `git reflog main`, and:
+
+```sh
+git ls-remote origin refs/heads/main 'refs/tags/jetbrains/v<version>' 'refs/tags/jetbrains/v<version>^{}'
+```
+
+Keep published tags intact. Resume only after inspecting the remote state,
+using the original commit and annotated tag object in one
+`git push --atomic --no-follow-tags`. Do not force updates, retag, or send
+independent pushes. Resolve unexpected local changes separately before rerunning
+the release command.
 
 - If GitHub publication already succeeded, the workflow checks its tag, title,
   prerelease flag, asset names, signature, descriptor, commit and checksum.

@@ -18,7 +18,7 @@ const usage = `Usage:
   editorium matrix <extension>
   editorium test-installed <extension>
   editorium proto <sync|generate|check> [extension]
-  editorium release <extension> <version>
+  editorium release <extension> <version|major|minor|patch|preid>
   editorium release-ci <operation> --tag <tag> [options]`
 
 func main() {
@@ -65,7 +65,7 @@ func execute(ctx context.Context, args []string) error {
 		return runProtoCommand(ctx, root, args[1:])
 	case "release":
 		if len(args) != 3 {
-			return usageError("release requires exactly one extension and one version")
+			return usageError("release requires exactly one extension and one version or increment")
 		}
 
 		return runRelease(ctx, root, args[1], args[2])

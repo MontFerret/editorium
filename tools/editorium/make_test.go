@@ -25,13 +25,16 @@ func TestMakeFacadeHelpListingAndArgumentForwarding(t *testing.T) {
 	temporary := t.TempDir()
 	logPath := filepath.Join(temporary, "calls.log")
 	fakeTool := filepath.Join(temporary, "editorium-test-tool")
-	writeTestFile(t, fakeTool, []byte("#!/bin/sh\nif [ \"$1\" = extensions ]; then echo vscode; fi\nprintf '%s|TARGET=%s|FORCE=%s|CODE=%s\\n' \"$*\" \"$TARGET\" \"$FORCE\" \"$CODE\" >> \"$MAKE_TEST_LOG\"\n"), 0o755)
+	writeTestFile(t, fakeTool, []byte("#!/bin/sh\nif [ \"$1\" = extensions ]; then echo vscode; fi\nprintf '%s|TARGET=%s|FORCE=%s|CODE=%s|CHECK_ONLY=%s\\n' \"$*\" \"$TARGET\" \"$FORCE\" \"$CODE\" \"$RELEASE_CHECK_ONLY\" >> \"$MAKE_TEST_LOG\"\n"), 0o755)
 	environment := []string{"MAKE_TEST_LOG=" + logPath}
 	listing := runMakeTestCommand(t, root, environment, "TOOL="+fakeTool, "extensions")
 	if strings.TrimSpace(listing) != "vscode" {
 		t.Fatalf("make extensions = %q", listing)
 	}
 	runMakeTestCommand(t, root, environment, "TOOL="+fakeTool, "release", "jetbrains", "0.1.0")
+	runMakeTestCommand(t, root, environment, "TOOL="+fakeTool, "release", "vscode", "patch")
+	runMakeTestCommand(t, root, environment, "TOOL="+fakeTool, "release", "jetbrains", "rc")
+	runMakeTestCommand(t, root, environment, "TOOL="+fakeTool, "RELEASE_CHECK_ONLY=1", "release", "jetbrains", "0.2.0-rc.1")
 	runMakeTestCommand(t, root, environment, "TOOL="+fakeTool, "prepare")
 	runMakeTestCommand(t, root, environment, "TOOL="+fakeTool, "prepare", "vscode")
 	runMakeTestCommand(t, root, environment, "TOOL="+fakeTool, "prepare", "vscode", "jetbrains")
@@ -44,6 +47,9 @@ func TestMakeFacadeHelpListingAndArgumentForwarding(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"release jetbrains 0.1.0|TARGET=|FORCE=|CODE=",
+		"release vscode patch|TARGET=|FORCE=|CODE=",
+		"release jetbrains rc|TARGET=|FORCE=|CODE=",
+		"release jetbrains 0.2.0-rc.1|TARGET=|FORCE=|CODE=|CHECK_ONLY=1",
 		"run prepare|TARGET=|FORCE=|CODE=",
 		"run prepare vscode|TARGET=|FORCE=|CODE=",
 		"run prepare vscode jetbrains|TARGET=|FORCE=|CODE=",

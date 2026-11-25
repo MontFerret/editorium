@@ -70,25 +70,84 @@ official artifacts with locally compiled binaries.
 
 ## Publish a GitHub Release
 
-1. Update `extensions/vscode/package.json` to the intended canonical SemVer.
-2. Commit and merge that version change to `main`.
-3. On a clean local `main` that tracks and exactly matches `origin/main`, run:
+From a clean local `main` tracking and exactly matching `origin/main`, run:
 
-   ```sh
-   make release vscode 0.1.0
-   ```
+```sh
+make release vscode patch
+make release vscode minor
+make release vscode major
+make release vscode 2.0.0
+make release vscode 0.3.0-rc.1
+make release vscode rc
+```
 
-The release command fetches remote `main` and `vscode/*` tags into isolated
-refs, validates the branch/upstream/cleanliness and tracked manifest, rejects
-an existing local or remote tag, and requires the explicit version to equal the
-manifest. It then runs the same Go checks, prepare, build, lint, complete test,
-host packaging, and package verification adapters used by Make. After a final
-cleanliness, HEAD, and tag-availability check, it creates an annotated
-`vscode/v<version>` tag at the unchanged HEAD and pushes that tag to `origin`.
+Relative increments use the highest SemVer release tag on `origin` in the
+`vscode/v<version>` namespace, independently of JetBrains versions. Without a
+previous release, the package manifest is the baseline. The manifest may equal
+the baseline or already contain the exact calculated target; a conflicting
+advanced version fails with guidance to use an explicit version. A manifest
+behind the latest remote release fails for both relative and explicit requests:
+correct it in a separate commit first. Explicit versions must not downgrade the
+manifest and must exceed the latest release in SemVer precedence. Existing local
+or remote tags are never replaced; build metadata does not increase precedence.
 
-The command never edits the manifest, creates a release commit, infers a version,
-or publishes locally. If the push fails, it removes the local tag unless the
-remote is confirmed to contain that exact tag at the intended commit.
+Prerelease identifiers increment an existing matching series: `0.3.0-rc.1` plus
+`rc` becomes `0.3.0-rc.2`. Start a different series explicitly. `patch` promotes a
+prerelease to its stable core; `minor` does so when patch is zero; `major` does so
+when both minor and patch are zero. Otherwise the requested numeric component
+increments and lower components reset.
+
+The command prints its plan, synchronizes `package.json.version` and both root
+version fields in `package-lock.json`, and preserves dependencies and unrelated
+metadata. `package.json` is authoritative; stale lockfile root versions produce a
+warning and are repaired. Qualification runs Go tests, vet and formatting checks,
+`npm ci`, preparation, build, lint, complete tests, host (or `TARGET`) packaging,
+and package verification. The shared `ferretd.json` pin is unchanged.
+
+After checking the exact manifest edits, checkout, and remote refs again, the
+command commits only changed release manifests as
+`chore(release): vscode v<version>`, creates an annotated `vscode/v<version>` tag,
+and pushes `main` and that tag atomically to `origin`. If all version fields
+already match, it tags the existing commit without a redundant commit. The
+remote must support atomic push and use one identical fetch/push destination.
+Git identity must be configured. Branch protection or rejected pushes fail the
+transaction; there is no force-push or separate-push fallback.
+
+### Check without publishing
+
+```sh
+RELEASE_CHECK_ONLY=1 make release vscode patch
+```
+
+This performs the same qualification, including `npm ci` and packaging with the
+proposed version, then restores original manifests without staging a release,
+creating a release commit/tag, or pushing. Fetch refs and ignored dependency and
+build caches may remain. It has the same clean, synchronized `main` requirement.
+
+### Recover a local release transaction
+
+Validation, commit, tag, or confirmed atomic-push failure restores only the
+transaction's own manifest edits, staging, commit, and tag. Unexpected edits and
+concurrent commits/refs are preserved for inspection. Ordinary cancellation also
+attempts bounded cleanup; a forcibly killed process cannot run cleanup.
+
+After a push error, the tool checks remote `main`, the annotated tag object, and
+its peeled commit. If all match the intended release, it reports success. If
+non-publication is confirmed, it rolls back locally. If remote state cannot be
+confirmed or conflicts, it retains local recovery state and reports the commit
+and tag identity. Inspect them before retrying:
+
+```sh
+git status
+git reflog main
+git ls-remote origin refs/heads/main 'refs/tags/vscode/v<version>' 'refs/tags/vscode/v<version>^{}'
+```
+
+Do not recreate or move a published tag. When inspection confirms the original
+transaction can safely be resumed, push its original commit and annotated tag
+object together with `git push --atomic --no-follow-tags`; do not send independent
+pushes or force updates. Resolve unexpected local edits separately before
+starting another automated release.
 
 The tag-triggered workflow validates the tag/manifest match and builds all six
 native packages. Only after the complete asset set succeeds does it create the

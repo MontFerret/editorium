@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"golang.org/x/mod/semver"
 )
@@ -44,83 +46,14 @@ type (
 )
 
 func runRelease(ctx context.Context, root, extension, version string) error {
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	return runReleaseWithValidator(ctx, root, extension, version, validateReleaseBuild)
 }
 
-func runReleaseWithValidator(ctx context.Context, root, extension, version string, validate func(context.Context, string, string) error) error {
-	if err := validateExtensions([]string{extension}); err != nil {
-		return err
-	}
-
-	metadata, err := resolveReleaseMetadata(extension, version, root)
-	if err != nil {
-		return err
-	}
-
-	head, err := requireReleaseRepositoryState(ctx, root, extension)
-	if err != nil {
-		return err
-	}
-
-	if err := requireTrackedManifest(ctx, root, extension); err != nil {
-		return err
-	}
-
-	if err := assertTagAvailable(ctx, root, metadata.Tag); err != nil {
-		return err
-	}
-
-	fmt.Printf("Extension: %s\nVersion:   %s\nTag:       %s\n", extension, version, metadata.Tag)
-	if err := validate(ctx, root, extension); err != nil {
-		return err
-	}
-
-	currentHead, err := requireReleaseRepositoryState(ctx, root, extension)
-	if err != nil {
-		return err
-	}
-
-	if currentHead != head {
-		return fmt.Errorf("release validation changed HEAD from %s to %s", head, currentHead)
-	}
-
-	if err := assertTagAvailable(ctx, root, metadata.Tag); err != nil {
-		return err
-	}
-
-	if err := requireTrackedManifest(ctx, root, extension); err != nil {
-		return err
-	}
-
-	if err := runCommand(ctx, root, nil, "git", "tag", "-a", metadata.Tag, head, "-m", "Release "+metadata.Tag); err != nil {
-		return err
-	}
-
-	pushErr := runCommand(ctx, root, nil, "git", "push", "--no-follow-tags", releaseRemote, "refs/tags/"+metadata.Tag+":refs/tags/"+metadata.Tag)
-	if pushErr != nil {
-		return reconcileFailedTagPush(ctx, root, metadata.Tag, head, pushErr)
-	}
-
-	fmt.Printf("Created and pushed annotated tag %s.\n", metadata.Tag)
-
-	return nil
-}
-
-func reconcileFailedTagPush(ctx context.Context, root, tag, head string, pushErr error) error {
-	landed, confirmErr := remoteTag(ctx, root, tag)
-	if confirmErr == nil && landed.commit == head {
-		fmt.Println("Tag push completed despite a local transport error; confirmed the remote ref.")
-
-		return nil
-	}
-
-	_ = runCommand(ctx, root, nil, "git", "tag", "-d", tag)
-
-	if confirmErr != nil {
-		return fmt.Errorf("tag push failed and remote state could not be confirmed: %w", pushErr)
-	}
-
-	return fmt.Errorf("tag push failed; removed local tag %s: %w", tag, pushErr)
+func runReleaseWithValidator(ctx context.Context, root, extension, request string, validate func(context.Context, string, string) error) error {
+	transaction := newReleaseTransaction(root, extension, request, validate)
+	return transaction.execute(ctx)
 }
 
 func resolveReleaseMetadata(extension, version, root string) (releaseMetadata, error) {
@@ -194,14 +127,10 @@ func requireReleaseRepositoryState(ctx context.Context, root, extension string) 
 		return "", fmt.Errorf("releases must run from %q, not %q", releaseBranch, branch)
 	}
 
-	remoteMainRef := fmt.Sprintf("refs/release-remotes/%s/%s", releaseRemote, releaseBranch)
-	remoteTagRoot := fmt.Sprintf("refs/release-remote-tags/%s/*", extension)
-	remoteTagSource := fmt.Sprintf("+refs/tags/%s/*:%s", extension, remoteTagRoot)
-
-	if err := runCommand(ctx, root, nil, "git", "fetch", "--no-tags", "--prune", releaseRemote,
-		"+refs/heads/"+releaseBranch+":"+remoteMainRef, remoteTagSource); err != nil {
+	if err := fetchReleaseRefs(ctx, root, extension); err != nil {
 		return "", err
 	}
+	remoteMainRef := "refs/release-remotes/" + releaseRemote + "/" + releaseBranch
 
 	upstream, err := gitOutput(ctx, root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
 	if err != nil || upstream != releaseRemote+"/"+releaseBranch {
@@ -300,20 +229,30 @@ func validateReleaseBuild(ctx context.Context, root, extension string) error {
 		return fmt.Errorf("go files are not formatted:\n%s", strings.Join(formatted, "\n"))
 	}
 
+	desc, err := describeRelease(extension)
+	if err != nil {
+		return err
+	}
+	if desc.prepareDependencies != nil {
+		if err := desc.prepareDependencies(ctx, root); err != nil {
+			return err
+		}
+	}
 	for _, operation := range []string{"prepare", "build", "lint"} {
 		if err := runExtensions(ctx, root, operation, []string{extension}); err != nil {
 			return err
 		}
 	}
 
-	desc, err := describeRelease(extension)
-	if err != nil {
-		return err
-	}
 	if err := desc.qualify(ctx, root, desc.testEnvironment); err != nil {
 		return err
 	}
 
+	if desc.preparePackage != nil {
+		if err := desc.preparePackage(root); err != nil {
+			return err
+		}
+	}
 	if err := runExplicitExtension(ctx, root, "package", extension); err != nil {
 		return err
 	}

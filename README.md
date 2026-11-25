@@ -183,11 +183,12 @@ cached under `.dist/`; no daemon binary is committed to Git.
 
 ## JetBrains releases
 
-Maintainers run `make release jetbrains <version>` from a clean, synchronized
-`main` after committing `pluginVersion` in the JetBrains Gradle properties.
-The command qualifies the pinned daemon and pushes the annotated
-`jetbrains/v<version>` tag. CI repeats strict qualification on three operating
-systems before signing the universal ZIP and publishing it with its SHA-256 to
+Maintainers run `make release jetbrains <version|major|minor|patch|preid>` from
+a clean, synchronized `main`. The command calculates the version, updates
+`pluginVersion`, qualifies the release, and atomically pushes the release commit
+and annotated `jetbrains/v<version>` tag. `RELEASE_CHECK_ONLY=1` performs the same
+qualification and restores the manifest without publishing. CI repeats strict
+qualification on three operating systems before signing the universal ZIP and publishing it with its SHA-256 to
 GitHub Releases. Exact stable plugin versions can subsequently go to the
 JetBrains Marketplace after manual first-listing bootstrap.
 

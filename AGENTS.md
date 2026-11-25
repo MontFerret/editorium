@@ -131,8 +131,8 @@ make package <extension>
 make package-check <extension>
 make install vscode [TARGET=<target>]
 make test-installed vscode [TARGET=<target>]
-make release vscode <version>
-make release jetbrains <version>
+make release vscode <version|major|minor|patch|preid>
+make release jetbrains <version|major|minor|patch|preid>
 make proto-sync
 make proto-generate vscode
 make proto-check vscode
@@ -579,9 +579,12 @@ For packaging changes:
 * reject unsafe archive paths and malformed downloads;
 * do not package local caches or unrelated build outputs.
 
-VS Code release preparation creates an
-annotated `vscode/v<semver>` tag after validating a clean, synchronized `main`
-checkout and the selected native/`TARGET` package. The tag-triggered release
+VS Code release preparation resolves the requested version, updates the package
+manifest and root lockfile versions, and validates a clean, synchronized `main`
+checkout and the selected native/`TARGET` package. It commits changed manifests,
+creates an annotated `vscode/v<semver>` tag, and atomically pushes `main` plus
+the tag. Check-only mode qualifies the proposed version and restores manifests
+without creating release refs. The tag-triggered release
 workflow reuses VS Code validation to build and verify the complete six-target
 set, creates the GitHub Release, and publishes only exact stable
 `major.minor.patch` versions to the Marketplace; prereleases remain GitHub
