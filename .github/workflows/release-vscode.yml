@@ -4,12 +4,18 @@ on:
   push:
     tags:
       - 'vscode/v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing stable VS Code release tag, for example vscode/v0.2.0
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: vscode-release-${{ github.ref }}
+  group: vscode-release-${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -22,16 +28,28 @@ jobs:
       title: ${{ steps.metadata.outputs.title }}
 
     steps:
+      - name: Require Marketplace recovery from main
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" != 'refs/heads/main' || "$GITHUB_WORKFLOW_REF" != "$GITHUB_REPOSITORY/.github/workflows/release-vscode.yml@refs/heads/main" ]]; then
+            echo '::error::Dispatch Marketplace recovery from the release-vscode.yml workflow on main.'
+            exit 1
+          fi
+
       - name: Check out repository
+        if: github.event_name == 'push'
         uses: actions/checkout@v4
 
       - name: Set up Go
+        if: github.event_name == 'push'
         uses: actions/setup-go@v7
         with:
           go-version-file: tools/editorium/go.mod
           cache-dependency-path: tools/editorium/go.sum
 
       - name: Validate release tag
+        if: github.event_name == 'push'
         id: metadata
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -39,12 +57,14 @@ jobs:
         run: go -C tools/editorium run . release-ci metadata --tag "$RELEASE_TAG" --format github >> "$GITHUB_OUTPUT"
 
   validate-and-package:
+    if: github.event_name == 'push'
     needs: release-metadata
     uses: ./.github/workflows/vscode-validation.yml
     permissions:
       contents: read
 
   github-release:
+    if: github.event_name == 'push'
     needs:
       - release-metadata
       - validate-and-package
@@ -131,15 +151,23 @@ jobs:
     needs:
       - release-metadata
       - github-release
-    if: needs.release-metadata.outputs.marketplace_eligible == 'true'
+    if: >-
+      !cancelled() && needs.release-metadata.result == 'success' &&
+      ((github.event_name == 'push' && needs.github-release.result == 'success' &&
+      needs.release-metadata.outputs.marketplace_eligible == 'true') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.github-release.result == 'skipped'))
     runs-on: ubuntu-24.04
     environment: vscode-marketplace
     permissions:
       contents: read
+      id-token: write
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -154,11 +182,8 @@ jobs:
           go-version-file: tools/editorium/go.mod
           cache-dependency-path: tools/editorium/go.sum
 
-      - name: Install publishing tool
-        working-directory: extensions/vscode
-        run: npm ci
-
       - name: Download validated VSIX artifacts
+        if: github.event_name == 'push'
         uses: actions/download-artifact@v4
         with:
           pattern: ferret-vscode-*
@@ -167,19 +192,26 @@ jobs:
 
       - name: Verify complete Marketplace package set
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: go -C tools/editorium run . release-ci check-assets --tag "$RELEASE_TAG" --directory release-assets
-
-      - name: Publish VSIXs with temporary Marketplace PAT
-        env:
-          LC_ALL: C
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
         shell: bash
         run: |
-          if [[ -z "${VSCE_PAT:-}" ]]; then
-            echo "::error::Missing environment secret VSCE_PAT."
-            exit 1
+          args=()
+          if [[ "$GITHUB_EVENT_NAME" == 'workflow_dispatch' ]]; then
+            args+=(--download)
           fi
+          go -C tools/editorium run . release-ci vscode-marketplace-assets --tag "$RELEASE_TAG" --directory release-assets "${args[@]}"
+
+      - name: Install publishing tool
+        working-directory: extensions/vscode
+        run: npm ci
+
+      - name: Publish VSIXs with Marketplace Trusted Publishing
+        env:
+          LC_ALL: C
+        shell: bash
+        run: |
           node extensions/vscode/node_modules/@vscode/vsce/vsce publish \
+            --oidc \
             --skip-duplicate \
             --packagePath release-assets/*.vsix

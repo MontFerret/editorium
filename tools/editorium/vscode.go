@@ -11,9 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
-	"sort"
 	"strings"
 )
 
@@ -322,61 +320,12 @@ func validateVSIX(ctx context.Context, path string, target vscodeTarget, stagedB
 
 	defer archive.Close()
 
-	binaryEntry := "extension/bin/" + releaseTarget.BinaryName
-	expected := []string{
-		"[Content_Types].xml", "extension.vsixmanifest", "extension/LICENSE.txt", binaryEntry,
-		"extension/language-configuration.json", "extension/out/extension.js", "extension/package.json",
-		"extension/readme.md", "extension/media/icon.png", "extension/syntaxes/ferret.tmLanguage.json",
-	}
-
-	sort.Strings(expected)
-
-	entries := make(map[string]*zip.File)
-	for _, file := range archive.File {
-		if _, duplicate := entries[file.Name]; duplicate {
-			return "", fmt.Errorf("duplicate VSIX entry: %s", file.Name)
-		}
-
-		entries[file.Name] = file
-	}
-
-	actual := make([]string, 0, len(entries))
-	for name := range entries {
-		actual = append(actual, name)
-	}
-
-	sort.Strings(actual)
-
-	if strings.Join(actual, "\n") != strings.Join(expected, "\n") {
-		return "", fmt.Errorf("unexpected VSIX contents in %s: got %v, want %v", path, actual, expected)
-	}
-
-	manifestBytes, err := readZipEntry(entries["extension.vsixmanifest"])
+	binary, err := inspectVSIX(&archive.Reader, target, releaseTarget, manifest, false)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("inspect %s: %w", path, err)
 	}
 
-	targetPattern := regexp.MustCompile(`\bTargetPlatform="([^"]+)"`)
-	matches := targetPattern.FindSubmatch(manifestBytes)
-	if len(matches) != 2 || string(matches[1]) != target.ID {
-		return "", fmt.Errorf("VSIX target platform does not match requested target %s", target.ID)
-	}
-
-	packageBytes, err := readZipEntry(entries["extension/package.json"])
-	if err != nil {
-		return "", err
-	}
-
-	var packagedManifest vscodeManifest
-	if err := json.Unmarshal(packageBytes, &packagedManifest); err != nil {
-		return "", err
-	}
-
-	if packagedManifest.Name != manifest.Name || packagedManifest.Version != manifest.Version || packagedManifest.Publisher != manifest.Publisher {
-		return "", fmt.Errorf("packaged manifest identity does not match source manifest")
-	}
-
-	binaryBytes, err := readZipEntry(entries[binaryEntry])
+	binaryBytes, err := readZipEntry(binary)
 	if err != nil {
 		return "", err
 	}
@@ -388,10 +337,6 @@ func validateVSIX(ctx context.Context, path string, target vscodeTarget, stagedB
 
 	if !bytes.Equal(binaryBytes, stagedBytes) {
 		return "", fmt.Errorf("packaged daemon bytes differ from verified staged daemon")
-	}
-
-	if releaseTarget.Unix && entries[binaryEntry].Mode().Perm() != 0o755 {
-		return "", fmt.Errorf("packaged %s mode is not 0755", releaseTarget.BinaryName)
 	}
 
 	if isNativeTarget(target) {
@@ -420,30 +365,6 @@ func validateVSIX(ctx context.Context, path string, target vscodeTarget, stagedB
 	digest := sha256.Sum256(binaryBytes)
 
 	return hex.EncodeToString(digest[:]), nil
-}
-
-func readZipEntry(file *zip.File) ([]byte, error) {
-	if file == nil {
-		return nil, fmt.Errorf("missing VSIX entry")
-	}
-
-	if file.UncompressedSize64 > maximumVSIXEntrySize || !file.Mode().IsRegular() {
-		return nil, fmt.Errorf("VSIX entry is not a bounded regular file: %s", file.Name)
-	}
-
-	reader, err := file.Open()
-	if err != nil {
-		return nil, err
-	}
-
-	defer reader.Close()
-
-	var buffer bytes.Buffer
-	if err := copyLimited(&buffer, reader, maximumVSIXEntrySize, "VSIX entry"); err != nil {
-		return nil, err
-	}
-
-	return buffer.Bytes(), nil
 }
 
 func smokeFerretd(ctx context.Context, path, version string) error {
@@ -504,14 +425,17 @@ func readVSCodeManifest(root string) (vscodeManifest, error) {
 	if err != nil {
 		return vscodeManifest{}, err
 	}
+	return parseVSCodeManifest(contents, path)
+}
 
+func parseVSCodeManifest(contents []byte, source string) (vscodeManifest, error) {
 	var manifest vscodeManifest
 	if err := json.Unmarshal(contents, &manifest); err != nil {
 		return vscodeManifest{}, err
 	}
 
 	if manifest.Name != vscodeMarketplaceName || !validVersion(manifest.Version) {
-		return vscodeManifest{}, fmt.Errorf("invalid VS Code package manifest: %s", path)
+		return vscodeManifest{}, fmt.Errorf("invalid VS Code package manifest: %s", source)
 	}
 
 	if manifest.Publisher != vscodeMarketplacePublisher {

@@ -73,16 +73,19 @@ func resolveReleaseMetadata(extension, version, root string) (releaseMetadata, e
 		return releaseMetadata{}, fmt.Errorf("release version %s does not match %s version %s", version, desc.versionSource, tracked)
 	}
 
-	tag := extension + "/v" + version
+	return releaseMetadataForVersion(desc, extension, version), nil
+}
+
+func releaseMetadataForVersion(desc releaseDescription, extension, version string) releaseMetadata {
 	return releaseMetadata{
-		Tag:                 tag,
+		Tag:                 extension + "/v" + version,
 		Version:             version,
 		Prerelease:          semver.Prerelease("v"+version) != "",
 		MarketplaceEligible: marketplaceVersionEligible(version),
 		Title:               desc.title + " " + version,
 		Assets:              desc.assets(version),
 		description:         desc,
-	}, nil
+	}
 }
 
 func fullReleaseVersion(version string) bool {
@@ -370,6 +373,10 @@ func runReleaseCI(root string, args []string) error {
 	created := flags.Bool("created", false, "GitHub release created in this run")
 	recovery := flags.Bool("recovery", false, "operator confirmed Marketplace version absent")
 	releaseJSON := flags.String("release-json", "", "existing release JSON")
+	var download bool
+	if args[0] == "vscode-marketplace-assets" {
+		flags.BoolVar(&download, "download", false, "download existing VS Code release assets for Marketplace recovery")
+	}
 
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
@@ -377,6 +384,10 @@ func runReleaseCI(root string, args []string) error {
 
 	if *tag == "" {
 		return fmt.Errorf("missing required release option: --tag")
+	}
+
+	if args[0] == "vscode-marketplace-assets" {
+		return verifyVSCodeMarketplaceAssets(root, *tag, *directory, download)
 	}
 
 	metadata, err := metadataFromTag(root, *tag)

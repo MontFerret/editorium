@@ -588,8 +588,9 @@ without creating release refs. The tag-triggered release
 workflow reuses VS Code validation to build and verify the complete six-target
 set, creates the GitHub Release, and publishes only exact stable
 `major.minor.patch` versions to the Marketplace; prereleases remain GitHub
-Release artifacts. Marketplace publication currently uses the protected
-`vscode-marketplace` environment's `VSCE_PAT` secret.
+Release artifacts. Marketplace publication uses GitHub Actions OIDC through
+`vscode-marketplace`. Manual recovery runs from `main` and verifies the
+original GitHub Release assets before publishing.
 
 JetBrains releases use `pluginVersion` in `extensions/jetbrains/gradle.properties`
 and annotated `jetbrains/v<semver>` tags. Local release tests and all three CI

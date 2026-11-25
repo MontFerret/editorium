@@ -151,14 +151,16 @@ starting another automated release.
 
 The tag-triggered workflow validates the tag/manifest match and builds all six
 native packages. Only after the complete asset set succeeds does it create the
-GitHub Release. A rerun is a no-op when published metadata and assets already
-match; an incomplete draft is replaced.
+GitHub Release. The GitHub Release job reuses an existing published release
+with matching metadata and asset names. A tag-triggered run replaces an
+incomplete draft.
 
 The GitHub Release is the canonical distribution archive. For an exact numeric
 `major.minor.patch` version, the workflow next publishes the same validated
-VSIX bytes to Visual Studio Marketplace. The Marketplace job does not rebuild
-or repackage the extension. A Marketplace failure leaves the GitHub Release
-intact and fails the workflow visibly so publication can be resumed.
+VSIX bytes to Visual Studio Marketplace. The Marketplace job checks each
+qualified artifact against the published GitHub Release's SHA-256 digest before
+uploading. A Marketplace failure leaves the GitHub Release intact and fails
+the workflow so the maintainer can recover it.
 
 SemVer prerelease versions such as `0.2.0-alpha.1`, `0.2.0-beta.1`, and
 `0.2.0-rc.1` continue to create GitHub prereleases but intentionally skip
@@ -167,97 +169,77 @@ Marketplace extension version must be exactly `major.minor.patch`. The
 Marketplace pre-release channel and its separate numeric version progression
 are not implemented; the workflow never passes `--pre-release`.
 
-## Configure temporary Marketplace PAT publishing
+## Configure Marketplace Trusted Publishing
 
-The source-controlled Marketplace identity is:
+In GitHub, keep the `vscode-marketplace` environment. Set its deployment
+branches and tags to **Selected branches and tags**, with a branch rule for
+`main` and a tag rule for `vscode/v*`. The branch rule admits manual recovery.
+The tag rule admits the normal release workflow. See the
+[GitHub deployment rules](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments#deployment-branches-and-tags).
 
-```text
-Publisher: ferretlang
-Extension: ferretlang.ferret-lang
-```
+In Visual Studio Marketplace, open the publisher for `ferretlang.ferret-lang`,
+select **Trusted Publishing**, then create a policy with these values.
 
-Before pushing the first stable release tag:
+| Setting | Value |
+| --- | --- |
+| Publisher | `ferretlang` |
+| Repository owner | `MontFerret` |
+| Repository | `editorium` |
+| Workflow | `release-vscode.yml` |
+| Environment | `vscode-marketplace` |
 
-1. In GitHub, create an environment named `vscode-marketplace`. Leave it
-   without required reviewers by default. Protection rules can be added later
-   without changing the workflow.
-2. Add an environment secret named `VSCE_PAT`. Its Azure DevOps PAT must use
-   `All accessible organizations` and the `Marketplace (Manage)` scope. The
-   Microsoft account that created it must have publishing access to
-   `ferretlang`.
-3. Give the PAT the shortest practical expiration. Treat it as a password:
-   never pass it as a command argument, print it, or store it in the repository.
-   Replace the environment secret before it expires, verify the replacement,
-   and revoke the old PAT.
+See the [Marketplace Trusted Publishing guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#publish-with-github-actions-and-trusted-publishing).
 
-This PAT flow is temporary. Microsoft retires global Azure DevOps PATs on
-December 1, 2026; the workflow must return to trusted publishing before then.
-See the [official Marketplace publishing guidance](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#get-a-personal-access-token).
-
-The Marketplace job has only `contents: read`. It exposes `VSCE_PAT` only to
-the publication step; the pinned `vsce` executable reads the token from that
-environment variable. The job uses Node.js 22, installs the exact
-`@vscode/vsce` version from `extensions/vscode/package-lock.json`, downloads
-the six existing workflow artifacts, and verifies the complete canonical
-target set before the first remote operation. It then runs, in deterministic
-filename order:
+Only the Marketplace job gets `id-token: write` for the OIDC token. Its other
+permission is `contents: read` for the GitHub Release and tag. The job uses
+Node.js 22 and installs `@vscode/vsce` version `4.1.1` through `npm ci`. It
+publishes the prebuilt VSIX files in deterministic filename order.
 
 ```sh
 LC_ALL=C node extensions/vscode/node_modules/@vscode/vsce/vsce publish \
+  --oidc \
   --skip-duplicate \
   --packagePath release-assets/*.vsix
 ```
 
-The token is not passed with `--pat`, so it is absent from the command line and
-logs. Each VSIX retains the target metadata created by the
-`vsce package --target` build step; the publishing command does not pass a
-second target list.
+After the first successful OIDC publication, delete `VSCE_PAT` from the GitHub
+environment and revoke the obsolete PAT in Azure DevOps.
 
 ## Recover a Marketplace publication
 
-Marketplace uploads are sequential remote operations and cannot be fully
-transactional. The workflow minimizes partial releases by verifying that all
-six non-empty expected VSIX files are present before invoking `vsce`. An
-unexpected upload error stops the command immediately and fails the job.
+Once the OIDC workflow is merged into `main` and the Trusted Publishing policy
+is configured, go to **Actions → Release VS Code extension → Run workflow**.
+Select branch `main` and enter the full existing stable tag in `release_tag`.
+To recover the failed Marketplace upload for `vscode/v0.2.0`, enter that tag or
+run the equivalent command.
 
-Rerun the failed workflow for the same tag. The matching GitHub Release remains
-a no-op. `--skip-duplicate` skips a publisher/name/version/target combination
-already present in Marketplace and continues with missing targets; it does not
-skip local artifact, manifest, publisher, or version validation, and it does
-not compare already-published remote bytes.
-
-Authentication failures are distinct from package failures:
-
-- `Missing environment secret VSCE_PAT` means the secret is missing, misnamed,
-  or unavailable to the `vscode-marketplace` job.
-- `Unauthorized(401)` or an expired-token error means the PAT is invalid or has
-  expired; replace the secret and revoke the unusable token.
-- `Forbidden(403)` usually means the PAT was not created for
-  `All accessible organizations`, lacks `Marketplace (Manage)`, or belongs to
-  an account without publishing access to `ferretlang`.
-- VSIX manifest, publisher, target, version, or package-content errors are
-  package validation failures and must be fixed in source; they are not PAT
-  configuration failures.
-
-Validate the workflow and package structure locally, configure the environment
-secret, and use the first intended stable release as the end-to-end test. Do
-not publish a disposable production extension version merely to test the PAT.
-
-## Restore Marketplace trusted publishing
-
-When Visual Studio Marketplace exposes GitHub trusted-publisher policies,
-configure the policy with these exact values:
-
-```text
-GitHub organization: MontFerret
-Repository:          editorium
-Workflow:            .github/workflows/release-vscode.yml
-Publisher:           ferretlang
+```sh
+gh workflow run release-vscode.yml --repo MontFerret/editorium --ref main \
+  -f release_tag=vscode/v0.2.0
 ```
 
-If the Marketplace UI offers an environment restriction, set it to
-`vscode-marketplace`; otherwise retain the narrow workflow-file restriction.
-Then remove the `VSCE_PAT` step environment and missing-secret check, restore
-`id-token: write`, and add `--oidc` to the same publication command. After a
-successful OIDC publication, revoke the PAT and delete the `VSCE_PAT` GitHub
-environment secret. Do not keep PAT fallback authentication alongside OIDC.
+Recovery runs the workflow and publishing tool from `main`. It reads the
+version at the requested tag and requires its already-published GitHub Release
+with all six expected VSIX files. It downloads those assets, verifies their
+sizes, checksums, identities, and targets, then passes the original files to
+`vsce`. GitHub releases, assets, and tags are read-only during recovery.
+
+Uploads run sequentially. If some variants already made it to Marketplace,
+`--skip-duplicate` skips each existing publisher, extension, version, and
+target combination and continues with the missing variants. It checks presence
+only. After an upload failure, dispatch recovery again with the same tag. The
+original `vscode/v0.2.0` workflow revision predates OIDC.
+
+### Troubleshoot publishing
+
+- If GitHub rejects the deployment, check that the dispatch uses `main` and
+  the selected deployment rules admit that branch and the release tag pattern.
+- If `vsce` reports a missing OIDC request URL or token, check that the
+  Marketplace job has `id-token: write` and uses the pinned CLI from the run's
+  checkout.
+- If the Marketplace token exchange returns 401 or 403, verify all five
+  policy fields against the run and publisher. OIDC exchange failure stops
+  publication. Fix the policy and dispatch recovery with the same tag.
+- If the workflow reports a missing release, incorrect digest, or invalid
+  VSIX metadata, inspect the existing GitHub Release and the tag before
+  retrying. Every package must pass validation before any upload begins.

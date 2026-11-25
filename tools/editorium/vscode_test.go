@@ -170,8 +170,11 @@ func TestValidateVSIXChecksExactContentsMetadataBytesAndMode(t *testing.T) {
 			entries["extension/extra"] = testZipEntry{[]byte("extra"), 0o100644}
 		}, "unexpected VSIX contents"},
 		{"wrong target", func(entries map[string]testZipEntry) {
-			entries["extension.vsixmanifest"] = testZipEntry{[]byte(`<Identity TargetPlatform="wrong-target"/>`), 0o100644}
+			entries["extension.vsixmanifest"] = testZipEntry{[]byte(testVSIXManifest("wrong-target")), 0o100644}
 		}, "target platform"},
+		{"wrong VSIX publisher", func(entries map[string]testZipEntry) {
+			entries["extension.vsixmanifest"] = testZipEntry{[]byte(strings.ReplaceAll(testVSIXManifest(target.ID), vscodeMarketplacePublisher, "other-publisher")), 0o100644}
+		}, "VSIX manifest identity"},
 		{"wrong manifest", func(entries map[string]testZipEntry) {
 			entries["extension/package.json"] = testZipEntry{[]byte(`{"name":"` + vscodeMarketplaceName + `","version":"9.9.9","publisher":"` + vscodeMarketplacePublisher + `"}`), 0o100644}
 		}, "manifest identity"},
@@ -286,7 +289,7 @@ func writeVSIX(t *testing.T, path string, target vscodeTarget, binary []byte, ch
 	}
 	entries := map[string]testZipEntry{
 		"[Content_Types].xml":                       {[]byte("<Types/>"), 0o100644},
-		"extension.vsixmanifest":                    {[]byte(`<Identity TargetPlatform="` + target.ID + `"/>`), 0o100644},
+		"extension.vsixmanifest":                    {[]byte(testVSIXManifest(target.ID)), 0o100644},
 		"extension/LICENSE.txt":                     {[]byte("license"), 0o100644},
 		"extension/language-configuration.json":     {[]byte("{}"), 0o100644},
 		"extension/media/icon.png":                  {[]byte("png"), 0o100644},
@@ -316,4 +319,8 @@ func writeVSIX(t *testing.T, path string, target vscodeTarget, binary []byte, ch
 		t.Fatal(err)
 	}
 	writeTestFile(t, path, archive.Bytes(), 0o644)
+}
+
+func testVSIXManifest(target string) string {
+	return `<PackageManifest><Metadata><Identity Id="` + vscodeMarketplaceName + `" Publisher="` + vscodeMarketplacePublisher + `" Version="0.1.0" TargetPlatform="` + target + `"/></Metadata></PackageManifest>`
 }
