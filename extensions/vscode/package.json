@@ -2,7 +2,7 @@
   "name": "ferret-lang",
   "displayName": "Ferret Lang",
   "description": "Ferret Query Language support for Visual Studio Code.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "ferretlang",
   "icon": "media/icon.png",
   "preview": true,
