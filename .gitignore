@@ -11,3 +11,4 @@ extensions/jetbrains/sandbox/
 shared/proto/ferretd/
 .idea/
 .vscode/
+.DS_Store
