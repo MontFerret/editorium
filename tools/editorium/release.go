@@ -370,7 +370,8 @@ func runReleaseCI(root string, args []string) error {
 	directory := flags.String("directory", "", "release asset directory")
 	archive := flags.String("archive", "", "absolute unsigned archive path")
 	digest := flags.String("sha256", "", "validated unsigned checksum")
-	created := flags.Bool("created", false, "GitHub release created in this run")
+	created := flags.Bool("created", false, "GitHub release created by the publication job")
+	createdAttempt := flags.String("created-attempt", "", "workflow attempt that created the GitHub release")
 	recovery := flags.Bool("recovery", false, "operator confirmed Marketplace version absent")
 	releaseJSON := flags.String("release-json", "", "existing release JSON")
 	var download bool
@@ -448,7 +449,10 @@ func runReleaseCI(root string, args []string) error {
 		fmt.Println(action)
 	default:
 		if metadata.description.runCI != nil {
-			return metadata.description.runCI(root, args[0], metadata, releaseCIOptions{archive: *archive, digest: *digest, directory: *directory, created: *created, recovery: *recovery})
+			return metadata.description.runCI(root, args[0], metadata, releaseCIOptions{
+				archive: *archive, digest: *digest, directory: *directory,
+				created: *created, createdAttempt: *createdAttempt, recovery: *recovery,
+			})
 		}
 		return fmt.Errorf("unknown release-ci operation %q", args[0])
 	}

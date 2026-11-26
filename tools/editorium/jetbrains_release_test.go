@@ -91,12 +91,27 @@ func TestJetBrainsReleaseHiddenVersionChangeDuringValidation(t *testing.T) {
 
 func TestJetBrainsReleaseQualification(t *testing.T) {
 	root := editoriumTestRepositoryRoot(t)
-	// Verify the release caller and reusable workflow agree on the same input,
-	// and the configured task explicitly sets it in the forked test JVM.
+	// Keep strict qualification between preflight and signing, and carry
+	// publication provenance through to the Marketplace policy.
 	for file, checks := range map[string][]string{
-		".github/workflows/release-jetbrains.yml":    {"uses: ./.github/workflows/jetbrains-validation.yml", "strict-qualification: true", "needs: [metadata, qualify]"},
-		".github/workflows/jetbrains-validation.yml": {"workflow_call:", "FERRET_TEST_PASSIVE_HOST_LOSS: ${{ inputs.strict-qualification && '1' || '0' }}", "run: make test jetbrains", "fail-fast: false"},
-		"extensions/jetbrains/build.gradle.kts":      {`environment("FERRET_TEST_PASSIVE_HOST_LOSS", passiveHostLoss.get())`},
+		".github/workflows/release-jetbrains.yml": {
+			"preflight:\n    needs: metadata\n",
+			"qualify:\n    needs: [metadata, preflight]\n    if: needs.preflight.outputs.action == 'create'",
+			"uses: ./.github/workflows/jetbrains-validation.yml",
+			"strict-qualification: true",
+			"sign:\n    needs: [metadata, qualify, preflight]\n",
+			"created-attempt: ${{ steps.release.outputs.created-attempt }}",
+			"CREATED_ATTEMPT: ${{ needs.publish.outputs.created-attempt }}",
+			`--created-attempt="$CREATED_ATTEMPT"`,
+		},
+		".github/workflows/jetbrains-validation.yml": {
+			"workflow_call:",
+			"FERRET_TEST_PASSIVE_HOST_LOSS: ${{ inputs.strict-qualification && '1' || '0' }}",
+			"run: make test jetbrains",
+			"fail-fast: false",
+			`release-ci github-require-absent --tag "$GITHUB_REF_NAME"`,
+		},
+		"extensions/jetbrains/build.gradle.kts": {`environment("FERRET_TEST_PASSIVE_HOST_LOSS", passiveHostLoss.get())`},
 	} {
 		data, err := os.ReadFile(filepath.Join(root, file))
 		if err != nil {

@@ -48,20 +48,14 @@ jobs:
         run: |
           set -eu
           [[ "$GITHUB_REF" == refs/tags/jetbrains/* ]]
-          [[ "$GITHUB_EVENT_NAME" == push || "$CONFIRMED" == true ]]
+          if [[ "$GITHUB_EVENT_NAME" != push && "$CONFIRMED" != true ]]; then
+            echo "::error::Recovery requires confirm-absent=true after checking the vendor dashboard for pending and published updates."
+            exit 1
+          fi
           go -C tools/editorium run . release-ci metadata --tag "$RELEASE_TAG" --format github >> "$GITHUB_OUTPUT"
 
-  qualify:
-    needs: metadata
-    uses: ./.github/workflows/jetbrains-validation.yml
-    with:
-      strict-qualification: true
-      commit: ${{ needs.metadata.outputs.commit }}
-      version: ${{ needs.metadata.outputs.version }}
-      tag-object: ${{ needs.metadata.outputs.tag-object }}
-
   preflight:
-    needs: [metadata, qualify]
+    needs: metadata
     runs-on: ubuntu-24.04
     environment: jetbrains-marketplace
     permissions:
@@ -95,6 +89,16 @@ jobs:
             exit 1
           fi
           echo "action=$action" >> "$GITHUB_OUTPUT"
+
+  qualify:
+    needs: [metadata, preflight]
+    if: needs.preflight.outputs.action == 'create'
+    uses: ./.github/workflows/jetbrains-validation.yml
+    with:
+      strict-qualification: true
+      commit: ${{ needs.metadata.outputs.commit }}
+      version: ${{ needs.metadata.outputs.version }}
+      tag-object: ${{ needs.metadata.outputs.tag-object }}
 
   sign:
     needs: [metadata, qualify, preflight]
@@ -161,6 +165,7 @@ jobs:
       contents: write
     outputs:
       created: ${{ steps.release.outputs.created }}
+      created-attempt: ${{ steps.release.outputs.created-attempt }}
     steps:
       - *checkout
       - *setup-go
@@ -194,35 +199,61 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CREATED: ${{ needs.publish.outputs.created }}
+          CREATED_ATTEMPT: ${{ needs.publish.outputs.created-attempt }}
           SIGNED_DIGEST: ${{ needs.sign.outputs.digest }}
         run: |
           set -eu
-          test "$(go -C tools/editorium run . release-ci github-state --tag "$RELEASE_TAG")" = noop
-          gh release download "$RELEASE_TAG" --dir published
+          created_in_attempt=false
+          if [[ "$CREATED" == true && -n "$CREATED_ATTEMPT" && "$CREATED_ATTEMPT" == "$GITHUB_RUN_ATTEMPT" ]]; then
+            created_in_attempt=true
+            echo "GitHub Release published in this attempt." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # Resolve asset IDs from the published release by tag, without gh's draft fallback.
+          assets=$(go -C tools/editorium run . release-ci github-assets --tag "$RELEASE_TAG")
+          read -r zip_id checksum_id <<< "$assets"
+          mkdir published
+          archive="published/ferret-jetbrains-$VERSION-signed.zip"
+          gh api "repos/$GITHUB_REPOSITORY/releases/assets/$zip_id" -H 'Accept: application/octet-stream' > "$archive"
+          gh api "repos/$GITHUB_REPOSITORY/releases/assets/$checksum_id" -H 'Accept: application/octet-stream' > "$archive.sha256"
           go -C tools/editorium run . release-ci verify-signed --tag "$RELEASE_TAG" --directory published
-          read -r digest _ < "published/ferret-jetbrains-$VERSION-signed.zip.sha256"
+          read -r digest _ < "$archive.sha256"
           if [[ "$CREATED" == true ]]; then test "$digest" = "$SIGNED_DIGEST"; fi
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          if [[ "$created_in_attempt" == false ]]; then
+            echo "Existing GitHub Release verified." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Check eligibility and recovery policy
         id: policy
         env:
           GH_TOKEN: ${{ github.token }}
-          JETBRAINS_MARKETPLACE_ENABLED: ${{ vars.JB_MARKETPLACE_ENABLED }}
+          JB_MARKETPLACE_ENABLED: ${{ vars.JB_MARKETPLACE_ENABLED }}
           CREATED: ${{ needs.publish.outputs.created || 'false' }}
-          RECOVERY: ${{ github.event_name == 'workflow_dispatch' }}
+          CREATED_ATTEMPT: ${{ needs.publish.outputs.created-attempt }}
+          RECOVERY: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm-absent }}
         run: |
           go -C tools/editorium run . release-ci marketplace-policy --tag "$RELEASE_TAG" \
-            --created="$CREATED" --recovery="$RECOVERY" >> "$GITHUB_OUTPUT"
+            --created="$CREATED" --created-attempt="$CREATED_ATTEMPT" --recovery="$RECOVERY" >> "$GITHUB_OUTPUT"
       - name: Report Marketplace status
         if: steps.policy.outputs.upload != 'true'
         env:
           MESSAGE: ${{ steps.policy.outputs.message }}
         run: echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
       - name: Submit stable Marketplace update
+        id: submit
         if: steps.policy.outputs.upload == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          JETBRAINS_MARKETPLACE_TOKEN: ${{ secrets.JB_MARKETPLACE_TOKEN }}
+          JB_MARKETPLACE_TOKEN: ${{ secrets.JB_MARKETPLACE_TOKEN }}
           SHA256: ${{ steps.verified.outputs.digest }}
         run: |
           go -C tools/editorium run . release-ci marketplace-upload --tag "$RELEASE_TAG" --directory published --sha256 "$SHA256" >> "$GITHUB_STEP_SUMMARY"
+      - name: Report Marketplace failure
+        if: failure()
+        env:
+          SUBMISSION_OUTCOME: ${{ steps.submit.outcome }}
+        run: |
+          if [[ "$SUBMISSION_OUTCOME" == failure ]]; then
+            echo "Marketplace submission failed. Check the upload logs and the vendor dashboard for a pending or published update before recovery." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Marketplace submission blocked before upload. See the failed verification or eligibility step for details." >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -62,19 +62,19 @@ refs and ignored build caches may remain. The local unsigned package is not a
 signing input; CI rebuilds from the final tagged commit and embeds that commit.
 
 Tag CI reads the annotated tag object and its peeled commit from `origin`.
-The Linux, macOS and Windows test jobs check out that commit. The package job
-checks all four configured IDE builds and transfers the qualified ZIP by
-Actions artifact ID and SHA-256. Signing, GitHub publication, and Marketplace
-upload each recheck the remote annotation and commit before proceeding.
+Preflight checks for drafts and published releases before qualification. An
+absent release runs strict tests on Linux, macOS and Windows and Plugin Verifier
+against all four configured IDE builds. The package job transfers the qualified
+ZIP by Actions artifact ID and SHA-256. A complete matching release goes
+directly to verification of its original signed assets. Conflicting metadata,
+incomplete drafts, and unknown release state stop the run.
 
-After qualification, publication preflight checks for drafts and existing
-releases. Only an absent release proceeds to signing. The read-only signing
-job verifies the packaged descriptor, commit, complete runtime library set
-and external JAR hashes against the tagged Gradle configuration. It compares
-all six daemons to the verified release binaries and runs the native smoke.
-The publication job checks the signed artifact ID's ZIP and sidecar against
-the signing job's digest and rechecks release state. GitHub stores exactly
-these two assets, with a 400,000,000-byte ceiling on the ZIP.
+The read-only signing job verifies the packaged descriptor and commit, runtime
+libraries against the tagged Gradle configuration, and all six bundled daemons
+against the verified release binaries. It also runs the packaged native smoke
+test. The publication job checks the ZIP and checksum against the signing job's
+digest, then creates and publishes a draft with the two signed assets. GitHub
+stores these assets with a 400,000,000-byte ceiling on the ZIP.
 
 ```text
 ferret-jetbrains-<version>-signed.zip
@@ -86,47 +86,88 @@ channel. Prereleases are GitHub prereleases. Versions with SemVer build metadata
 are also GitHub-only. The release job always downloads and verifies the original
 GitHub assets before a Marketplace submission.
 
+## Workflow reruns and summaries
+
+Use **Re-run failed jobs** or **Re-run all jobs** after a qualification, signing,
+or GitHub publication failure. If the release is still absent and the rerun
+successfully creates it, an eligible stable version can be submitted to
+Marketplace in that attempt. This works with successful qualification or
+signing jobs retained from an earlier attempt. A publication result retained
+from an earlier attempt requires explicit recovery. If a complete release
+appears after preflight, use **Re-run all jobs** to refresh preflight and verify
+the existing assets. If GitHub has an incomplete draft, follow the recovery
+procedure below.
+
+Reruns use the original workflow and tagged commit. These rerun rules apply to
+tags that contain this workflow change. Keep older release tags intact.
+[GitHub rerun behavior](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs)
+
+- **GitHub Release published in this attempt** records a confirmed GitHub
+  publication. **Existing GitHub Release verified** records successful
+  verification of previously published assets.
+- **Marketplace accepted the submission** records a successful upload. Review
+  and public availability are separate steps in Marketplace.
+- **Marketplace publication disabled** means `JB_MARKETPLACE_ENABLED` is
+  explicitly off. **Initial Marketplace listing setup required** means the
+  variable is unset. Check the listing in the vendor dashboard before enabling
+  upload.
+- **Explicit recovery required** means the workflow skipped upload. Check the
+  vendor dashboard and use a fresh confirmed dispatch if the version is absent.
+- **Marketplace submission failed** directs you to the failed step. Check the
+  vendor dashboard before retrying. A verification failure blocks upload.
+- **GitHub-only prerelease** or **GitHub-only version** means the version is
+  ineligible for automated Marketplace submission.
+
 ## Maintainer environment setup
 
-Create a GitHub Actions environment named `jetbrains-release`. Restrict its
+Create a GitHub Actions environment named `jetbrains-marketplace`. Restrict its
 deployment tags to `jetbrains/v*`, protect that tag namespace against movement
 or untrusted creation, and configure the repository's release reviewers.
 Ordinary plugin development uses the unsigned package and needs no credentials.
 
-- Set the environment variable `JETBRAINS_SIGNING_CERTIFICATE` to the trusted
+- Set the environment secret `JB_SIGNING_CERTIFICATE` to the trusted
   public PEM certificate chain, with the Ferret signing leaf first, followed by
   its issuers in order. A self-signed author uses one PEM certificate.
   Verification checks the signer’s embedded chain and uses the final configured
   certificate as the trust anchor. Retain the original public chain for
   recovery of releases made with it.
-- Set the environment secret `JETBRAINS_SIGNING_KEY` to its matching PEM
+- Set the environment secret `JB_SIGNING_KEY` to its matching PEM
   private key. The job accepts an **unencrypted PEM** stored as a GitHub
   environment secret, writes it to a private temporary file for the signer,
   and removes the file on exit. Generate the key offline and keep its backup
   outside the checkout. [JetBrains signing instructions](https://plugins.jetbrains.com/docs/intellij/plugin-signing.html)
-- Leave the environment variable `JETBRAINS_MARKETPLACE_ENABLED` unset or
-  `false` through the first listing. For subsequent updates set the secret
-  `JETBRAINS_MARKETPLACE_TOKEN` to a vendor-authorized permanent token from
-  Marketplace **My Tokens**, then set the variable to `true`. The upload step
-  uses bearer authentication. [Marketplace upload API](https://plugins.jetbrains.com/docs/marketplace/plugin-upload.html)
+- Leave the environment variable `JB_MARKETPLACE_ENABLED` unset during initial
+  listing setup. Set it to `false` to explicitly disable automatic updates.
+  For automated updates, set the environment secret `JB_MARKETPLACE_TOKEN` to
+  a permanent token from Marketplace **My Tokens** for an account authorized
+  to publish updates under the Ferret vendor `ferretlang`. Enable updates by
+  setting `JB_MARKETPLACE_ENABLED=true`. [Marketplace upload API](https://plugins.jetbrains.com/docs/marketplace/plugin-upload.html)
 
 ## First listing
 
-1. Download both assets from the qualified GitHub Release. In their directory
+The Ferret vendor already exists with ID `ferretlang`. JetBrains requires
+manual registration of the Ferret plugin before automated update uploads.
+The update API identifies the listing by its plugin XML ID.
+
+1. Select the Ferret (`ferretlang`) vendor in JetBrains Marketplace and look
+   for the Ferret plugin listing.
+2. If the listing is missing, download both assets from the qualified GitHub
+   Release. In their directory
    run `shasum -a 256 -c ferret-jetbrains-<version>-signed.zip.sha256`.
-2. Install that signed ZIP in an isolated GoLand instance. Complete the native
+   Install that signed ZIP in an isolated GoLand instance. Complete the native
    and embedded application [packaged smoke procedure](README.md#smoke-test-the-packaged-plugin).
    Record the digest, plugin and daemon versions, IDE build, and observations,
    including runtime discovery, Run, Debug inspection/stepping, Stop, relaunch,
    and Reload.
-3. Sign in to JetBrains Marketplace, accept the Developer Agreement, and
-   create or select the Ferret vendor profile. Choose **Upload plugin**, supply
+   Choose **Upload plugin** under the Ferret vendor and supply
    the signed ZIP, project description and relevant tags. Use the project's
    [Apache-2.0 license](../../LICENSE), [source](https://github.com/MontFerret/editorium),
    [project](https://ferretlang.org), and [issue tracker](https://github.com/MontFerret/editorium/issues).
-4. Confirm the listing's Plugin XML ID is `org.ferretlang.jetbrains`. Record the
-   submission and review status. Enable automation for the **next** stable
-   version. The initial submission is performed once. [First submission](https://plugins.jetbrains.com/docs/marketplace/uploading-a-new-plugin.html)
+3. Confirm that the plugin XML ID is `org.ferretlang.jetbrains`.
+4. Complete the initial Marketplace submission and review. Record the
+   submission and review status. [First submission](https://plugins.jetbrains.com/docs/marketplace/uploading-a-new-plugin.html)
+5. Configure the authorized `JB_MARKETPLACE_TOKEN` secret.
+6. Set `JB_MARKETPLACE_ENABLED=true` for subsequent stable updates.
 
 ## Recovery
 
@@ -151,17 +192,17 @@ using the original commit and annotated tag object in one
 independent pushes. Resolve unexpected local changes separately before rerunning
 the release command.
 
-- If GitHub publication already succeeded, the workflow checks its tag, title,
-  prerelease flag, asset names, signature, descriptor, commit and checksum.
-  The read-only verification job downloads both original assets even when
-  Marketplace upload is disabled. If a completed release appears after
-  preflight, publication uses those assets and skips automatic Marketplace
-  submission. On conflicting metadata
-  or an incomplete draft, inspect the release and original run. Recover only
-  the original verified assets from that attempt's `jetbrains-signed-<commit>-<attempt>`
-  Actions artifact. Confirm its checksum and author signature against the
-  protected certificate before finishing an incomplete draft. Escalate to a maintainer if
-  those bytes cannot be established. Keep the published version and tag intact.
+- If GitHub publication already succeeded, the read-only verification job
+  downloads both original assets from the published release. It verifies the
+  annotated tag and commit, release metadata and exact asset set, checksum,
+  author signature, descriptor and embedded commit, packaged libraries and
+  daemons, and native daemon smoke. This path skips qualification and signing.
+- On conflicting metadata or an incomplete draft, inspect the release and
+  original run. Recover only the original verified assets from that attempt's
+  `jetbrains-signed-<commit>-<attempt>` Actions artifact. Confirm its checksum
+  and author signature against the protected certificate before finishing an
+  incomplete draft. Escalate to a maintainer if those bytes cannot be
+  established. Keep the published version and tag intact.
 - After an upload error, inspect the vendor dashboard for the exact plugin ID,
   version, Stable channel, and pending or approved submission. A duplicate
   response or lost connection can mean that the first request landed. If a
@@ -170,7 +211,7 @@ the release command.
 - If the version is absent, correct any token or permission issue and start
   a fresh **Release JetBrains plugin** workflow dispatch against the original
   tag. For example, run `gh workflow run release-jetbrains.yml --ref jetbrains/v0.1.0 -f confirm-absent=true`
-  with the actual tag. The dispatch reruns qualification, requires an existing
-  GitHub Release, and submits the verified original ZIP. Ordinary Actions
-  reruns skip the upload. An accepted upload awaits Marketplace review and
-  public availability. [Plugin updates](https://plugins.jetbrains.com/docs/marketplace/plugin-updates.html)
+  with the actual tag. The dispatch requires a complete existing GitHub Release
+  and submits its verified original ZIP. A rerun of a recovery dispatch
+  requires another fresh dashboard check and dispatch before uploading.
+  [Plugin updates](https://plugins.jetbrains.com/docs/marketplace/plugin-updates.html)

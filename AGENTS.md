@@ -599,7 +599,7 @@ build embeds its commit. Verify the descriptor in the packaged JAR, all six
 daemon payloads, author signature, size, and SHA-256 before publication.
 Compare the packaged runtime libraries with Gradle’s production inputs and
 check dependencies by SHA-256. Compare daemon bytes directly with the verified cache.
-The protected `jetbrains-release` environment signs the qualified ZIP in a
+The protected `jetbrains-marketplace` environment signs the qualified ZIP in a
 read-only job. Remote tag object and peeled commit must match qualification at
 signing, GitHub publication and Marketplace upload. GitHub write access belongs
 to draft inspection and publication.

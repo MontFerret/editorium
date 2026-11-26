@@ -90,6 +90,16 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install make --no-progress --yes
 
+      - &release-still-absent
+        name: Check release still needs qualification
+        if: inputs.strict-qualification
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JETBRAINS_QUALIFIED_TAG_OBJECT: ${{ inputs.tag-object }}
+          JETBRAINS_RELEASE_COMMIT: ${{ inputs.commit }}
+        run: go -C tools/editorium run . release-ci github-require-absent --tag "$GITHUB_REF_NAME"
+
       - name: Test plugin and pinned daemon
         env:
           FERRET_TEST_PASSIVE_HOST_LOSS: ${{ inputs.strict-qualification && '1' || '0' }}
@@ -133,6 +143,8 @@ jobs:
           cache-dependency-path: |
             fixtures/wire-host/go.sum
             tools/editorium/go.sum
+
+      - *release-still-absent
 
       - name: Check release tooling
         shell: bash
