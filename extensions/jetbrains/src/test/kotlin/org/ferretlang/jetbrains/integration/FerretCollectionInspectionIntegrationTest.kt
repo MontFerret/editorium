@@ -162,7 +162,9 @@ class FerretCollectionInspectionIntegrationTest {
                 assertFalse(run.process.isAlive)
                 assertTrue(run.listener.stops.tryReceive().isFailure)
                 assertEquals(0, host.count("debugStart"))
-                assertTrue(run.listener.errors.receive().isNotBlank())
+                assertTrue(run.listener.errors.receive().contains("runtime 'App'"))
+                host.await("connected")
+                assertEquals(0, host.count("compile"))
             }
         }
     }

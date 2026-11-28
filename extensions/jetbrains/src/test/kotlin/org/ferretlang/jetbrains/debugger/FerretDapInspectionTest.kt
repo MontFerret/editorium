@@ -162,8 +162,10 @@ class FerretDapInspectionTest {
         // Awaiting the later batch's deadlines proves the older deadlines have elapsed, without sleeps.
         val timedOut = pending(current)
         timedOut.results.forEach { assertTrue(runCatching { it.await() }.exceptionOrNull() is IllegalStateException) }
-        obsolete.respond(true)
-        timedOut.respond(false)
+        for (batch in listOf(obsolete, timedOut)) {
+            assertEquals(adapter.variableSequences.receive(), adapter.cancellations.receive())
+            batch.respond(batch === obsolete)
+        }
         barrier(current)
         assertTrue(session.isCurrentStop(current))
         assertFalse(session.completion.isCompleted)

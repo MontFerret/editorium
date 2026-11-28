@@ -37,9 +37,12 @@ class FerretInspectionPlatformTest : BasePlatformTestCase() {
         val scopes = adapter.scopeRequests.receive()
         assertEquals(42, scopes.first.frameId)
         scopes.second.complete(ScopesResponse().apply {
-            this.scopes = arrayOf(scope("Locals", 7), scope("Parameters", 8))
+            this.scopes = arrayOf(scope("Locals", 7), scope("Parameters", 8), scope("Empty", 0))
         })
-        val groups = node.children.receive().topGroups
+        val scopesList = node.children.receive()
+        val groups = scopesList.topGroups
+        assertEquals("Empty", scopesList.getName(0))
+        assertFalse(present(scopesList.getValue(0)).expandable)
         assertEquals(listOf("Locals", "Parameters"), groups.map { it.name })
         assertTrue(groups.none { it.isAutoExpand })
         assertTrue(groups.all { it.isRestoreExpansion })
@@ -117,6 +120,62 @@ class FerretInspectionPlatformTest : BasePlatformTestCase() {
         pending.completeExceptionally(rejected())
         assertTrue(watch.batches.isEmpty())
         assertTrue(watch.errors.tryReceive().isFailure)
+    }
+
+    fun testRecomputingOneNodeInvalidatesItsOldPageAndLeavesTheSiblingUsable() = scenario {
+        val inspection = context()
+        val value = FerretValue(inspection, "Rows", "Rows", 8, named = 0, indexed = 101)
+        val node = DapTestCompositeNode()
+        val sibling = DapTestCompositeNode()
+        withContext(Dispatchers.EDT) { value.computeChildren(node) }
+        val stale = adapter.variableRequests.receive().second
+        val id = adapter.variableSequences.receive()
+        withContext(Dispatchers.EDT) {
+            value.computeChildren(sibling)
+            value.computeChildren(node)
+        }
+        assertEquals(id, adapter.cancellations.receive())
+        stale.completeExceptionally(rejected())
+        repeat(2) {
+            val (args, live) = adapter.variableRequests.receive()
+            assertEquals(0, args.start)
+            live.complete(VariablesResponse().apply { variables = Array(100) { variable(it.toString(), "Int", "1", 0, null) } })
+        }
+        node.children.receive()
+        sibling.children.receive()
+        assertEquals(1, node.batches.size)
+        assertEquals(1, sibling.batches.size)
+        assertTrue(node.errors.tryReceive().isFailure)
+    }
+
+    fun testPageWaitingForEdtCannotPublishAfterObsolescenceOrStopReplacement() = scenario {
+        val inspection = context()
+        for (replaceStop in listOf(false, true)) {
+            val node = DapTestCompositeNode()
+            val value = FerretValue(inspection, "Array(2)", "Array", 7, indexed = 2, named = 0)
+            withContext(Dispatchers.EDT) { value.computeChildren(node) }
+            val response = adapter.variableRequests.receive().second
+            val entered = CompletableDeferred<Unit>()
+            val release = CountDownLatch(1)
+            ApplicationManager.getApplication().invokeLater {
+                entered.complete(Unit)
+                check(release.await(5, TimeUnit.SECONDS))
+            }
+            try {
+                entered.await()
+                response.complete(VariablesResponse().apply { variables = Array(2) { variable(it.toString(), "Int", "1", 0, null) } })
+                val barrier = scope.async { session.stackTrace(inspection.stop, 0, 1) }
+                adapter.stackRequests.receive().second.complete(StackTraceResponse().apply { stackFrames = emptyArray() })
+                barrier.await()
+                if (replaceStop) {
+                    adapter.stop("step")
+                    listener.stops.receive()
+                } else node.obsolete = true
+            } finally { release.countDown() }
+            withContext(Dispatchers.EDT) { assertTrue(node.batches.isEmpty()) }
+            assertTrue(node.more.tryReceive().isFailure)
+            assertTrue(node.errors.tryReceive().isFailure)
+        }
     }
 
     fun testUnknownIndexedPageCanExposeContinuationAfterOneHundredRows() = scenario {

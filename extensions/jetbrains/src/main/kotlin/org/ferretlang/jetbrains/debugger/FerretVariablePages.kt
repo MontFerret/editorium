@@ -12,11 +12,13 @@ import kotlinx.coroutines.launch
 import org.eclipse.lsp4j.debug.Variable
 import org.eclipse.lsp4j.debug.VariablesArgumentsFilter
 import java.awt.event.MouseEvent
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** One child presentation. Only its EDT callbacks can commit rows or start another page. */
 internal class FerretVariablePages(
     private val inspection: FerretInspectionContext,
     private val node: XCompositeNode,
+    private val activePresentation: AtomicBoolean,
     private val reference: Int,
     private val named: Int?,
     private val indexed: Int?,
@@ -27,7 +29,7 @@ internal class FerretVariablePages(
     private var showingError = false
     private val size get() = if (kind == VariablesArgumentsFilter.NAMED) named else indexed
     private val hasNextKind get() = kind == VariablesArgumentsFilter.NAMED && indexed != 0
-    private fun current() = !node.isObsolete && inspection.isCurrent()
+    private fun current() = activePresentation.get() && !node.isObsolete && inspection.isCurrent()
 
     fun start() {
         if (!ApplicationManager.getApplication().isDispatchThread) {

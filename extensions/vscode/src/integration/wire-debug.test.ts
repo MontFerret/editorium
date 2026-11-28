@@ -116,12 +116,22 @@ suite('Wire debugging through VS Code', () => {
     await vscode.commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem');
   }
 
+  async function expandToReference(observer: DebugObserver, reference: number): Promise<void> {
+    // List expansion and focus movement can resolve before the async workbench tree installs its rows.
+    const deadline = Date.now() + 10_000;
+    while (!observer.requests.some(m => m.command === 'variables' && m.arguments?.variablesReference === reference)) {
+      assert.ok(Date.now() < deadline, `Variables view did not open reference ${reference}`);
+      await vscode.commands.executeCommand('list.expand');
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+  }
+
   for (const runtimeName of ['local', 'App']) {
     test(`pages a million rows through the Variables view on ${runtimeName}`, async () => {
       const file = 'large.fql';
       const program = uri(file);
-      await writeFile(program.fsPath, 'LET results = (FOR n IN 0..999999 RETURN n)\nLET size = LENGTH(results)\nRETURN size');
-      breakpoints.push(new vscode.SourceBreakpoint(new vscode.Location(program, new vscode.Position(1, 0))));
+      await writeFile(program.fsPath, 'LET results = (FOR n IN 0..999999 RETURN n)\nLET sample = {rows: [1, 2]}\nLET size = LENGTH(results)\nRETURN size + sample.rows[0]');
+      breakpoints.push(new vscode.SourceBreakpoint(new vscode.Location(program, new vscode.Position(2, 0))));
       vscode.debug.addBreakpoints(breakpoints);
       const observer = await launch(`Variables view ${runtimeName}`, file, { runtimeName });
       await observer.wait(m => m.event === 'stopped');
@@ -144,7 +154,7 @@ suite('Wire debugging through VS Code', () => {
       await command('list.focusFirst');
       // Locals is auto-expanded. Walk down the native tree to the first leaf range.
       await command('list.focusDown');
-      for (let i = 0; i < 7 && !pages().length; i++) await command('list.expand');
+      await expandToReference(observer, root.variablesReference);
       async function assertPage(start: number) {
         const reply = await observer.wait(m => m.command === 'variables' && m.body?.variables?.[0]?.name === String(start));
         const request = pages().find(m => m.seq === reply.request_seq);
@@ -158,6 +168,25 @@ suite('Wire debugging through VS Code', () => {
       await command('list.expand');
       await assertPage(100);
       assert.equal(pages().length, 2);
+
+      const watch = 'workbench.debug.action.focusWatchView';
+      await command(watch);
+      try {
+        await vscode.commands.executeCommand('debug.addToWatchExpressions', { variable: { evaluateName: 'sample' } });
+        await observer.wait(m => m.command === 'evaluate' && m.body?.result === 'Object(1)');
+        await command(watch);
+        await command('list.focusFirst');
+        await command('list.expand');
+        const member = (await observer.wait(m => !!m.body?.variables?.some(v => v.name === 'rows'))).body!.variables!.find(v => v.name === 'rows')!;
+        assert.equal(member.value, 'Array(2)');
+        await expandToReference(observer, member.variablesReference);
+        await observer.wait(m => m.body?.variables?.length === 2 && m.body.variables[0]?.value === '1');
+        await command('workbench.action.debug.stepOver');
+        await observer.wait(m => m.event === 'stopped', 2);
+        await observer.wait(m => m.command === 'evaluate' && m.body?.result === 'Object(1)', 2);
+      } finally {
+        await command('workbench.debug.viewlet.action.removeAllWatchExpressions');
+      }
     });
   }
 
@@ -184,11 +213,7 @@ suite('Wire debugging through VS Code', () => {
     assert.equal(named.namedVariables, undefined);
     assert.equal(named.indexedVariables, 0);
     assert.ok(observer.requests.some(m => m.arguments?.variablesReference === root.variablesReference && m.arguments.filter === 'named'));
-    // The tree installs both filtered group responses before its first child can take focus.
-    for (let i = 0; i < 20 && !observer.requests.some(m => m.arguments?.variablesReference === named.variablesReference); i++) {
-      await command('list.expand');
-      await new Promise(resolve => setTimeout(resolve, 25));
-    }
+    await expandToReference(observer, named.variablesReference);
     const rows = (await observer.wait(m => !!m.body?.variables?.some(v => v.name === '[100…]'))).body!.variables!;
     assert.deepEqual(rows.slice(0, 2).map(v => v.name), ['0', 'e\u0301😀']);
     const next = rows.at(-1)!;

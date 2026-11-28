@@ -31,8 +31,11 @@ internal class FerretStackFrame(
     override fun computeChildren(node: XCompositeNode) = inspection.children(node) {
         inspection.dap.scopes(stop, frameId)?.let { response ->
             XValueChildrenList().apply {
-                response.scopes.forEach {
-                    addTopGroup(FerretScopeGroup(it.name, it.variablesReference, inspection, it.namedVariables, it.indexedVariables))
+                for (scope in response.scopes) {
+                    if (scope.variablesReference > 0) {
+                        addTopGroup(FerretScopeGroup(scope.name, scope.variablesReference, inspection,
+                            scope.namedVariables, scope.indexedVariables))
+                    } else add(scope.name, FerretValue(inspection, "", null, scope.variablesReference))
                 }
             }
         }

@@ -7,7 +7,11 @@ independent Wire v2 application. Both link API alpha.22, Core alpha.63, and
 Wire alpha.6. Both protocol generators and drift checks passed with identical
 client output. Plugin Verifier reported compatible for IDEA 2026.2.0.1 and
 2026.3 and GoLand 2026.2.4 and 2026.3. Package checks verified the macOS arm64
-VSIX and all six daemon payloads in the universal ZIP.
+VSIX and all six daemon payloads in the universal ZIP. The strict JetBrains
+suite ran 240 unit/platform and 50 real-process tests with zero skips. VS Code
+ran 217 unit and 38 integration tests plus the daemon transport smoke. The
+[cross-platform CI and package results](https://github.com/MontFerret/editorium/pull/30/checks)
+are attached to the implementation PR.
 
 | Indexed source length | Provider reads to describe | First request | Provider reads for that request |
 | ---: | ---: | --- | ---: |
@@ -25,9 +29,12 @@ A Wire test followed the virtual Named group through its unknown-size
 continuation. A separate watch test stepped with an outstanding page and
 observed the replacement stop's single child.
 
-The packaged interactive walkthrough below remains pending in both IDEs.
-The JetBrains desktop automation connection expired while acquiring GoLand.
-The automated VS Code observations used the development extension host.
+An isolated VS Code 1.95 profile then installed the verified macOS arm64 VSIX
+and used its bundled executable. Four automated workbench scenarios passed,
+including both runtime selections, loading a second range, expanding a nested
+watch, stepping and checking adapter cleanup. The packaged JetBrains
+walkthrough remains pending. The desktop automation connection expired while
+acquiring GoLand. The JetBrains platform tests cover its XDebugger callbacks.
 
 ### Reproduce in the packaged IDEs
 

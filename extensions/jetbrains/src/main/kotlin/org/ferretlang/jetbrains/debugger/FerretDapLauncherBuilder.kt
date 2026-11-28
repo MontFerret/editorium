@@ -9,6 +9,7 @@ import org.eclipse.lsp4j.jsonrpc.RemoteEndpoint
 import org.eclipse.lsp4j.jsonrpc.debug.DebugLauncher
 import org.eclipse.lsp4j.jsonrpc.json.ConcurrentMessageProcessor
 import org.eclipse.lsp4j.jsonrpc.json.MessageJsonHandler
+import org.eclipse.lsp4j.jsonrpc.messages.RequestMessage
 import org.eclipse.lsp4j.jsonrpc.messages.ResponseError
 import org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode
 import org.eclipse.lsp4j.jsonrpc.messages.ResponseMessage
@@ -22,7 +23,7 @@ internal class FerretDapLauncherBuilder(
     init {
         wrapMessages { next ->
             MessageConsumer { message ->
-                if (message is org.eclipse.lsp4j.jsonrpc.messages.RequestMessage) {
+                if (message is RequestMessage) {
                     (message.params as? FerretVariableRequest)?.sequence = message.id.toInt()
                 }
                 next.consume(message)
