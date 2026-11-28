@@ -32,11 +32,15 @@ export class HeldVariableReply {
     }));
   }
 
-  public hold(observer: DebugObserver, reference: number): Promise<number> {
-    this.match = seq => observer.requests.some(m => m.seq === seq && m.arguments?.variablesReference === reference);
+  public holdFirstIndexedPage(observer: DebugObserver): Promise<number> {
+    this.match = seq => observer.requests.some(m => m.seq === seq && m.command === 'variables' &&
+      m.arguments?.filter === 'indexed' && m.arguments.start === 0 && m.arguments.count === 100);
     return new Promise((resolve, reject) => {
       this.notify = resolve;
-      this.timer = setTimeout(() => reject(new Error(`No variables reply for reference ${reference}`)), 10_000);
+      this.timer = setTimeout(() => {
+        const requested = observer.requests.filter(m => m.command === 'variables').map(m => m.arguments?.variablesReference);
+        reject(new Error(`No first indexed page among requested references: ${requested.join(', ')}`));
+      }, 10_000);
     });
   }
 

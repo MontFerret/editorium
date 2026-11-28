@@ -18,14 +18,9 @@ async function withWorkbench(check: (window: Page) => Promise<void>): Promise<vo
   } finally { await renderer.close(); }
 }
 
-async function expandToReference(observer: DebugObserver, reference: number): Promise<void> {
-  // List expansion and focus movement can resolve before the async workbench tree installs its rows.
-  const deadline = Date.now() + 10_000;
-  while (!observer.requests.some(m => m.command === 'variables' && m.arguments?.variablesReference === reference)) {
-    assert.ok(Date.now() < deadline, `Variables view did not open reference ${reference}`);
-    await vscode.commands.executeCommand('list.expand');
-    await new Promise(resolve => setTimeout(resolve, 25));
-  }
+function twistie(window: Page, pane: 'watch' | 'variables', name: string) {
+  return window.locator(`.debug-${pane} .monaco-list-row`)
+    .filter({ has: window.locator('.name').filter({ hasText: name }) }).locator('.monaco-tl-twistie');
 }
 
 export async function inspectIndexedCollection(observer: DebugObserver, size: number): Promise<void> {
@@ -45,45 +40,42 @@ export async function inspectIndexedCollection(observer: DebugObserver, size: nu
   const pages = () => observer.requests.filter(m => m.command === 'variables' &&
     m.arguments?.variablesReference === root.variablesReference);
   assert.equal(pages().length, 0);
-  await command(focus);
-  await command('list.focusFirst');
-  // Locals is auto-expanded. Walk down the native tree to the first leaf range.
-  await command('list.focusDown');
-  await expandToReference(observer, root.variablesReference);
-  async function assertPage(start: number) {
-    const reply = await observer.wait(m => m.command === 'variables' && m.body?.variables?.[0]?.name === String(start));
-    const request = pages().find(m => m.seq === reply.request_seq);
-    assert.deepEqual(request?.arguments, { variablesReference: root.variablesReference, filter: 'indexed', start, count: 100 });
-    assert.deepEqual(reply.body!.variables!.map(v => v.name), Array.from({ length: 100 }, (_, i) => String(start + i)));
-  }
-  await assertPage(0);
-  assert.equal(pages().length, 1);
-  if (size > 100) {
-    await command('list.collapse');
-    await command('list.focusDown');
-    await command('list.expand');
-    await assertPage(100);
-    assert.equal(pages().length, 2);
-  }
+  await withWorkbench(async window => {
+    await twistie(window, 'variables', 'results').click();
+    if (size === 1_000_000) await twistie(window, 'variables', '[0..9999]').click();
+    if (size > 100) await twistie(window, 'variables', '[0..99]').click();
+    async function assertPage(start: number) {
+      const reply = await observer.wait(m => m.command === 'variables' && m.body?.variables?.[0]?.name === String(start));
+      const request = pages().find(m => m.seq === reply.request_seq);
+      assert.deepEqual(request?.arguments, { variablesReference: root.variablesReference, filter: 'indexed', start, count: 100 });
+      assert.deepEqual(reply.body!.variables!.map(v => v.name), Array.from({ length: 100 }, (_, i) => String(start + i)));
+    }
+    await assertPage(0);
+    assert.equal(pages().length, 1);
+    if (size > 100) {
+      await twistie(window, 'variables', '[0..99]').click();
+      await twistie(window, 'variables', '[100..199]').click();
+      await assertPage(100);
+      assert.equal(pages().length, 2);
+    }
 
-  const watch = 'workbench.debug.action.focusWatchView';
-  await command(watch);
-  try {
-    await vscode.commands.executeCommand('debug.addToWatchExpressions', { variable: { evaluateName: 'sample' } });
-    await observer.wait(m => m.command === 'evaluate' && m.body?.result === 'Object(1)');
+    const watch = 'workbench.debug.action.focusWatchView';
     await command(watch);
-    await command('list.focusFirst');
-    await command('list.expand');
-    const member = (await observer.wait(m => !!m.body?.variables?.some(v => v.name === 'rows'))).body!.variables!.find(v => v.name === 'rows')!;
-    assert.equal(member.value, 'Array(2)');
-    await expandToReference(observer, member.variablesReference);
-    await observer.wait(m => m.body?.variables?.length === 2 && m.body.variables[0]?.value === '1');
-    await command('workbench.action.debug.stepOver');
-    await observer.wait(m => m.event === 'stopped', 2);
-    await observer.wait(m => m.command === 'evaluate' && m.body?.result === 'Object(1)', 2);
-  } finally {
-    await command('workbench.debug.viewlet.action.removeAllWatchExpressions');
-  }
+    try {
+      await vscode.commands.executeCommand('debug.addToWatchExpressions', { variable: { evaluateName: 'sample' } });
+      await observer.wait(m => m.command === 'evaluate' && m.body?.result === 'Object(1)');
+      await twistie(window, 'watch', 'sample').click();
+      const member = (await observer.wait(m => !!m.body?.variables?.some(v => v.name === 'rows'))).body!.variables!.find(v => v.name === 'rows')!;
+      assert.equal(member.value, 'Array(2)');
+      await twistie(window, 'watch', 'rows').click();
+      await observer.wait(m => m.body?.variables?.length === 2 && m.body.variables[0]?.value === '1');
+      await command('workbench.action.debug.stepOver');
+      await observer.wait(m => m.event === 'stopped', 2);
+      await observer.wait(m => m.command === 'evaluate' && m.body?.result === 'Object(1)', 2);
+    } finally {
+      await command('workbench.debug.viewlet.action.removeAllWatchExpressions');
+    }
+  });
 }
 
 export async function inspectVirtualGroups(observer: DebugObserver): Promise<void> {
@@ -94,10 +86,7 @@ export async function inspectVirtualGroups(observer: DebugObserver): Promise<voi
   const root = (await observer.wait(m => !!m.body?.variables?.some(v => v.name === 'rows')))
     .body!.variables!.find(v => v.name === 'rows')!;
   await withWorkbench(async window => {
-    const visible = window.locator('.debug-variables .monaco-list-row');
-    const expand = (name: string) => visible.filter({ has: window.locator('.name').filter({ hasText: name }) })
-      .locator('.monaco-tl-twistie').click({ timeout: 10_000 });
-    await expand('rows');
+    await twistie(window, 'variables', 'rows').click();
     const groups = (await observer.wait(m => !!m.body?.variables?.some(v => v.name === 'Named'))).body!.variables!;
     const named = groups.find(v => v.name === 'Named')!;
     assert.equal(named.presentationHint?.kind, 'virtual');
@@ -105,7 +94,7 @@ export async function inspectVirtualGroups(observer: DebugObserver): Promise<voi
     assert.equal(named.namedVariables, undefined);
     assert.equal(named.indexedVariables, 0);
     assert.ok(observer.requests.some(m => m.arguments?.variablesReference === root.variablesReference && m.arguments.filter === 'named'));
-    await expand(named.name);
+    await twistie(window, 'variables', named.name).click();
     const rows = (await observer.wait(m => !!m.body?.variables?.some(v => v.name === '[100…]'))).body!.variables!;
     assert.deepEqual(rows.slice(0, 2).map(v => v.name), ['0', 'e\u0301😀']);
     const next = rows.at(-1)!;
@@ -113,7 +102,7 @@ export async function inspectVirtualGroups(observer: DebugObserver): Promise<voi
     assert.ok(next.variablesReference > 0);
     assert.equal(next.namedVariables, undefined);
     await command('list.focusLast');
-    await expand(next.name);
+    await twistie(window, 'variables', next.name).click();
     const tail = (await observer.wait(m => !!m.body?.variables?.some(v => v.name === '102'))).body!.variables!;
     assert.deepEqual(tail.map(v => v.name), ['100', '101', '102']);
     assert.ok(observer.requests.some(m => m.arguments?.variablesReference === next.variablesReference));
@@ -129,22 +118,22 @@ export async function stepWithPendingWatch(observer: DebugObserver, gate: HeldVa
       const rows = window.locator('.debug-watch .monaco-list-row');
       await command(focus);
       await vscode.commands.executeCommand('debug.addToWatchExpressions', { variable: { evaluateName: 'rows' } });
-      const initial = (await observer.wait(m => m.command === 'evaluate' && m.body?.result === 'Rows')).body!;
-      await command(focus);
-      await command('list.focusFirst');
-      let reference = initial.variablesReference!;
+      await observer.wait(m => m.command === 'evaluate' && m.body?.result === 'Rows');
+      await rows.locator('.value').filter({ hasText: /^Rows$/ }).waitFor({ timeout: 10_000 });
       if (pane === 'Variables') {
-        await command('list.expand');
+        await twistie(window, 'watch', 'rows').click();
         await rows.locator('.value').filter({ hasText: 'Array(1)' }).first().waitFor({ timeout: 10_000 });
         await command('workbench.debug.action.focusVariablesView');
-        const locals = await observer.wait(m => !!m.body?.variables?.some(v => v.name === 'rows'));
-        reference = locals.body!.variables!.find(v => v.name === 'rows')!.variablesReference;
-        await command('list.focusFirst');
-        await command('list.focusDown');
+        await observer.wait(m => !!m.body?.variables?.some(v => v.name === 'rows'));
       }
-      const held = gate.hold(observer, reference);
-      const expanding = command('list.expand');
-      const sequence = await held;
+      const held = gate.holdFirstIndexedPage(observer);
+      const [sequence] = await Promise.all([held, twistie(window, pane === 'Watch' ? 'watch' : 'variables', 'rows').click()]);
+      const ref = observer.requests.find(m => m.seq === sequence)?.arguments?.variablesReference;
+      assert.ok(ref);
+      // A workbench refresh can evaluate the same expression more than once at this stop.
+      assert.ok(observer.count(m => pane === 'Watch'
+        ? m.command === 'evaluate' && m.body?.result === 'Rows' && m.body.variablesReference === ref
+        : !!m.body?.variables?.some(v => v.name === 'rows' && v.variablesReference === ref)));
       await command('workbench.action.debug.stepOver');
       await observer.wait(m => m.event === 'stopped', 2);
       const isOldPage = (m: { command?: string; request_seq?: number }) => m.command === 'variables' && m.request_seq === sequence;
@@ -161,7 +150,6 @@ export async function stepWithPendingWatch(observer: DebugObserver, gate: HeldVa
       }
       const stale = await observer.wait(isOldPage);
       assert.equal(stale.body?.variables?.length, 100);
-      await expanding;
       if (pane === 'Variables') {
         const vars = window.locator('.debug-variables .monaco-list-row .value');
         await vars.filter({ hasText: /^777$/ }).waitFor({ timeout: 10_000 });

@@ -474,8 +474,8 @@ checks the version and Unix executable modes, and runs the native daemon's
 and creates the annotated `jetbrains/v<version>` tag after strict qualification.
 The tagged workflow publishes one signed universal ZIP and its SHA-256. See the
 [maintainer release guide](RELEASING.md) for environment setup, first listing,
-stable updates, and recovery. The current daemon's suspended Wire host-loss
-failure and pending packaged smoke are recorded in the
+stable updates, and recovery. Results for suspended Wire host loss and
+paginated inspection in packaged GoLand are recorded in the
 [validation report](docs/debugger-validation.md).
 
 ## Smoke-test the packaged plugin
