@@ -37,6 +37,11 @@ watch, stepping and checking adapter cleanup. The packaged JetBrains
 walkthrough remains pending. The desktop automation connection expired while
 acquiring GoLand. The JetBrains platform tests cover its XDebugger callbacks.
 
+The VS Code workbench scenarios require a desktop that can give its tree
+keyboard focus. A repeat with macOS locked timed out in all ten UI scenarios.
+The two DAP tests that remove temporary working directories also passed in
+isolation after teardown was updated to await adapter process closure on Windows.
+
 ### Reproduce in the packaged IDEs
 
 1. Install the target-matched VSIX and the universal plugin ZIP in separate
