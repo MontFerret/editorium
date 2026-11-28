@@ -51,16 +51,8 @@ internal class FerretInspectionContext(
         }
     }
 
-    fun variables(node: XCompositeNode, reference: Int, bindings: Boolean = false) = children(node) {
-        dap.variables(stop, reference)?.let { response ->
-            XValueChildrenList(response.variables.size).apply {
-                response.variables.forEach { variable ->
-                    add(variable.name, FerretValue(
-                        this@FerretInspectionContext, variable.value, variable.type, variable.variablesReference,
-                        if (bindings) variable.evaluateName?.takeIf(String::isNotBlank) else null,
-                    ))
-                }
-            }
-        }
+    fun variables(node: XCompositeNode, reference: Int, named: Int?, indexed: Int?) {
+        if (node.isObsolete || !isCurrent()) return
+        FerretVariablePages(this, node, reference, named, indexed).start()
     }
 }

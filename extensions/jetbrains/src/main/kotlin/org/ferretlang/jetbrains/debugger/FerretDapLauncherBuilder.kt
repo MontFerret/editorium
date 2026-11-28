@@ -20,6 +20,14 @@ internal class FerretDapLauncherBuilder(
     private lateinit var endpoint: RemoteEndpoint
 
     init {
+        wrapMessages { next ->
+            MessageConsumer { message ->
+                if (message is org.eclipse.lsp4j.jsonrpc.messages.RequestMessage) {
+                    (message.params as? FerretVariableRequest)?.sequence = message.id.toInt()
+                }
+                next.consume(message)
+            }
+        }
         setExceptionHandler { error ->
             FerretDapErrors.log("client request", error)
             ResponseError(ResponseErrorCode.InternalError, "The Ferret debug client cannot handle this adapter request.", null)

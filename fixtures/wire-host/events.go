@@ -14,19 +14,23 @@ import (
 )
 
 type event struct {
-	Event    string  `json:"event"`
-	Endpoint string  `json:"endpoint,omitempty"`
-	ID       uint64  `json:"id,omitempty"`
-	Root     *string `json:"root,omitempty"`
-	Token    string  `json:"token,omitempty"`
+	Event    string               `json:"event"`
+	Endpoint string               `json:"endpoint,omitempty"`
+	ID       uint64               `json:"id,omitempty"`
+	Root     *string              `json:"root,omitempty"`
+	Token    string               `json:"token,omitempty"`
+	Page     *wirev1.VariablePage `json:"page,omitempty"`
+	Reads    *int64               `json:"reads,omitempty"`
 }
 
 type events struct {
-	mu       sync.Mutex
-	encoder  *json.Encoder
-	nextID   atomic.Uint64
-	ids      sync.Map
-	controls *barriers
+	mu           sync.Mutex
+	encoder      *json.Encoder
+	nextID       atomic.Uint64
+	ids          sync.Map
+	controls     *barriers
+	reads        atomic.Int64
+	incompatible bool
 }
 
 func newEvents(output io.Writer) *events {
@@ -75,6 +79,8 @@ func (e *events) observeOperation(ctx context.Context, request any, _ *grpc.Unar
 	id := value.(uint64)
 	var barrier string
 	switch r := request.(type) {
+	case *wirev1.VariablesRequest:
+		barrier = "variables"
 	case *wirev1.CompileRequest:
 		e.emit(event{Event: "compile", Token: r.GetSource().GetName(), ID: id})
 		barrier = "compile"
@@ -91,6 +97,14 @@ func (e *events) observeOperation(ctx context.Context, request any, _ *grpc.Unar
 		}
 	}
 	reply, err := handle(ctx, request)
+	switch r := request.(type) {
+	case *wirev1.EvaluateFrameRequest:
+		reads := e.reads.Load()
+		e.emit(event{Event: "evaluated", ID: id, Reads: &reads})
+	case *wirev1.VariablesRequest:
+		reads := e.reads.Load()
+		e.emit(event{Event: "page", ID: id, Page: r.GetPage(), Reads: &reads})
+	}
 	if barrier == "close" && err == nil {
 		e.emit(event{Event: "connectionClosed", ID: id})
 	}

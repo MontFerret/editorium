@@ -11,12 +11,14 @@ internal class FerretValue(
     private val type: String?,
     private val reference: Int,
     private val expression: String? = null,
+    private val named: Int? = null,
+    private val indexed: Int? = null,
 ) : XValue() {
     override fun computePresentation(node: XValueNode, place: XValuePlace) {
         if (!node.isObsolete && inspection.isCurrent()) node.setPresentation(null, type, display, reference > 0)
     }
 
-    override fun computeChildren(node: XCompositeNode) = inspection.variables(node, reference)
+    override fun computeChildren(node: XCompositeNode) = inspection.variables(node, reference, named, indexed)
 
     override fun getEvaluationExpression(): String? = expression.takeIf { inspection.isCurrent() }
 }

@@ -237,6 +237,14 @@ LET count = result.count
 RETURN count + 1
 ```
 
+The **Variables** and **Watch** views use VS Code's native collection tree.
+An expandable `Array(1000000)` shows a size summary immediately. Expand a
+range to read its elements. For large named and unknown-size views, follow the
+adapter's groups, ranges, or continuation (for example `[100…]`). A missing
+count means the size of that view is unknown. Each child reference belongs to
+the current stop. External runtime hosts require Wire handshake revision `v2`
+(Wire `v1.0.0-alpha.6`).
+
 Set a breakpoint on the second line and press F5. Inspect `result` in Locals
 and `@value` in Parameters. Add `result.count` to Watch, step over the
 assignment, then continue to see `3` in the Debug Console. With the runtime

@@ -192,6 +192,7 @@ internal class FerretDapSession(
                 columnsStartAt1 = true
                 pathFormat = "path"
                 supportsVariableType = true
+                supportsVariablePaging = true
                 supportsRunInTerminalRequest = false
             })
         }, fatalTimeout = false, failed = ::adapterFailed) { result ->
@@ -319,13 +320,25 @@ internal class FerretDapSession(
         server.scopes(ScopesArguments().apply { this.frameId = frameId })
     }
 
-    suspend fun variables(stop: FerretDapStop, reference: Int): VariablesResponse? {
+    suspend fun variables(
+        stop: FerretDapStop, reference: Int, filter: VariablesArgumentsFilter? = null,
+        start: Int? = null, count: Int? = null,
+    ): VariablesResponse? {
         if (!isCurrentStop(stop)) return null
         // Leaf values have no remote children, including summarized collections.
         if (reference <= 0) return VariablesResponse().apply { variables = emptyArray() }
-        return inspect(stop, "variables") {
-            server.variables(VariablesArguments().apply { variablesReference = reference })
+        val arguments = FerretVariableRequest().apply {
+            variablesReference = reference
+            this.filter = filter
+            this.start = start
+            this.count = count
         }
+        return inspect(stop, "variables", abandoned = {
+            if (capabilities?.supportsCancelRequest == true) arguments.sequence?.let { id ->
+                // Leave the original future registered so its eventual response remains correlated.
+                server.cancel(CancelArguments().apply { requestId = id })
+            }
+        }) { server.variables(arguments) }
     }
 
     suspend fun evaluate(stop: FerretDapStop, frameId: Int, expression: String): EvaluateResponse? =
@@ -336,14 +349,16 @@ internal class FerretDapSession(
             })
         }
 
-    private suspend fun <T> inspect(stop: FerretDapStop, name: String, operation: () -> CompletableFuture<T>): T? {
+    private suspend fun <T> inspect(
+        stop: FerretDapStop, name: String, abandoned: () -> Unit = {}, operation: () -> CompletableFuture<T>,
+    ): T? {
         if (!isCurrentStop(stop)) return null
         val result = CompletableDeferred<T?>()
         if (!enqueue {
             if (!isCurrentStop(stop)) {
                 result.complete(null)
             } else {
-                val abandon = request(name, operation, fatalTimeout = false, failed = {
+                val abandon = request(name, operation, fatalTimeout = false, abandoned = abandoned, failed = {
                     inspections.remove(result)
                     if (isCurrentStop(stop)) {
                         FerretDapErrors.log(name, it)
@@ -438,6 +453,7 @@ internal class FerretDapSession(
         operation: () -> CompletableFuture<T>,
         startup: Boolean = false,
         fatalTimeout: Boolean = true,
+        abandoned: () -> Unit = {},
         failed: (Throwable) -> Unit = ::fail,
         succeeded: (T) -> Unit,
     ): () -> Unit {
@@ -453,6 +469,7 @@ internal class FerretDapSession(
             enqueue {
                 if (!delivered) {
                     delivered = true
+                    if (!future.isDone) abandoned()
                     // Control acceptance is unknown after a timeout; read-only inspection can fail locally.
                     val error = IllegalStateException("Ferret DAP $name timed out.")
                     failed(error)
@@ -469,8 +486,13 @@ internal class FerretDapSession(
                 } else failed(error.cause ?: error)
             }
         } }
-        // Called only by the state queue. Do not emit unsupported DAP cancellation requests.
-        return { delivered = true; timer?.cancel() }
+        return {
+            if (!delivered) {
+                delivered = true
+                timer?.cancel()
+                if (!future.isDone) abandoned()
+            }
+        }
     }
 
     private fun enqueue(event: () -> Unit): Boolean = events.trySend {

@@ -1,5 +1,60 @@
 # JetBrains debugger validation
 
+## November 28, 2026 paginated inspection
+
+The macOS arm64 tests used the checksum-verified alpha.14 daemon and an
+independent Wire v2 application. Both link API alpha.22, Core alpha.63, and
+Wire alpha.6. Both protocol generators and drift checks passed with identical
+client output. Plugin Verifier reported compatible for IDEA 2026.2.0.1 and
+2026.3 and GoLand 2026.2.4 and 2026.3. Package checks verified the macOS arm64
+VSIX and all six daemon payloads in the universal ZIP.
+
+| Indexed source length | Provider reads to describe | First request | Provider reads for that request |
+| ---: | ---: | --- | ---: |
+| 100 | 0 | indexed, start 0, count 100 | 100 |
+| 10,000 | 0 | indexed, start 0, count 100 | 100 |
+| 1,000,000 | 0 | indexed, start 0, count 100 | 100 |
+
+The child-read counter is in the Wire fixture's safe provider. Separate tests
+ran FQL arrays and buffered datasets on both released runtime paths and checked
+the absolute names at the beginning and tail. The XDebugger watch model
+appended two 100-row batches for a million-row dataset. The VS Code 1.95
+extension host opened the real Variables pane on local and Wire runtimes.
+Its first two leaf ranges sent indexed requests at offsets 0 and 100.
+A Wire test followed the virtual Named group through its unknown-size
+continuation. A separate watch test stepped with an outstanding page and
+observed the replacement stop's single child.
+
+The packaged interactive walkthrough below remains pending in both IDEs.
+The JetBrains desktop automation connection expired while acquiring GoLand.
+The automated VS Code observations used the development extension host.
+
+### Reproduce in the packaged IDEs
+
+1. Install the target-matched VSIX and the universal plugin ZIP in separate
+   test profiles. Open a folder containing this saved `pages.fql`.
+
+   ```fql
+   LET results = (FOR n IN 0..999999 RETURN n)
+   LET sample = {rows: [1, 2]}
+   LET next = sample.rows[0] + 1
+   RETURN [next, results[0]]
+   ```
+
+2. Break on `LET next` and debug the file with the local runtime. In Locals,
+   check `results` displays `Array(1000000)`. In JetBrains expand it and use
+   the ellipsis. In VS Code open the first two leaf ranges. Check names
+   `0` through `99`, then `100` through `199`, and revisit the first page.
+3. Expand `sample`, then `rows`. Add `results` as a watch and open a page.
+   Step over the assignment and inspect `next` at the new stop. Stop and
+   verify that the launch's `ferretd dap` process exits.
+4. Start the independent Wire fixture from `fixtures/wire-host` with
+   `go run .`, leaving stdin open. In the runtime configuration set the
+   `App` Wire endpoint to the printed loopback address and enable
+   `insecure` for this fixture. Select `App` explicitly in each editor,
+   reload the runtime configuration and repeat. The fixture must remain
+   available after Stop. Close its stdin to end the application.
+
 ## November 14, 2026 ferretd alpha.13
 
 The published `1.0.0-alpha.13` daemon advertises API 1.4. On macOS arm64,

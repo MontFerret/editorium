@@ -130,6 +130,54 @@ class FerretNativeInspectionIntegrationTest : HeavyPlatformTestCase() {
         }
     }
 
+    fun testNativeWatchLoadsTwoPagesAndInvalidatesItsCallbackAfterStep() {
+        val connection = FerretdDaemonConnection.testing(lifetime, pinnedTestInstallation())
+        project.replaceService(FerretdDaemonConnection::class.java, connection, testRootDisposable)
+        val root = Files.createDirectories(Path.of(requireNotNull(project.basePath)).resolve(".tmp/page-watch"))
+        val path = Files.writeString(root.resolve("watch.fql"),
+            "LET rows = (FOR n IN 0..999999 RETURN n)\nLET size = LENGTH(rows)\nRETURN size")
+        val file = requireNotNull(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path))
+        val manager = XDebuggerManager.getInstance(project)
+        val type = XDebuggerUtil.getInstance().findBreakpointType(FerretBreakpointType::class.java)
+        WriteCommandAction.runWriteCommandAction(project) {
+            breakpoints.add(manager.breakpointManager.addLineBreakpoint(type, file.url, 1, null))
+        }
+        WireHost.start(root, controlled = true).use { host ->
+            connection.applyConfigPath(host.configure(root.resolve("runtimes.json")).toString())
+            for (runtime in listOf("local", "App")) {
+                NativeFerretLaunch(project, DefaultDebugExecutor.getDebugExecutorInstance()).use { launch ->
+                    val descriptor = launch.start(path, runtime, "{}")
+                    PlatformTestUtil.waitWithEventsDispatching("Paged Debug did not suspend", {
+                        manager.debugSessions.any { it.debugProcess.processHandler === descriptor.processHandler && it.isSuspended }
+                    }, 20)
+                    val session = manager.debugSessions.single { it.debugProcess.processHandler === descriptor.processHandler }
+                    awaitStop(session, null)
+                    val value = evaluateValue(session, "rows")
+                    assertEquals("Array(1000000)", present(value).value)
+                    assertEquals(0, host.count("page"))
+                    val node = DapTestCompositeNode()
+                    value.computeChildren(node)
+                    await(lifetime.future { node.children.receive() })
+                    val (remaining, more) = await(lifetime.future { node.more.receive() })
+                    assertEquals(999900, remaining)
+                    assertEquals(if (runtime == "App") 1 else 0, host.count("page"))
+                    more.run()
+                    await(lifetime.future { node.children.receive() })
+                    val (after, stale) = await(lifetime.future { node.more.receive() })
+                    assertEquals(999800, after)
+                    assertEquals((0..199).map(Int::toString), node.batches.flatMap { it.first })
+                    val before = session.suspendContext
+                    session.stepOver(false)
+                    awaitStop(session, before)
+                    stale.run()
+                    assertEquals(if (runtime == "App") 2 else 0, host.count("page"))
+                    session.resume()
+                    assertTrue(launch.outputLines().contains("1000000"))
+                }
+            }
+        }
+    }
+
     fun testHostedProjectDisposalReapsRunAndDebugAndPreservesApplication() {
         val root = Files.createTempDirectory("hosted-project")
         val installation = pinnedTestInstallation()

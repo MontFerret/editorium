@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit
 import java.nio.file.Files
 
 class FerretInspectionPlatformTest : BasePlatformTestCase() {
-    fun testScopesAndNestedValuesAreLazyAndOnlyBindingsHaveEvaluationExpressions() = scenario {
+    fun testScopesAndNestedValuesAreLazyAndUseSuppliedEvaluationExpressions() = scenario {
         val context = context()
         val frame = FerretStackFrame(42, "caller", context, null)
         val node = DapTestCompositeNode()
@@ -59,14 +59,14 @@ class FerretInspectionPlatformTest : BasePlatformTestCase() {
         withContext(Dispatchers.EDT) { box.computeChildren(node) }
         adapter.variableRequests.receive().also {
             assertEquals(9, it.first.variablesReference)
-            it.second.complete(VariablesResponse().apply { this.variables = arrayOf(variable("child", "Array", "[1]", 10, "child")) })
+            it.second.complete(VariablesResponse().apply { this.variables = arrayOf(variable("child", "Array", "Array(1)", 10, "box.child")) })
         }
         val child = node.children.receive().getValue(0)
-        assertNull(child.evaluationExpression)
+        assertEquals("box.child", child.evaluationExpression)
         withContext(Dispatchers.EDT) { child.computeChildren(node) }
         adapter.variableRequests.receive().also {
             assertEquals(10, it.first.variablesReference)
-            it.second.complete(VariablesResponse().apply { this.variables = arrayOf(variable("0", "Int", "1", 0, "0")) })
+            it.second.complete(VariablesResponse().apply { this.variables = arrayOf(variable("0", "Int", "1", 0, null)) })
         }
         assertNull(node.children.receive().getValue(0).evaluationExpression)
         withContext(Dispatchers.EDT) { groups[1].computeChildren(node) }
@@ -75,6 +75,75 @@ class FerretInspectionPlatformTest : BasePlatformTestCase() {
             it.second.complete(VariablesResponse().apply { this.variables = arrayOf(variable("@input", "String", "\"text\"", 0, "@input")) })
         }
         assertEquals("@input", node.children.receive().getValue(0).evaluationExpression)
+    }
+
+    fun testPagedPresentationAppendsOnceAndKeepsIndependentKindsAndCursors() = scenario {
+        val inspection = context()
+        val value = FerretValue(inspection, "mixed", "Rows", 42, named = 1, indexed = 103)
+        val node = DapTestCompositeNode()
+        suspend fun answer(kind: VariablesArgumentsFilter, start: Int, count: Int, names: List<String>) {
+            val (args, response) = adapter.variableRequests.receive()
+            assertEquals(listOf(kind, start, count), listOf(args.filter, args.start, args.count))
+            response.complete(VariablesResponse().apply { variables = names.map { variable(it, "Int", "7", 0, null) }.toTypedArray() })
+            node.children.receive()
+        }
+        withContext(Dispatchers.EDT) { value.computeChildren(node) }
+        answer(VariablesArgumentsFilter.NAMED, 0, 1, listOf("0"))
+        val (indexedRemaining, next) = node.more.receive()
+        assertEquals(103, indexedRemaining)
+        withContext(Dispatchers.EDT) { next.run(); next.run() }
+        answer(VariablesArgumentsFilter.INDEXED, 0, 100, (0..99).map(Int::toString))
+        val (tailSize, tail) = node.more.receive()
+        assertEquals(3, tailSize)
+        withContext(Dispatchers.EDT) { next.run(); tail.run() }
+        val (failed, response) = adapter.variableRequests.receive()
+        assertEquals(100, failed.start)
+        response.completeExceptionally(rejected())
+        assertEquals("unknown binding", node.errors.receive())
+        withContext(Dispatchers.EDT) {
+            requireNotNull(node.retry).onClick(java.awt.event.MouseEvent(javax.swing.JPanel(), 0, 0, 0, 0, 0, 1, false))
+        }
+        answer(VariablesArgumentsFilter.INDEXED, 100, 3, listOf("100", "101", "102"))
+        assertTrue(node.sorted)
+        assertEquals(listOf(false, false, true), node.batches.map { it.second })
+        assertEquals(listOf("0") + (0..102).map(Int::toString), node.batches.flatMap { it.first })
+        val watch = DapTestCompositeNode()
+        withContext(Dispatchers.EDT) { value.computeChildren(watch) }
+        val (initial, pending) = adapter.variableRequests.receive()
+        assertEquals(0, initial.start)
+        val id = (1..5).map { adapter.variableSequences.receive() }.last()
+        watch.obsolete = true
+        assertEquals(id, adapter.cancellations.receive())
+        pending.completeExceptionally(rejected())
+        assertTrue(watch.batches.isEmpty())
+        assertTrue(watch.errors.tryReceive().isFailure)
+    }
+
+    fun testUnknownIndexedPageCanExposeContinuationAfterOneHundredRows() = scenario {
+        val value = FerretValue(context(), "stream", "Rows", 42, named = 0)
+        val node = DapTestCompositeNode()
+        withContext(Dispatchers.EDT) { value.computeChildren(node) }
+        val (first, response) = adapter.variableRequests.receive()
+        assertEquals(VariablesArgumentsFilter.INDEXED, first.filter)
+        assertEquals(100, first.count)
+        response.complete(VariablesResponse().apply { variables = Array(100) { variable(it.toString(), "Int", "1", 0, null) } })
+        node.children.receive()
+        val (unknown, next) = node.more.receive()
+        assertEquals(-1, unknown)
+        assertTrue(adapter.variableRequests.tryReceive().isFailure)
+        withContext(Dispatchers.EDT) { next.run() }
+        val (second, continuation) = adapter.variableRequests.receive()
+        assertEquals(100, second.start)
+        continuation.complete(VariablesResponse().apply {
+            variables = arrayOf(variable("[100…]", "", "", 73, null).apply { namedVariables = 0 })
+        })
+        val child = node.children.receive().getValue(0)
+        assertTrue(node.batches.last().second)
+        withContext(Dispatchers.EDT) { child.computeChildren(DapTestCompositeNode()) }
+        val (third, empty) = adapter.variableRequests.receive()
+        assertEquals(73, third.variablesReference)
+        assertEquals(0, third.start)
+        empty.complete(VariablesResponse().apply { variables = emptyArray() })
     }
 
     fun testCanonicalLeafPresentationsNeverRequestChildrenIncludingLargeSummaries() = scenario {
@@ -269,7 +338,7 @@ class FerretInspectionPlatformTest : BasePlatformTestCase() {
 
     private fun scope(name: String, reference: Int) = Scope().apply { this.name = name; variablesReference = reference }
 
-    private fun variable(name: String, type: String, display: String, reference: Int, expression: String) = Variable().apply {
+    private fun variable(name: String, type: String, display: String, reference: Int, expression: String?) = Variable().apply {
         this.name = name; this.type = type; value = display; variablesReference = reference; evaluateName = expression
     }
 

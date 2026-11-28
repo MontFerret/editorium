@@ -376,14 +376,17 @@ the current values. An expression or node-level request error does not end an
 otherwise usable session. Runtime-failure stops remain inspectable until resumed
 or terminated.
 
-Current upstream limitations:
+An expandable array displays its semantic size, such as `Array(1000000)`.
+Open it to load up to 100 children, then activate the ellipsis to append the next
+page. An exact remainder counts the immediate children of this node. An unknown
+remainder keeps the ellipsis available after a full page. Groups, ranges, and
+continuations such as `[100…]` expand like other values. A summary with no child
+reference is a leaf. The same behavior applies to evaluated expressions and watches.
 
-- Collections exceeding the inspection limit (currently eight items) can appear
-  as summaries such as `Array(9)` without expansion. The plugin does not fabricate
-  children or provide variable paging.
-- Nested values currently supply bare names rather than qualified evaluation
-  expressions. Their automatic add-to-watch expression is unavailable. Enter a
-  valid member/index expression manually in Watches or Evaluate Expression.
+Property names are displayed exactly as returned. Automatic watch expressions
+use the adapter's supplied expression. For other children, enter a valid
+expression in Watches. External runtime applications require Wire handshake
+revision `v2` (Wire `v1.0.0-alpha.6`).
 
 Debug compiles a snapshot of the saved source at launch. Editing or saving the
 source while paused does not recompile that session; changed line numbers may

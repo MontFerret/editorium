@@ -22,8 +22,9 @@ import (
 func main() {
 	root := flag.String("root", ".", "application filesystem root")
 	controlled := flag.Bool("control", false, "enable integration-test barriers on stdin")
+	incompatible := flag.Bool("incompatible-handshake", false, "return a mismatched Wire revision for negative tests")
 	flag.Parse()
-	if err := serve(*root, *controlled); err != nil {
+	if err := serve(*root, *controlled, *incompatible); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -40,12 +41,13 @@ func coreVersion() (api.Version, error) {
 	return "", errors.New("missing Ferret Core module version in fixture build")
 }
 
-func serve(root string, controlled bool) (err error) {
+func serve(root string, controlled, incompatible bool) (err error) {
 	version, err := coreVersion()
 	if err != nil {
 		return err
 	}
 	events := newEvents(os.Stdout)
+	events.incompatible = incompatible
 	options := []server.Option{server.WithStreamInterceptors(events.observe)}
 	if controlled {
 		events.controls = newBarriers(events)
@@ -53,6 +55,9 @@ func serve(root string, controlled bool) (err error) {
 	}
 	host, err := uapi.New(version, ferret.WithFSRoot(root),
 		ferret.WithFunctionsRegistrar(func(ns runtime.Namespace) {
+			ns.Namespace("DEMO").Function().A2().Add("INSPECTED", func(ctx context.Context, shape, size runtime.Value) (runtime.Value, error) {
+				return newInspectionRows(ctx, shape, size, &events.reads)
+			})
 			functions := ns.Namespace("DEMO").Function().A1()
 			functions.Add("IDENTITY", func(_ context.Context, value runtime.Value) (runtime.Value, error) {
 				return value, nil

@@ -26,6 +26,7 @@ class FerretDapSessionTest {
         assertTrue(preferences.columnsStartAt1)
         assertEquals("path", preferences.pathFormat)
         assertTrue(preferences.supportsVariableType)
+        assertTrue(preferences.supportsVariablePaging)
         session.replaceBreakpoints(batch(2, 3))
         val second = adapter.breakpointRequests.receive()
         first.second.complete(response(11, 2))

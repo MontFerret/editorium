@@ -88,7 +88,8 @@ Each Debug session runs an independent `ferretd dap` process and provides
 native XDebugger breakpoints, control commands, stacks, and
 source navigation. Suspended frames provide lazy Locals/Parameters scopes,
 typed expandable values, expression evaluation, and native watches, including
-caller-frame inspection within the daemon's supported limits.
+caller-frame inspection. Both editors load large indexed collections on demand.
+JetBrains offers the next page in the Variables tree. VS Code uses its native ranges.
 
 Run and Debug accept explicitly selected lowercase `.fql` regular files beneath
 discovery-excluded directories such as `.tmp` and `testdata`, including nested
@@ -100,10 +101,11 @@ and the daemon's nested-symlink restrictions still apply.
 
 [`ferretd.json`](ferretd.json) is the sole version pin for both the daemon
 bundled in distributions and the ferretd protocol schemas used to generate
-editor clients. The current pin is `1.0.0-alpha.13`, which advertises API 1.4.
+editor clients. The current pin is `1.0.0-alpha.14`, which advertises API 1.4.
 Both editors request API 1.1 for local execution and accept API major 1 with
 minor 1 or later. Catalog-based runtime selection requires API 1.3. VS Code
-Wire Run and Debug require API 1.4. Run uses acquisition cancellation when a
+Wire Run and Debug require API 1.4. External applications must support Wire
+handshake revision `v2` (Wire `v1.0.0-alpha.6`). Run uses acquisition cancellation when a
 Session creation reply is lost. Each editor’s Debug integration checks its own adapter’s
 `supportsFerretRuntimeSelection` capability for a configured file or explicit
 selector, including `local`.
@@ -192,8 +194,8 @@ qualification on three operating systems before signing the universal ZIP and pu
 GitHub Releases. Exact stable plugin versions can subsequently go to the
 JetBrains Marketplace after manual first-listing bootstrap.
 
-The [alpha.13 validation record](extensions/jetbrains/docs/debugger-validation.md#november-14-2026-ferretd-alpha13)
-includes the suspended Wire host-loss check. The packaged GoLand walkthrough
+The [debugger validation record](extensions/jetbrains/docs/debugger-validation.md)
+covers bounded collection inspection and suspended Wire host loss. The packaged GoLand walkthrough
 remains pending. Maintainer setup, bootstrap and recovery are in the
 [JetBrains release guide](extensions/jetbrains/RELEASING.md).
 

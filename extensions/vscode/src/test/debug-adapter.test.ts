@@ -49,6 +49,39 @@ suite('owned Ferret debug adapter', () => {
     assert.equal(closed, 1);
   });
 
+  test('preserves inspection capabilities, page identities, virtual metadata and targeted cancellation', async () => {
+    for (const capabilities of [{}, { supportsVariablePaging: true, supportsVariableType: true }]) {
+      const child = new DebugChild();
+      const adapter = new FerretDebugTransport(prepare, output, () => {}, () => child.process);
+      const messages: object[] = [];
+      adapter.onDidSendMessage(m => messages.push(m));
+      try {
+        const init = { ...initialize, arguments: capabilities };
+        adapter.handleMessage(init);
+        await new Promise(resolve => setImmediate(resolve));
+        assert.deepEqual(child.stdin.read(), frame(init));
+        const page = { type: 'request', seq: 42, command: 'variables',
+          arguments: { variablesReference: 9, filter: 'indexed', start: 100, count: 100 } };
+        const cancel = { type: 'request', seq: 44, command: 'cancel', arguments: { requestId: 42 } };
+        adapter.handleMessage(page);
+        adapter.handleMessage(cancel);
+        assert.deepEqual(child.stdin.read(), Buffer.concat([frame(page), frame(cancel)]));
+        const ack = { type: 'response', seq: 73, request_seq: 44, command: 'cancel', success: true };
+        const reply = { type: 'response', seq: 74, request_seq: 42, command: 'variables', success: true, body: {
+          variables: [{ name: '[100…]', value: '', variablesReference: 91, namedVariables: 0,
+            presentationHint: { kind: 'virtual' } }, { name: 'e\u0301😀', value: 'Array(0)', type: 'Array',
+            variablesReference: 0, indexedVariables: 0 }],
+        } };
+        child.stdout.write(Buffer.concat([frame(ack), frame(reply)]));
+        assert.deepEqual(messages, [ack, reply]);
+      } finally {
+        adapter.dispose();
+        child.emit('close', 0);
+        await adapter.shutdown();
+      }
+    }
+  });
+
   test('releases failed resolution and confirmed failed spawn, and waits for stream failure teardown', async () => {
     for (const failure of ['resolve', 'spawn', 'stream']) {
       const child = new DebugChild();

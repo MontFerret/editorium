@@ -24,6 +24,9 @@ internal class DapTestProcess(adapter: DapTestAdapter, private val requiresForce
     private val launcher = DebugLauncher.createLauncher(
         adapter, IDebugProtocolClient::class.java, serverInput, serverOutput, executor, { delegate ->
             MessageConsumer { message ->
+                if (message is org.eclipse.lsp4j.jsonrpc.messages.RequestMessage && message.method == "variables") {
+                    adapter.variableSequences.trySend(message.id.toInt())
+                }
                 if (message is DebugResponseMessage && message.error == null) {
                     adapter.responseBody(message.method, message.result)?.let { message.result = it }
                 }

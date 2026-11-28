@@ -463,8 +463,7 @@ default absence of cross-stop equality.
 
 `FerretStackFrame.computeChildren` fetches `scopes(frameId)`. Present the
 returned scopes as native groups; fetch their variables on expansion. Further
-expansion sends `variables(variablesReference)` only when a positive handle
-exists.
+expansion requests a bounded DAP page for a positive reference.
 
 Use upstream `type` and display text directly:
 
@@ -475,14 +474,24 @@ Use upstream `type` and display text directly:
 - Nested values use the same recursive adapter.
 - No value modifier, object marker, or local full-value evaluator is provided.
 
-There is **no variable paging support** in current DAP. Do not send filtering,
-start, or count arguments.
+The client advertises variable paging and semantic types. Scope, variable, and
+evaluation results carry optional immediate named and indexed counts. Zero
+exhausts a kind. A missing count is unknown. A positive reference permits
+expansion even with an unknown count.
 
-A significant existing limit is that default formatting allows eight items:
-collections larger than eight have a summary and no expandable reference. A
-live probe returned `Array(9)` with reference `0`. Display that honestly;
-complete large-collection inspection requires an upstream capability and is
-not fabricated in Kotlin.
+Each XDebugger presentation owns its next filtered offset. It reads named
+before indexed children, up to `XCompositeNode.MAX_CHILDREN_TO_SHOW` (100).
+The EDT appends the returned rows in adapter order and registers the next
+`tooManyChildren(remaining, Runnable)` callback. A full unknown page offers
+another load with remainder `-1`. Failed pages retain their offset for Retry.
+The user can continue to indexed children when the named view fails. Ranges,
+groups, and continuations are ordinary handles issued by the daemon.
+
+The session sends a targeted DAP cancel for an abandoned or timed-out page
+when the adapter supports it. The outgoing LSP4J message supplies its request
+sequence. Both replies remain correlated, including when the page completes
+before cancellation arrives. The EDT rechecks the stop and the target node
+before publishing a page, error, or continuation.
 
 Handles are opaque and valid only while paused. Invalidate inspection work
 when execution resumes, steps, or terminates. Guard all asynchronous results
@@ -509,9 +518,8 @@ The shared evaluator callback does not reliably identify watch versus dialog
 requests. Use the common evaluation request without guessing a DAP context;
 enforce stale-state handling locally.
 
-Expose evaluation expressions for valid top-level bindings. Current DAP
-incorrectly uses bare child names as nested `evaluateName` values; do not offer
-those as valid standalone watch expressions.
+Keep the original explicitly evaluated expression and the adapter's supplied
+`evaluateName` for a binding. Ordinary child expansion follows the reference.
 
 The baseline Debug console is the standard output console. An evaluator does
 not automatically create an interactive REPL. Native `LanguageConsoleBuilder`
@@ -592,11 +600,6 @@ version until its release contains and validates these prerequisites.
 
 ### Existing limitations, not new M3 requirements
 
-- Large collections lack expandable handles and paging. Complete expansion
-  would require Ferret inspection changes, a portable paging contract, and DAP
-  adaptation.
-- Nested `evaluateName` values are not qualified expressions; omit unsupported
-  watch-expression affordances.
 - Conditional/log/hit-count breakpoints, arbitrary evaluation, variable
   mutation, attach, reverse execution, and restart-in-place remain unsupported.
 - Interactive console evaluation and automatic hover-expression extraction are
