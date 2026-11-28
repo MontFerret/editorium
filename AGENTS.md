@@ -274,8 +274,9 @@ are nonfatal. Source edits do not replace an active debug session's compiled sna
 Inspection requests and presentation belong to one stop generation. Resume,
 stepping, replacement stops, and disposal invalidate their handles and callbacks.
 Ordinary inspection errors remain local to the node or evaluator; transport loss
-ends the session. Values use upstream types, display text, and child references;
-do not synthesize collection paging or nested evaluation expressions.
+ends the session. Values use upstream types, display text, optional immediate counts and child
+references. Load DAP pages through native XDebugger callbacks. The daemon owns
+range and continuation handles and supplies safe evaluation expressions.
 
 Configured Debug launches use the fingerprint and absolute configuration path
 captured across admitted generation startup. Verify the bytes before spawning

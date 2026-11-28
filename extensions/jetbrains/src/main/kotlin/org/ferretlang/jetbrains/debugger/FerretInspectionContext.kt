@@ -11,6 +11,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.WeakHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Presentation lifetime for one stop. All handle validity remains owned by the DAP session. */
 internal class FerretInspectionContext(
@@ -19,6 +21,9 @@ internal class FerretInspectionContext(
     private val scope: CoroutineScope,
     private val project: Project,
 ) {
+    // XDebugger may refresh the same node in place. Weak keys retain no editor nodes or pages.
+    private val presentations = WeakHashMap<XCompositeNode, AtomicBoolean>()
+
     fun isCurrent(): Boolean = !project.isDisposed && dap.isCurrentStop(stop)
 
     fun <T> request(operation: suspend () -> T?, completed: (Result<T?>) -> Unit) {
@@ -51,16 +56,10 @@ internal class FerretInspectionContext(
         }
     }
 
-    fun variables(node: XCompositeNode, reference: Int, bindings: Boolean = false) = children(node) {
-        dap.variables(stop, reference)?.let { response ->
-            XValueChildrenList(response.variables.size).apply {
-                response.variables.forEach { variable ->
-                    add(variable.name, FerretValue(
-                        this@FerretInspectionContext, variable.value, variable.type, variable.variablesReference,
-                        if (bindings) variable.evaluateName?.takeIf(String::isNotBlank) else null,
-                    ))
-                }
-            }
-        }
+    fun variables(node: XCompositeNode, reference: Int, named: Int?, indexed: Int?) {
+        if (node.isObsolete || !isCurrent()) return
+        val active = AtomicBoolean(true)
+        synchronized(presentations) { presentations.put(node, active)?.set(false) }
+        FerretVariablePages(this, node, active, reference, named, indexed).start()
     }
 }

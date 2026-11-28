@@ -565,8 +565,8 @@ class FerretExecutionClientTest {
             reply.complete(Unit)
             assertEquals(130, run.exit.awaitResult())
             assertFalse(fixture.connection.catalogState.value.busy)
-            assertTrue(fixture.rpc.calls.none { it.startsWith("createExecution:") })
             withTimeout(5_000) { fixture.scope.coroutineContext[kotlinx.coroutines.Job]!!.join() }
+            assertTrue(fixture.rpc.calls.none { it.startsWith("createExecution:") })
         } finally {
             reply.complete(Unit)
             fixture.close()

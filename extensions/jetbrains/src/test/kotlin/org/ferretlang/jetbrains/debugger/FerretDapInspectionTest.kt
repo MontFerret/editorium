@@ -37,7 +37,7 @@ class FerretDapInspectionTest {
         }
     }
 
-    @Test fun inspectionUsesExactHandlesAndUnmodifiedExpressionsWithoutPaging() = scenario {
+    @Test fun inspectionPreservesOmittedRangesAndUnmodifiedExpressions() = scenario {
         val stop = suspendSession()
         assertFalse(adapter.history.any { it in listOf("scopes", "variables", "evaluate") })
         val requests = pending(stop)
@@ -53,6 +53,28 @@ class FerretDapInspectionTest {
         assertTrue(requests.results.all { it.await() != null })
         for (reference in listOf(0, -1)) assertTrue(requireNotNull(session.variables(stop, reference)).variables.isEmpty())
         assertEquals(1, adapter.history.count { it == "variables" })
+    }
+
+    @Test fun cancellationAddressesOnlyTheAbandonedWireRequest() = scenario {
+        val stop = suspendSession()
+        val first = scope.async { session.variables(stop, 7, VariablesArgumentsFilter.NAMED, 10, 15) }
+        val (args, late) = adapter.variableRequests.receive()
+        val firstId = adapter.variableSequences.receive()
+        assertEquals(VariablesArgumentsFilter.NAMED, args.filter)
+        assertEquals(10, args.start)
+        assertEquals(15, args.count)
+        val second = scope.async { session.variables(stop, 8, VariablesArgumentsFilter.INDEXED, 0, 10) }
+        val (_, live) = adapter.variableRequests.receive()
+        assertNotEquals(firstId, adapter.variableSequences.receive())
+        first.cancel()
+        first.join()
+        assertEquals(firstId, adapter.cancellations.receive())
+        late.completeExceptionally(rejected())
+        live.complete(VariablesResponse().apply { variables = emptyArray() })
+        assertNotNull(second.await())
+        barrier(stop)
+        assertTrue(session.isCurrentStop(stop))
+        assertTrue(listener.errors.tryReceive().isFailure)
     }
 
     @Test fun everyResumeCommandSettlesInspectionBeforeItsResponseAndIgnoresLateReplies() = scenario {
@@ -140,8 +162,10 @@ class FerretDapInspectionTest {
         // Awaiting the later batch's deadlines proves the older deadlines have elapsed, without sleeps.
         val timedOut = pending(current)
         timedOut.results.forEach { assertTrue(runCatching { it.await() }.exceptionOrNull() is IllegalStateException) }
-        obsolete.respond(true)
-        timedOut.respond(false)
+        for (batch in listOf(obsolete, timedOut)) {
+            assertEquals(adapter.variableSequences.receive(), adapter.cancellations.receive())
+            batch.respond(batch === obsolete)
+        }
         barrier(current)
         assertTrue(session.isCurrentStop(current))
         assertFalse(session.completion.isCompleted)

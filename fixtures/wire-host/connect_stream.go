@@ -14,6 +14,9 @@ type connectStream struct {
 
 func (s *connectStream) SendMsg(message any) error {
 	response := message.(*wirev1.ConnectResponse)
+	if s.events.incompatible {
+		response.Protocol.Version = "incompatible-test-revision"
+	}
 	s.connection = response.GetConnectionId().GetValue()
 	s.events.ids.Store(s.connection, s.id)
 	if _, err := s.events.controls.wait(s.Context(), "connect", s.id); err != nil {

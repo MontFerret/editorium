@@ -31,7 +31,8 @@ internal class FerretDebuggerEvaluator(
                 if (value == null) {
                     callback.invalidExpression("Evaluation is no longer available for this stop.")
                 } else {
-                    callback.evaluated(FerretValue(inspection, value.result, value.type, value.variablesReference, expression))
+                    callback.evaluated(FerretValue(inspection, value.result, value.type, value.variablesReference,
+                        expression, value.namedVariables, value.indexedVariables))
                 }
             }, { callback.invalidExpression(FerretDapErrors.message(it, "Cannot evaluate this Ferret expression.")) })
         }

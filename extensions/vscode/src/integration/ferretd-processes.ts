@@ -20,9 +20,12 @@ export class FerretdProcesses {
       const command = child.spawnargs[1];
       if (relative(this.executable, child.spawnfile) !== '' || (command !== 'dap' && command !== 'serve')) return;
       this.children[command].push(child);
+      if (command === 'dap') this.onDapSpawn?.(child);
       this.closures.set(child, new Promise(resolve => child.once('close', () => resolve())));
     });
   };
+
+  public onDapSpawn?: (child: ChildProcess) => void;
 
   public starts(command: Command): readonly ChildProcess[] {
     return [...this.children[command]];

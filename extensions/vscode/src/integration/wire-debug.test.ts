@@ -4,10 +4,12 @@ import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, sep } from 'node:path';
 import * as vscode from 'vscode';
 import { extensionId } from '../test/extension-identity';
+import { HeldVariableReply } from './held-variable-reply';
 import { DebugObserver } from './debug-observer';
 import { FerretdProcesses } from './ferretd-processes';
 import { waitForExecutionOutput } from './execution-output';
 import { WireHost } from './wire-host';
+import { inspectIndexedCollection, inspectVirtualGroups, stepWithPendingWatch } from './variables-view';
 
 suite('Wire debugging through VS Code', () => {
   const target = vscode.ConfigurationTarget.Global;
@@ -115,6 +117,46 @@ suite('Wire debugging through VS Code', () => {
     await vscode.commands.executeCommand('quickInput.' + position);
     await vscode.commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem');
   }
+
+  for (const runtimeName of ['local', 'App']) {
+    for (const [kind, size] of [['array', 100], ['array', 10_000], ['array', 1_000_000], ['dataset', 1_000_000]] as const) {
+      test(`opens ${kind} of ${size} in the Variables view on ${runtimeName}`, async () => {
+        const file = 'large.fql';
+        const program = uri(file);
+        const source = kind === 'array' ? `ARRAYS::RANGE(0, ${size - 1})` : `(FOR n IN 0..${size - 1} RETURN n)`;
+        await writeFile(program.fsPath, `LET results = ${source}\nLET sample = {rows: [1, 2]}\nLET size = LENGTH(results)\nRETURN size + sample.rows[0]`);
+        breakpoints.push(new vscode.SourceBreakpoint(new vscode.Location(program, new vscode.Position(2, 0))));
+        vscode.debug.addBreakpoints(breakpoints);
+        const observer = await launch(`Variables view ${runtimeName}`, file, { runtimeName });
+        await inspectIndexedCollection(observer, size);
+      });
+    }
+  }
+
+  test('opens virtual groups and follows unknown continuations in the Variables view', async () => {
+    const program = uri('views.fql');
+    await writeFile(program.fsPath, 'LET rows = DEMO::INSPECTED("mixed", 103)\nLET result = 7\nRETURN [result, rows]');
+    breakpoints.push(new vscode.SourceBreakpoint(new vscode.Location(program, new vscode.Position(1, 0))));
+    vscode.debug.addBreakpoints(breakpoints);
+    const observer = await launch('Mixed variables', 'views.fql', { runtimeName: 'App' });
+    await inspectVirtualGroups(observer);
+  });
+
+  for (const pane of ['Watch', 'Variables'] as const) test(`refreshes an expanded watch across a step with a pending ${pane} page`, async () => {
+    const file = 'watch.fql';
+    await writeFile(uri(file).fsPath, 'VAR rows = DEMO::INSPECTED("known", 100)\nrows = [777]\nRETURN rows');
+    breakpoints.push(new vscode.SourceBreakpoint(new vscode.Location(uri(file), new vscode.Position(1, 0))));
+    vscode.debug.addBreakpoints(breakpoints);
+    const gate = new HeldVariableReply();
+    processes.onDapSpawn = child => gate.intercept(child.stdout!);
+    try {
+      const observer = await launch('Inspect across step', file, { runtimeName: 'App' });
+      await stepWithPendingWatch(observer, gate, pane);
+    } finally {
+      processes.onDapSpawn = undefined;
+      gate.release();
+    }
+  });
 
   test('uses F5, the picker and explicit overrides, steps through local source, and inspects hosted values', async () => {
     const program = uri('inspect.fql');

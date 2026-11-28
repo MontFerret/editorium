@@ -74,6 +74,12 @@ internal class WireHost private constructor(private val process: Process) : Auto
         }
     }
 
+    fun command(action: String, name: String) {
+        val line = JsonObject().apply { addProperty("action", action); addProperty("name", name) }
+        process.outputStream.write((line.toString() + "\n").toByteArray())
+        process.outputStream.flush()
+    }
+
     fun connection(ordinal: Int): Int = await("connected", ordinal).get("id").asInt
 
     fun released(id: Int) {
@@ -107,9 +113,13 @@ internal class WireHost private constructor(private val process: Process) : Auto
     }
 
     companion object {
-        fun start(root: Path): WireHost {
+        fun start(root: Path, controlled: Boolean = false, incompatible: Boolean = false): WireHost {
             val binary = requireNotNull(System.getenv("FERRET_TEST_WIRE_HOST")) { "Missing built Wire host" }
-            val host = WireHost(ProcessBuilder(binary, "-root", root.toString()).start())
+            val host = WireHost(ProcessBuilder(buildList {
+                addAll(listOf(binary, "-root", root.toString()))
+                if (controlled || incompatible) add("-control")
+                if (incompatible) add("-incompatible-handshake")
+            }).start())
             try {
                 host.await("ready")
                 return host

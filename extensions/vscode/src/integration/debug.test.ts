@@ -8,6 +8,7 @@ import * as vscode from 'vscode';
 import { debugFileCommand } from '../debug/commands';
 import { extensionId } from '../test/extension-identity';
 import { DebugObserver } from './debug-observer';
+import { FerretdProcesses } from './ferretd-processes';
 
 const debugType = 'ferret';
 const explicitSessionName = 'Ferret DAP integration';
@@ -32,6 +33,7 @@ suite('ferretd DAP integration', () => {
     const program = join(root, 'read.fql');
     const name = 'Local runtime directory';
     const observer = new DebugObserver(name);
+    const processes = new FerretdProcesses(requireFerretdPath());
     try {
       await writeFile(program, 'RETURN TO_STRING(IO::FS::READ("marker.txt"))');
       await writeFile(join(root, 'marker.txt'), 'compilation root');
@@ -47,8 +49,10 @@ suite('ferretd DAP integration', () => {
       try { await observer.stopIfActive(); }
       finally {
         observer.dispose();
-        await rm(directory, { recursive: true, force: true });
-        await rm(root, { recursive: true, force: true });
+        processes.dispose();
+        await processes.closed(processes.starts('dap'));
+        await removeFixtureDirectory(directory);
+        await removeFixtureDirectory(root);
       }
     }
   });
@@ -73,6 +77,7 @@ suite('ferretd DAP integration', () => {
       const listener = stops.event(stop => { listener.dispose(); resolve(stop); });
     });
     let session: vscode.DebugSession | undefined;
+    const processes = new FerretdProcesses(requireFerretdPath());
     try {
       await writeFile(program, 'LET value = 1\nLET nextValue = value + 1\nRETURN nextValue\n');
       vscode.debug.addBreakpoints([breakpoint]);
@@ -98,11 +103,15 @@ suite('ferretd DAP integration', () => {
       await ended;
       session = undefined;
     } finally {
-      if (session) await vscode.debug.stopDebugging(session);
-      vscode.debug.removeBreakpoints([breakpoint]);
-      stops.dispose();
-      tracker.dispose();
-      await rm(root, { recursive: true, force: true });
+      try { if (session) await vscode.debug.stopDebugging(session); }
+      finally {
+        vscode.debug.removeBreakpoints([breakpoint]);
+        stops.dispose();
+        tracker.dispose();
+        processes.dispose();
+        await processes.closed(processes.starts('dap'));
+        await removeFixtureDirectory(root);
+      }
     }
   });
 
@@ -172,6 +181,11 @@ suite('ferretd DAP integration', () => {
     }
   });
 });
+
+function removeFixtureDirectory(directory: string): Promise<void> {
+  // Windows editor and filesystem watchers can release handles after the adapter closes.
+  return rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+}
 
 async function runCurrentFileDebugSession(
   start: () => Thenable<unknown>,

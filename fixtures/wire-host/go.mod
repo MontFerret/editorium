@@ -3,9 +3,9 @@ module github.com/MontFerret/editorium/fixtures/wire-host
 go 1.26.1
 
 require (
-	github.com/MontFerret/api v1.0.0-alpha.21
-	github.com/MontFerret/ferret/v2 v2.0.0-alpha.62
-	github.com/MontFerret/wire v1.0.0-alpha.5
+	github.com/MontFerret/api v1.0.0-alpha.22
+	github.com/MontFerret/ferret/v2 v2.0.0-alpha.63
+	github.com/MontFerret/wire v1.0.0-alpha.6
 	google.golang.org/grpc v1.85.0
 )
 
