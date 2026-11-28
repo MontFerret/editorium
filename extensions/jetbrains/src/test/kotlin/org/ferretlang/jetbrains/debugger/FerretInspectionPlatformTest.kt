@@ -11,6 +11,9 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.xdebugger.XDebuggerUtil
 import com.intellij.xdebugger.evaluation.EvaluationMode
 import com.intellij.xdebugger.frame.XValue
+import com.intellij.xdebugger.impl.ui.tree.XDebuggerTree
+import com.intellij.xdebugger.impl.ui.tree.nodes.MessageTreeNode
+import com.intellij.xdebugger.impl.ui.tree.nodes.XValueNodeImpl
 import com.intellij.xdebugger.frame.XValuePlace
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -94,7 +97,9 @@ class FerretInspectionPlatformTest : BasePlatformTestCase() {
         answer(VariablesArgumentsFilter.NAMED, 0, 1, listOf("0"))
         val (indexedRemaining, next) = node.more.receive()
         assertEquals(103, indexedRemaining)
-        withContext(Dispatchers.EDT) { next.run(); next.run() }
+        kotlinx.coroutines.coroutineScope {
+            repeat(2) { async(Dispatchers.Default) { next.run() } }
+        }
         answer(VariablesArgumentsFilter.INDEXED, 0, 100, (0..99).map(Int::toString))
         val (tailSize, tail) = node.more.receive()
         assertEquals(3, tailSize)
@@ -120,6 +125,85 @@ class FerretInspectionPlatformTest : BasePlatformTestCase() {
         pending.completeExceptionally(rejected())
         assertTrue(watch.batches.isEmpty())
         assertTrue(watch.errors.tryReceive().isFailure)
+    }
+
+    fun testWorkerRetryAndSkipCallbacksShareOneRevision() = scenario {
+        val inspection = context()
+        val value = FerretValue(inspection, "Rows", "Rows", 9, named = 1, indexed = 1)
+        for (replaceStop in listOf(false, true)) {
+            val node = DapTestCompositeNode()
+            value.computeChildren(node)
+            adapter.variableRequests.receive().second.completeExceptionally(rejected())
+            node.errors.receive()
+            val retry = requireNotNull(node.retry)
+            val skip = node.more.receive().second
+            val entered = CompletableDeferred<Unit>()
+            val release = CountDownLatch(1)
+            ApplicationManager.getApplication().invokeLater {
+                entered.complete(Unit)
+                check(release.await(5, TimeUnit.SECONDS))
+            }
+            try {
+                entered.await()
+                val skipJob = scope.async { skip.run() }
+                skipJob.await()
+                val retryJob = scope.async {
+                    retry.onClick(java.awt.event.MouseEvent(javax.swing.JPanel(), 0, 0, 0, 0, 0, 1, false))
+                }
+                retryJob.await()
+                if (replaceStop) {
+                    adapter.stop("step")
+                    listener.stops.receive()
+                }
+            } finally { release.countDown() }
+            withContext(Dispatchers.EDT) { }
+            if (replaceStop) assertTrue(node.batches.isEmpty()) else {
+                val (args, response) = adapter.variableRequests.receive()
+                assertEquals(VariablesArgumentsFilter.INDEXED, args.filter)
+                response.complete(VariablesResponse().apply { variables = arrayOf(variable("0", "Int", "7", 0, null)) })
+                node.children.receive()
+            }
+            assertTrue(adapter.variableRequests.tryReceive().isFailure)
+        }
+    }
+
+    fun testRealTreeRetryKeepsEarlierRowsAndReplacesErrorLink() = scenario {
+        val inspection = context()
+        val root = withContext(Dispatchers.EDT) {
+            val tree = XDebuggerTree(project, FerretDebuggerEditorsProvider(), null, "ferret-test", null)
+            Disposer.register(testRootDisposable, tree)
+            XValueNodeImpl(tree, null, "rows", FerretValue(inspection, "Rows", "Rows", 9, named = 1, indexed = 1)).also {
+                tree.setRoot(it, true)
+                it.children
+            }
+        }
+        suspend fun message(check: (MessageTreeNode) -> Boolean): MessageTreeNode {
+            while (true) {
+                val found = withContext(Dispatchers.EDT) { root.children.filterIsInstance<MessageTreeNode>().singleOrNull(check) }
+                if (found != null) return found
+                kotlinx.coroutines.yield()
+            }
+        }
+        adapter.variableRequests.receive().second.complete(VariablesResponse().apply { variables = arrayOf(variable("name", "Int", "3", 0, null)) })
+        val next = message { it.isEllipsis }
+        val click = java.awt.event.MouseEvent(root.tree, 0, 0, 0, 0, 0, 1, false)
+        withContext(Dispatchers.EDT) { next.link!!.onClick(click) }
+        var priorError: MessageTreeNode? = null
+        repeat(2) {
+            val (args, response) = adapter.variableRequests.receive()
+            assertEquals(VariablesArgumentsFilter.INDEXED, args.filter)
+            assertEquals(0, args.start)
+            response.completeExceptionally(rejected())
+            val error = message { it !== priorError && it.link != null && it.toString().contains("unknown binding") }
+            priorError = error
+            withContext(Dispatchers.EDT) { error.link!!.onClick(click) }
+        }
+        adapter.variableRequests.receive().second.complete(VariablesResponse().apply { variables = arrayOf(variable("0", "Int", "7", 0, null)) })
+        message { it.link == null && it.toString().contains("Page loaded on retry.") }
+        withContext(Dispatchers.EDT) {
+            assertEquals(listOf("name", "0"), root.children.filterIsInstance<XValueNodeImpl>().map { it.name })
+            assertEquals(listOf("Page loaded on retry."), root.children.filterIsInstance<MessageTreeNode>().map { it.toString() })
+        }
     }
 
     fun testRecomputingOneNodeInvalidatesItsOldPageAndLeavesTheSiblingUsable() = scenario {

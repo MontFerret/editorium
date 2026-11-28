@@ -19,6 +19,24 @@ are attached to the implementation PR.
 | 10,000 | 0 | indexed, start 0, count 100 | 100 |
 | 1,000,000 | 0 | indexed, start 0, count 100 | 100 |
 
+A real XDebugger tree with inline values enabled left a collapsed `this` member
+with one million instrumented children at zero reads. Expanding it read 100.
+A separate Swing tree test retained the earlier rows through two failed retries
+and displayed the recovered page once. Local review validation ran 242
+unit/platform tests and 51 real-process tests with zero skips.
+
+The VS Code 1.95 workbench received an old 100-row Watch reply after the
+replacement stop. Its Watch tree serializes reevaluation behind that expansion.
+A second test held an independent Variables reply until the refreshed Watch
+displayed its single child, `777`. Both rendered trees showed only that child
+after delivery.
+
+With two pages outstanding, alpha.14 acknowledged both cancels but performed
+one child read for the queued page. The candidate daemon returned `cancelled`
+for both pages, performed zero reads, and accepted the following step in the
+same external Wire fixture. Released-binary qualification requires a published
+prerelease containing the daemon fix. [ferretd PR #34](https://github.com/MontFerret/ferretd/pull/34)
+
 The child-read counter is in the Wire fixture's safe provider. Separate tests
 ran FQL arrays and buffered datasets on both released runtime paths and checked
 the absolute names at the beginning and tail. The XDebugger watch model

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, sep } from 'node:path';
 import * as vscode from 'vscode';
 import { extensionId } from '../test/extension-identity';
+import { HeldVariableReply } from './held-variable-reply';
 import { DebugObserver } from './debug-observer';
 import { FerretdProcesses } from './ferretd-processes';
 import { waitForExecutionOutput } from './execution-output';
@@ -141,13 +142,20 @@ suite('Wire debugging through VS Code', () => {
     await inspectVirtualGroups(observer);
   });
 
-  test('refreshes an expanded watch across a step with a pending Wire page', async () => {
+  for (const pane of ['Watch', 'Variables'] as const) test(`refreshes an expanded watch across a step with a pending ${pane} page`, async () => {
     const file = 'watch.fql';
     await writeFile(uri(file).fsPath, 'VAR rows = DEMO::INSPECTED("known", 100)\nrows = [777]\nRETURN rows');
     breakpoints.push(new vscode.SourceBreakpoint(new vscode.Location(uri(file), new vscode.Position(1, 0))));
     vscode.debug.addBreakpoints(breakpoints);
-    const observer = await launch('Inspect across step', file, { runtimeName: 'App' });
-    await stepWithPendingWatch(observer, host!);
+    const gate = new HeldVariableReply();
+    processes.onDapSpawn = child => gate.intercept(child.stdout!);
+    try {
+      const observer = await launch('Inspect across step', file, { runtimeName: 'App' });
+      await stepWithPendingWatch(observer, gate, pane);
+    } finally {
+      processes.onDapSpawn = undefined;
+      gate.release();
+    }
   });
 
   test('uses F5, the picker and explicit overrides, steps through local source, and inspects hosted values', async () => {

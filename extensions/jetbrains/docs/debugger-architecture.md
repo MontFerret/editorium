@@ -481,7 +481,10 @@ expansion even with an unknown count.
 
 Each XDebugger presentation owns its next filtered offset. It reads named
 before indexed children, up to `XCompositeNode.MAX_CHILDREN_TO_SHOW` (100).
-The EDT appends the returned rows in adapter order and registers the next
+Initial expansion, subsequent loads, Retry, and skip enter the EDT before checking
+the stop, presentation, and cursor revision. Inline value display leaves children
+collapsed, including an object member named `this`. The EDT appends the returned
+rows in adapter order and registers the next
 `tooManyChildren(remaining, Runnable)` callback. A full unknown page offers
 another load with remainder `-1`. Failed pages retain their offset for Retry.
 The user can continue to indexed children when the named view fails. Ranges,
@@ -490,7 +493,9 @@ groups, and continuations are ordinary handles issued by the daemon.
 The session sends a targeted DAP cancel for an abandoned or timed-out page
 when the adapter supports it. The outgoing LSP4J message supplies its request
 sequence. Both replies remain correlated, including when the page completes
-before cancellation arrives. The EDT rechecks the stop and the target node
+before cancellation arrives. Alpha.14 can interrupt an active page. A cancel for
+a page still queued behind another request can be acknowledged while the
+daemon goes on to read it, delaying a later step. The EDT rechecks the stop and the target node
 before publishing a page, error, or continuation.
 
 Handles are opaque and valid only while paused. Invalidate inspection work

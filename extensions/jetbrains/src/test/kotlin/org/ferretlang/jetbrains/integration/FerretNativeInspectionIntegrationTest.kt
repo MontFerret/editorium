@@ -18,6 +18,9 @@ import com.intellij.xdebugger.*
 import com.intellij.xdebugger.breakpoints.XBreakpointProperties
 import com.intellij.xdebugger.breakpoints.XLineBreakpoint
 import com.intellij.xdebugger.frame.*
+import com.intellij.xdebugger.impl.ui.tree.XDebuggerTree
+import com.intellij.xdebugger.impl.ui.tree.nodes.XValueNodeImpl
+import com.intellij.xdebugger.settings.XDebuggerSettingsManager
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
@@ -176,6 +179,52 @@ class FerretNativeInspectionIntegrationTest : HeavyPlatformTestCase() {
                 }
             }
         }
+    }
+
+    fun testInlineThisMemberReadsOnlyWhenExpanded() {
+        val connection = FerretdDaemonConnection.testing(lifetime, pinnedTestInstallation())
+        project.replaceService(FerretdDaemonConnection::class.java, connection, testRootDisposable)
+        val root = Files.createDirectories(Path.of(requireNotNull(project.basePath)).resolve(".tmp/inline-member"))
+        val path = Files.writeString(root.resolve("member.fql"),
+            "LET box = { \"this\": DEMO::INSPECTED(\"known\", 1000000) }\nRETURN box")
+        val file = requireNotNull(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path))
+        val manager = XDebuggerManager.getInstance(project)
+        val type = XDebuggerUtil.getInstance().findBreakpointType(FerretBreakpointType::class.java)
+        WriteCommandAction.runWriteCommandAction(project) {
+            breakpoints.add(manager.breakpointManager.addLineBreakpoint(type, file.url, 1, null))
+        }
+        val settings = XDebuggerSettingsManager.getInstance().dataViewSettings
+        val previous = settings.isShowValuesInline
+        try {
+            settings.isShowValuesInline = true
+            WireHost.start(root, controlled = true).use { host ->
+                connection.applyConfigPath(host.configure(root.resolve("runtimes.json")).toString())
+                NativeFerretLaunch(project, DefaultDebugExecutor.getDebugExecutorInstance()).use { launch ->
+                    val descriptor = launch.start(path, "App", "{}")
+                    PlatformTestUtil.waitWithEventsDispatching("No stopped debugger", {
+                        manager.debugSessions.any { it.debugProcess.processHandler === descriptor.processHandler && it.isSuspended }
+                    }, 20)
+                    val session = manager.debugSessions.single { it.debugProcess.processHandler === descriptor.processHandler }
+                    awaitStop(session, null)
+                    val tree = XDebuggerTree(project, session.debugProcess.editorsProvider, session.currentPosition, "ferret-test", null)
+                    try {
+                        val box = XValueNodeImpl(tree, null, "box", evaluateValue(session, "box"))
+                        tree.setRoot(box, true)
+                        box.children
+                        PlatformTestUtil.waitWithEventsDispatching("Missing this member", { box.loadedChildren.size == 1 }, 10)
+                        val member = box.loadedChildren.single() as XValueNodeImpl
+                        assertEquals("this", member.name)
+                        assertTrue(member.cachedChildren.isEmpty())
+                        assertFalse(tree.isExpanded(member.path))
+                        assertEquals(0L, host.await("page").get("reads").asLong)
+                        tree.expandPath(member.path)
+                        PlatformTestUtil.waitWithEventsDispatching("Missing first page", { member.loadedChildren.size == 100 }, 10)
+                        assertEquals(100L, host.await("page", 2).get("reads").asLong)
+                        assertEquals(2, host.count("page"))
+                    } finally { Disposer.dispose(tree) }
+                }
+            }
+        } finally { settings.isShowValuesInline = previous }
     }
 
     fun testHostedProjectDisposalReapsRunAndDebugAndPreservesApplication() {

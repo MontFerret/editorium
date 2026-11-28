@@ -31,29 +31,29 @@ internal class FerretVariablePages(
     private val hasNextKind get() = kind == VariablesArgumentsFilter.NAMED && indexed != 0
     private fun current() = activePresentation.get() && !node.isObsolete && inspection.isCurrent()
 
-    fun start() {
-        if (!ApplicationManager.getApplication().isDispatchThread) {
-            ApplicationManager.getApplication().invokeLater { start() }
-            return
-        }
-        if (!current()) return
-        node.setAlreadySorted(true)
-        if (reference <= 0 || size == 0) node.addChildren(XValueChildrenList.EMPTY, true)
-        else load(revision)
-    }
+    fun start() = load(0)
 
     private fun load(expected: Long, skipKind: Boolean = false) {
+        val app = ApplicationManager.getApplication()
+        if (!app.isDispatchThread) {
+            app.invokeLater { load(expected, skipKind) }
+            return
+        }
         if (!current() || expected != revision) return
         val active = ++revision
-        if (skipKind) nextKind()
-        if (showingError) {
-            node.setMessage("", null, SimpleTextAttributes.REGULAR_ATTRIBUTES, null)
-            showingError = false
+        if (expected == 0L) {
+            node.setAlreadySorted(true)
+            if (reference <= 0 || size == 0) {
+                node.addChildren(XValueChildrenList.EMPTY, true)
+                return
+            }
         }
+        if (skipKind) nextKind()
+        val total = size
         val filter = kind
         val start = offset
         val limit = minOf(XCompositeNode.MAX_CHILDREN_TO_SHOW, 1000)
-        val count = size?.let { minOf(it - start, limit) } ?: limit
+        val count = total?.let { minOf(it - start, limit) } ?: limit
         inspection.request({
             coroutineScope {
                 // XCompositeNode exposes obsolescence as a flag, without a disposal listener.
@@ -65,19 +65,19 @@ internal class FerretVariablePages(
                     if (!current()) null else inspection.dap.variables(inspection.stop, reference, filter, start, count)
                         ?.variables?.takeIf { current() }?.also {
                             check(it.size <= count) { "The Ferret adapter returned too many children." }
-                            check(size == null || it.size == count) { "The Ferret adapter returned an incomplete page." }
+                            check(total == null || it.size == count) { "The Ferret adapter returned an incomplete page." }
                         }
                 } finally { watcher.cancel() }
             }
         }) { result ->
             if (current() && revision == active) result.fold(
-                { rows -> if (rows != null) publish(rows, count) },
+                { rows -> if (rows != null) publish(rows, count, skipKind) },
                 { error -> failed(error) },
             )
         }
     }
 
-    private fun publish(rows: Array<Variable>, count: Int) {
+    private fun publish(rows: Array<Variable>, count: Int, skippedNamed: Boolean) {
         val children = XValueChildrenList(rows.size)
         for (row in rows) children.add(row.name, FerretValue(
             inspection, row.value, row.type, row.variablesReference, row.evaluateName?.takeIf(String::isNotBlank),
@@ -87,6 +87,12 @@ internal class FerretVariablePages(
         val exhausted = end == size || rows.size < count
         val last = exhausted && !hasNextKind
         if (!current()) return
+        if (showingError) {
+            // XCompositeNode retains this message even after the final children arrive.
+            val status = if (skippedNamed) "Skipped unreadable named children." else "Page loaded on retry."
+            node.setMessage(status, null, SimpleTextAttributes.REGULAR_ATTRIBUTES, null)
+            showingError = false
+        }
         node.addChildren(children, last)
         offset = end
         if (last || !current()) return

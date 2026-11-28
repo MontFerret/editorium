@@ -1,7 +1,22 @@
 import * as assert from 'node:assert/strict';
 import * as vscode from 'vscode';
 import type { DebugObserver } from './debug-observer';
-import type { WireHost } from './wire-host';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { chromium, type Page } from 'playwright-core';
+import type { HeldVariableReply } from './held-variable-reply';
+
+async function withWorkbench(check: (window: Page) => Promise<void>): Promise<void> {
+  const data = process.env.FERRET_TEST_USER_DATA;
+  assert.ok(data, 'Expected the isolated VS Code test profile');
+  const port = (await readFile(join(data, 'DevToolsActivePort'), 'utf8')).split('\n')[0];
+  const renderer = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 10_000 });
+  try {
+    const window = renderer.contexts().flatMap(context => context.pages()).find(page => page.url().includes('workbench'));
+    assert.ok(window, 'Expected the VS Code workbench');
+    await check(window);
+  } finally { await renderer.close(); }
+}
 
 async function expandToReference(observer: DebugObserver, reference: number): Promise<void> {
   // List expansion and focus movement can resolve before the async workbench tree installs its rows.
@@ -78,60 +93,84 @@ export async function inspectVirtualGroups(observer: DebugObserver): Promise<voi
   await command(focus);
   const root = (await observer.wait(m => !!m.body?.variables?.some(v => v.name === 'rows')))
     .body!.variables!.find(v => v.name === 'rows')!;
-  await command(focus);
-  await command('list.focusFirst');
-  await command('list.focusDown');
-  await command('list.expand');
-  const groups = (await observer.wait(m => !!m.body?.variables?.some(v => v.name === 'Named'))).body!.variables!;
-  const named = groups.find(v => v.name === 'Named')!;
-  assert.equal(named.presentationHint?.kind, 'virtual');
-  assert.ok(named.variablesReference > 0);
-  assert.equal(named.namedVariables, undefined);
-  assert.equal(named.indexedVariables, 0);
-  assert.ok(observer.requests.some(m => m.arguments?.variablesReference === root.variablesReference && m.arguments.filter === 'named'));
-  await expandToReference(observer, named.variablesReference);
-  const rows = (await observer.wait(m => !!m.body?.variables?.some(v => v.name === '[100…]'))).body!.variables!;
-  assert.deepEqual(rows.slice(0, 2).map(v => v.name), ['0', 'e\u0301😀']);
-  const next = rows.at(-1)!;
-  assert.equal(next.presentationHint?.kind, 'virtual');
-  assert.ok(next.variablesReference > 0);
-  assert.equal(next.namedVariables, undefined);
-  for (let i = 0; i < rows.length; i++) await command('list.focusDown');
-  await command('list.expand');
-  const tail = (await observer.wait(m => !!m.body?.variables?.some(v => v.name === '102'))).body!.variables!;
-  assert.deepEqual(tail.map(v => v.name), ['100', '101', '102']);
-  assert.ok(observer.requests.some(m => m.arguments?.variablesReference === next.variablesReference));
+  await withWorkbench(async window => {
+    const visible = window.locator('.debug-variables .monaco-list-row');
+    const expand = (name: string) => visible.filter({ has: window.locator('.name').filter({ hasText: name }) })
+      .locator('.monaco-tl-twistie').click({ timeout: 10_000 });
+    await expand('rows');
+    const groups = (await observer.wait(m => !!m.body?.variables?.some(v => v.name === 'Named'))).body!.variables!;
+    const named = groups.find(v => v.name === 'Named')!;
+    assert.equal(named.presentationHint?.kind, 'virtual');
+    assert.ok(named.variablesReference > 0);
+    assert.equal(named.namedVariables, undefined);
+    assert.equal(named.indexedVariables, 0);
+    assert.ok(observer.requests.some(m => m.arguments?.variablesReference === root.variablesReference && m.arguments.filter === 'named'));
+    await expand(named.name);
+    const rows = (await observer.wait(m => !!m.body?.variables?.some(v => v.name === '[100…]'))).body!.variables!;
+    assert.deepEqual(rows.slice(0, 2).map(v => v.name), ['0', 'e\u0301😀']);
+    const next = rows.at(-1)!;
+    assert.equal(next.presentationHint?.kind, 'virtual');
+    assert.ok(next.variablesReference > 0);
+    assert.equal(next.namedVariables, undefined);
+    await command('list.focusLast');
+    await expand(next.name);
+    const tail = (await observer.wait(m => !!m.body?.variables?.some(v => v.name === '102'))).body!.variables!;
+    assert.deepEqual(tail.map(v => v.name), ['100', '101', '102']);
+    assert.ok(observer.requests.some(m => m.arguments?.variablesReference === next.variablesReference));
+  });
 }
 
-export async function stepWithPendingWatch(observer: DebugObserver, host: WireHost): Promise<void> {
+export async function stepWithPendingWatch(observer: DebugObserver, gate: HeldVariableReply, pane: 'Watch' | 'Variables'): Promise<void> {
   await observer.wait(m => m.event === 'stopped');
   const command = (id: string) => vscode.commands.executeCommand(id);
   const focus = 'workbench.debug.action.focusWatchView';
-  await command(focus);
-  try {
-    await vscode.commands.executeCommand('debug.addToWatchExpressions', { variable: { evaluateName: 'rows' } });
-    const initial = (await observer.wait(m => m.command === 'evaluate' && m.body?.result === 'Rows')).body!;
-    await command(focus);
-    await command('list.focusFirst');
-    await host.arm('variables');
-    const expanding = command('list.expand');
-    await host.wait('held', 1, undefined, 'variables');
-    const original = await observer.waitRequest(m => m.command === 'variables' && m.arguments?.variablesReference === initial.variablesReference);
-    const stepping = command('workbench.action.debug.stepOver');
-    await observer.waitRequest(m => m.command === 'next');
-    host.command('release', 'variables');
-    await Promise.all([expanding, stepping]);
-    await observer.wait(m => m.event === 'stopped', 2);
-    await observer.wait(m => m.command === 'variables' && m.request_seq === original.seq);
-    const refreshed = (await observer.wait(m => m.command === 'evaluate' && m.body?.result === 'Array(1)')).body!;
-    assert.ok(refreshed.variablesReference);
-    assert.notEqual(refreshed.variablesReference, initial.variablesReference);
-    // Restoring the expanded watch must fetch the replacement frame's single child.
-    const response = await observer.wait(m => m.body?.variables?.[0]?.value === '777');
-    assert.equal(response.body?.variables?.length, 1);
-    assert.ok(observer.requests.some(m => m.seq === response.request_seq && m.arguments?.variablesReference === refreshed.variablesReference));
-  } finally {
-    host.command('release', 'variables');
-    await command('workbench.debug.viewlet.action.removeAllWatchExpressions');
-  }
+  await withWorkbench(async window => {
+    try {
+      const rows = window.locator('.debug-watch .monaco-list-row');
+      await command(focus);
+      await vscode.commands.executeCommand('debug.addToWatchExpressions', { variable: { evaluateName: 'rows' } });
+      const initial = (await observer.wait(m => m.command === 'evaluate' && m.body?.result === 'Rows')).body!;
+      await command(focus);
+      await command('list.focusFirst');
+      let reference = initial.variablesReference!;
+      if (pane === 'Variables') {
+        await command('list.expand');
+        await rows.locator('.value').filter({ hasText: 'Array(1)' }).first().waitFor({ timeout: 10_000 });
+        await command('workbench.debug.action.focusVariablesView');
+        const locals = await observer.wait(m => !!m.body?.variables?.some(v => v.name === 'rows'));
+        reference = locals.body!.variables!.find(v => v.name === 'rows')!.variablesReference;
+        await command('list.focusFirst');
+        await command('list.focusDown');
+      }
+      const held = gate.hold(observer, reference);
+      const expanding = command('list.expand');
+      const sequence = await held;
+      await command('workbench.action.debug.stepOver');
+      await observer.wait(m => m.event === 'stopped', 2);
+      const isOldPage = (m: { command?: string; request_seq?: number }) => m.command === 'variables' && m.request_seq === sequence;
+      assert.equal(observer.count(isOldPage), 0);
+      // VS Code serializes refresh behind a pending expansion in the same tree.
+      if (pane === 'Watch') gate.release();
+      await command(focus);
+      await observer.wait(m => m.command === 'evaluate' && m.body?.result === 'Array(1)');
+      const child = rows.locator('.value').filter({ hasText: /^777$/ });
+      await child.waitFor({ timeout: 10_000 });
+      if (pane === 'Variables') {
+        assert.equal(observer.count(isOldPage), 0);
+        gate.release();
+      }
+      const stale = await observer.wait(isOldPage);
+      assert.equal(stale.body?.variables?.length, 100);
+      await expanding;
+      if (pane === 'Variables') {
+        const vars = window.locator('.debug-variables .monaco-list-row .value');
+        await vars.filter({ hasText: /^777$/ }).waitFor({ timeout: 10_000 });
+        assert.deepEqual(await vars.allTextContents(), ['Array(1)', '777']);
+      }
+      assert.deepEqual(await rows.locator('.value').allTextContents(), ['Array(1)', '777']);
+    } finally {
+      gate.release();
+      await command('workbench.debug.viewlet.action.removeAllWatchExpressions');
+    }
+  });
 }

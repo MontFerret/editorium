@@ -34,9 +34,10 @@ export default defineConfig([
   },
   {
     label: 'integration',
+    env: { FERRET_TEST_USER_DATA: join(profileRoot, 'user-data') },
     files: 'out/integration/**/*.test.js',
     version: vscodeVersion,
-    launchArgs,
+    launchArgs: [...launchArgs, '--remote-debugging-port=0'],
     mocha: {
       ui: 'tdd',
       timeout: 60_000,
