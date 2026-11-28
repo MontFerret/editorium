@@ -8,6 +8,7 @@ import { DebugObserver } from './debug-observer';
 import { FerretdProcesses } from './ferretd-processes';
 import { waitForExecutionOutput } from './execution-output';
 import { WireHost } from './wire-host';
+import { inspectIndexedCollection, inspectVirtualGroups, stepWithPendingWatch } from './variables-view';
 
 suite('Wire debugging through VS Code', () => {
   const target = vscode.ConfigurationTarget.Global;
@@ -116,78 +117,19 @@ suite('Wire debugging through VS Code', () => {
     await vscode.commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem');
   }
 
-  async function expandToReference(observer: DebugObserver, reference: number): Promise<void> {
-    // List expansion and focus movement can resolve before the async workbench tree installs its rows.
-    const deadline = Date.now() + 10_000;
-    while (!observer.requests.some(m => m.command === 'variables' && m.arguments?.variablesReference === reference)) {
-      assert.ok(Date.now() < deadline, `Variables view did not open reference ${reference}`);
-      await vscode.commands.executeCommand('list.expand');
-      await new Promise(resolve => setTimeout(resolve, 25));
-    }
-  }
-
   for (const runtimeName of ['local', 'App']) {
-    test(`pages a million rows through the Variables view on ${runtimeName}`, async () => {
-      const file = 'large.fql';
-      const program = uri(file);
-      await writeFile(program.fsPath, 'LET results = (FOR n IN 0..999999 RETURN n)\nLET sample = {rows: [1, 2]}\nLET size = LENGTH(results)\nRETURN size + sample.rows[0]');
-      breakpoints.push(new vscode.SourceBreakpoint(new vscode.Location(program, new vscode.Position(2, 0))));
-      vscode.debug.addBreakpoints(breakpoints);
-      const observer = await launch(`Variables view ${runtimeName}`, file, { runtimeName });
-      await observer.wait(m => m.event === 'stopped');
-      const command = (id: string) => vscode.commands.executeCommand(id);
-      const focus = 'workbench.debug.action.focusVariablesView';
-      await command(focus);
-      const root = (await observer.wait(m => m.body?.variables?.some(v => v.name === 'results') === true))
-        .body!.variables!.find(v => v.name === 'results')!;
-      assert.equal(root.value, 'Array(1000000)');
-      assert.equal(root.indexedVariables, 1_000_000);
-      assert.equal(root.namedVariables, 0);
-      assert.ok(root.variablesReference > 0);
-      const init = observer.requests.find(m => m.command === 'initialize')?.arguments;
-      assert.equal(init?.supportsVariablePaging, true);
-      assert.equal(init?.supportsVariableType, true);
-      const pages = () => observer.requests.filter(m => m.command === 'variables' &&
-        m.arguments?.variablesReference === root.variablesReference);
-      assert.equal(pages().length, 0);
-      await command(focus);
-      await command('list.focusFirst');
-      // Locals is auto-expanded. Walk down the native tree to the first leaf range.
-      await command('list.focusDown');
-      await expandToReference(observer, root.variablesReference);
-      async function assertPage(start: number) {
-        const reply = await observer.wait(m => m.command === 'variables' && m.body?.variables?.[0]?.name === String(start));
-        const request = pages().find(m => m.seq === reply.request_seq);
-        assert.deepEqual(request?.arguments, { variablesReference: root.variablesReference, filter: 'indexed', start, count: 100 });
-        assert.deepEqual(reply.body!.variables!.map(v => v.name), Array.from({ length: 100 }, (_, i) => String(start + i)));
-      }
-      await assertPage(0);
-      assert.equal(pages().length, 1);
-      await command('list.collapse');
-      await command('list.focusDown');
-      await command('list.expand');
-      await assertPage(100);
-      assert.equal(pages().length, 2);
-
-      const watch = 'workbench.debug.action.focusWatchView';
-      await command(watch);
-      try {
-        await vscode.commands.executeCommand('debug.addToWatchExpressions', { variable: { evaluateName: 'sample' } });
-        await observer.wait(m => m.command === 'evaluate' && m.body?.result === 'Object(1)');
-        await command(watch);
-        await command('list.focusFirst');
-        await command('list.expand');
-        const member = (await observer.wait(m => !!m.body?.variables?.some(v => v.name === 'rows'))).body!.variables!.find(v => v.name === 'rows')!;
-        assert.equal(member.value, 'Array(2)');
-        await expandToReference(observer, member.variablesReference);
-        await observer.wait(m => m.body?.variables?.length === 2 && m.body.variables[0]?.value === '1');
-        await command('workbench.action.debug.stepOver');
-        await observer.wait(m => m.event === 'stopped', 2);
-        await observer.wait(m => m.command === 'evaluate' && m.body?.result === 'Object(1)', 2);
-      } finally {
-        await command('workbench.debug.viewlet.action.removeAllWatchExpressions');
-      }
-    });
+    for (const [kind, size] of [['array', 100], ['array', 10_000], ['array', 1_000_000], ['dataset', 1_000_000]] as const) {
+      test(`opens ${kind} of ${size} in the Variables view on ${runtimeName}`, async () => {
+        const file = 'large.fql';
+        const program = uri(file);
+        const source = kind === 'array' ? `ARRAYS::RANGE(0, ${size - 1})` : `(FOR n IN 0..${size - 1} RETURN n)`;
+        await writeFile(program.fsPath, `LET results = ${source}\nLET sample = {rows: [1, 2]}\nLET size = LENGTH(results)\nRETURN size + sample.rows[0]`);
+        breakpoints.push(new vscode.SourceBreakpoint(new vscode.Location(program, new vscode.Position(2, 0))));
+        vscode.debug.addBreakpoints(breakpoints);
+        const observer = await launch(`Variables view ${runtimeName}`, file, { runtimeName });
+        await inspectIndexedCollection(observer, size);
+      });
+    }
   }
 
   test('opens virtual groups and follows unknown continuations in the Variables view', async () => {
@@ -196,35 +138,7 @@ suite('Wire debugging through VS Code', () => {
     breakpoints.push(new vscode.SourceBreakpoint(new vscode.Location(program, new vscode.Position(1, 0))));
     vscode.debug.addBreakpoints(breakpoints);
     const observer = await launch('Mixed variables', 'views.fql', { runtimeName: 'App' });
-    await observer.wait(m => m.event === 'stopped');
-    const command = (id: string) => vscode.commands.executeCommand(id);
-    const focus = 'workbench.debug.action.focusVariablesView';
-    await command(focus);
-    const root = (await observer.wait(m => !!m.body?.variables?.some(v => v.name === 'rows')))
-      .body!.variables!.find(v => v.name === 'rows')!;
-    await command(focus);
-    await command('list.focusFirst');
-    await command('list.focusDown');
-    await command('list.expand');
-    const groups = (await observer.wait(m => !!m.body?.variables?.some(v => v.name === 'Named'))).body!.variables!;
-    const named = groups.find(v => v.name === 'Named')!;
-    assert.equal(named.presentationHint?.kind, 'virtual');
-    assert.ok(named.variablesReference > 0);
-    assert.equal(named.namedVariables, undefined);
-    assert.equal(named.indexedVariables, 0);
-    assert.ok(observer.requests.some(m => m.arguments?.variablesReference === root.variablesReference && m.arguments.filter === 'named'));
-    await expandToReference(observer, named.variablesReference);
-    const rows = (await observer.wait(m => !!m.body?.variables?.some(v => v.name === '[100…]'))).body!.variables!;
-    assert.deepEqual(rows.slice(0, 2).map(v => v.name), ['0', 'e\u0301😀']);
-    const next = rows.at(-1)!;
-    assert.equal(next.presentationHint?.kind, 'virtual');
-    assert.ok(next.variablesReference > 0);
-    assert.equal(next.namedVariables, undefined);
-    for (let i = 0; i < rows.length; i++) await command('list.focusDown');
-    await command('list.expand');
-    const tail = (await observer.wait(m => !!m.body?.variables?.some(v => v.name === '102'))).body!.variables!;
-    assert.deepEqual(tail.map(v => v.name), ['100', '101', '102']);
-    assert.ok(observer.requests.some(m => m.arguments?.variablesReference === next.variablesReference));
+    await inspectVirtualGroups(observer);
   });
 
   test('refreshes an expanded watch across a step with a pending Wire page', async () => {
@@ -233,36 +147,7 @@ suite('Wire debugging through VS Code', () => {
     breakpoints.push(new vscode.SourceBreakpoint(new vscode.Location(uri(file), new vscode.Position(1, 0))));
     vscode.debug.addBreakpoints(breakpoints);
     const observer = await launch('Inspect across step', file, { runtimeName: 'App' });
-    await observer.wait(m => m.event === 'stopped');
-    const command = (id: string) => vscode.commands.executeCommand(id);
-    const focus = 'workbench.debug.action.focusWatchView';
-    await command(focus);
-    try {
-      await vscode.commands.executeCommand('debug.addToWatchExpressions', { variable: { evaluateName: 'rows' } });
-      const initial = (await observer.wait(m => m.command === 'evaluate' && m.body?.result === 'Rows')).body!;
-      await command(focus);
-      await command('list.focusFirst');
-      await host!.arm('variables');
-      const expanding = command('list.expand');
-      await host!.wait('held', 1, undefined, 'variables');
-      const original = await observer.waitRequest(m => m.command === 'variables' && m.arguments?.variablesReference === initial.variablesReference);
-      const stepping = command('workbench.action.debug.stepOver');
-      await observer.waitRequest(m => m.command === 'next');
-      host!.command('release', 'variables');
-      await Promise.all([expanding, stepping]);
-      await observer.wait(m => m.event === 'stopped', 2);
-      await observer.wait(m => m.command === 'variables' && m.request_seq === original.seq);
-      const refreshed = (await observer.wait(m => m.command === 'evaluate' && m.body?.result === 'Array(1)')).body!;
-      assert.ok(refreshed.variablesReference);
-      assert.notEqual(refreshed.variablesReference, initial.variablesReference);
-      // Restoring the expanded watch must fetch the replacement frame's single child.
-      const response = await observer.wait(m => m.body?.variables?.[0]?.value === '777');
-      assert.equal(response.body?.variables?.length, 1);
-      assert.ok(observer.requests.some(m => m.seq === response.request_seq && m.arguments?.variablesReference === refreshed.variablesReference));
-    } finally {
-      host!.command('release', 'variables');
-      await command('workbench.debug.viewlet.action.removeAllWatchExpressions');
-    }
+    await stepWithPendingWatch(observer, host!);
   });
 
   test('uses F5, the picker and explicit overrides, steps through local source, and inspects hosted values', async () => {

@@ -9,7 +9,7 @@ client output. Plugin Verifier reported compatible for IDEA 2026.2.0.1 and
 2026.3 and GoLand 2026.2.4 and 2026.3. Package checks verified the macOS arm64
 VSIX and all six daemon payloads in the universal ZIP. The strict JetBrains
 suite ran 240 unit/platform and 50 real-process tests with zero skips. VS Code
-ran 217 unit and 38 integration tests plus the daemon transport smoke. The
+ran 217 unit and 44 integration tests plus the daemon transport smoke. The
 [cross-platform CI and package results](https://github.com/MontFerret/editorium/pull/30/checks)
 are attached to the implementation PR.
 
@@ -23,14 +23,15 @@ The child-read counter is in the Wire fixture's safe provider. Separate tests
 ran FQL arrays and buffered datasets on both released runtime paths and checked
 the absolute names at the beginning and tail. The XDebugger watch model
 appended two 100-row batches for a million-row dataset. The VS Code 1.95
-extension host opened the real Variables pane on local and Wire runtimes.
-Its first two leaf ranges sent indexed requests at offsets 0 and 100.
+extension host opened arrays of all three sizes and million-row buffered
+datasets in the Variables pane on local and Wire runtimes. Each first leaf
+range requested 100 rows. Opening a second range requested offset 100.
 A Wire test followed the virtual Named group through its unknown-size
 continuation. A separate watch test stepped with an outstanding page and
 observed the replacement stop's single child.
 
 An isolated VS Code 1.95 profile then installed the verified macOS arm64 VSIX
-and used its bundled executable. Four automated workbench scenarios passed,
+and used its bundled executable. Ten automated workbench scenarios passed,
 including both runtime selections, loading a second range, expanding a nested
 watch, stepping and checking adapter cleanup. The packaged JetBrains
 walkthrough remains pending. The desktop automation connection expired while
